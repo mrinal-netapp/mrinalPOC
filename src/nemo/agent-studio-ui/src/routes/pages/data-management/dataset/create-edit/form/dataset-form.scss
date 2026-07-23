@@ -1,0 +1,636 @@
+// Dataset Form — wizard-style full-page layout
+// Used for both Create and Edit flows.
+// Mirrors the data-source form pattern (ds-form-page).
+
+.dset-form-page {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - var(--topbar-height));
+  margin: -24px -32px;
+  background-color: var(--background-main);
+}
+
+// -- Loading / Error states --
+
+.dset-form-page__loading,
+.dset-form-page__error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 64px 0;
+}
+
+// -- Top bar --
+
+.dset-form-page__top-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 56px;
+  min-height: 56px;
+  padding: 0 24px;
+  background-color: var(--background-content);
+  border-bottom: 1px solid var(--border-main);
+}
+
+.dset-form-page__top-bar-title {
+  margin: 0;
+}
+
+// -- Scrollable body --
+
+.dset-form-page__body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding: 40px 24px;
+}
+
+.dset-form-page__body-inner {
+  width: 100%;
+  max-width: 1336px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+
+  &::after {
+    content: "";
+    display: block;
+    flex-shrink: 0;
+    height: 85px;
+  }
+}
+
+.dset-form-page__header {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 792px;
+
+  > p {
+    margin: 0;
+  }
+}
+
+.dset-form-page__form-card {
+  width: 100%;
+}
+
+// -- Sticky footer --
+
+.dset-form-page__footer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  height: 64px;
+  min-height: 64px;
+  padding: 0 24px;
+  background-color: var(--background-content);
+  border-top: 1px solid var(--border-main);
+}
+
+// -- Section --
+
+.dset-form__section {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.dset-form__section-header {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.dset-form__section-title {
+  margin: 0;
+}
+
+.dset-form__section-subtitle {
+  margin: 0;
+}
+
+// -- Fields --
+
+.dset-form__fields {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.dset-form__field {
+  width: 616px;
+  max-width: 100%;
+}
+
+.dset-form__field--half {
+  width: 296px;
+}
+
+// -- Scope toggles --
+
+.dset-form__scope-toggles {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-self: stretch;
+}
+
+.dset-form__scope-toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: fit-content;
+  cursor: default;
+
+  &--disabled {
+    cursor: help;
+    opacity: 0.72;
+
+    .toggle[data-disabled] {
+      opacity: 0.85;
+    }
+  }
+}
+
+.dset-form__scope-toggle-content {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+// -- Scope summary --
+
+.dset-form__scope-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  // Stretch full-width in both parents. The edit-mode container
+  // (.dset-form__ds-scope) uses align-items: flex-start, which would
+  // otherwise shrink this to content width and mismatch the create screen.
+  align-self: stretch;
+}
+
+.dset-form__scope-summary-stats {
+  display: flex;
+  align-items: center;
+  gap: 0;
+}
+
+.dset-form__scope-summary-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+}
+
+.dset-form__scope-summary-divider {
+  width: 1px;
+  height: 48px;
+  background-color: var(--border-main);
+  margin-right: 24px;
+  flex-shrink: 0;
+}
+
+.dset-form__scope-summary-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  background-color: var(--surface-accent-subtle, #ebe9f9);
+  color: var(--text-accent, #6b57e8);
+  flex-shrink: 0;
+}
+
+.dset-form__scope-summary-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+// -- Input type radios --
+
+.dset-form__input-type-radios {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+// -- Data source picker --
+
+.dset-form__source-card {
+  width: 616px;
+  max-width: 100%;
+}
+
+.dset-form__access-info {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.dset-form__access-info-row {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  line-height: 24px;
+
+  > :first-child {
+    min-width: 140px;
+    flex-shrink: 0;
+  }
+}
+
+.dset-form__picker {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+// -- Upload --
+
+.dset-form__upload {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.dset-form__upload-header {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+
+  > p {
+    margin: 0;
+  }
+}
+
+.dset-form__upload-input {
+  display: none;
+}
+
+.dset-form__kind-readonly {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.dset-form__upload-buttons {
+  display: flex;
+  gap: 8px;
+  align-self: flex-start;
+}
+
+.dset-form__upload-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.dset-form__upload-existing {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 432px;
+  margin-bottom: 8px;
+}
+
+.dset-form__upload-file-name--struck {
+  text-decoration: line-through;
+}
+
+.dset-form__upload-file-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 432px;
+}
+
+.dset-form__upload-file {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border: 1px solid var(--border-main);
+  border-radius: 4px;
+
+  &--error {
+    border-color: var(--notification-error);
+  }
+
+  &--loading {
+    opacity: 0.6;
+  }
+
+  &--removed {
+    opacity: 0.6;
+    border-style: dashed;
+  }
+}
+
+.dset-form__upload-file-error {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 4px;
+  color: var(--notification-error);
+}
+
+.dset-form__upload-loading-dots {
+  color: var(--text-secondary);
+  letter-spacing: 2px;
+  font-size: 12px;
+}
+
+// -- Custom folder paths --
+
+.dset-form__custom-paths {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 24px;
+}
+
+.dset-form__folder-paths-table {
+  width: 616px;
+  max-width: 100%;
+}
+
+
+// -- Sync settings --
+
+.dset-form__sync-content {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.dset-form__sync-content--schedule-disabled {
+  opacity: 0.6;
+  pointer-events: none;
+}
+
+.dset-form__sync-notice {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+
+  > p {
+    margin: 0;
+  }
+}
+
+.dset-form__schedule-builder {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  padding-top: 16px;
+}
+
+.dset-form__schedule-radios {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.dset-form__time-row {
+  display: flex;
+  gap: 24px;
+}
+
+.dset-form__day-checkboxes {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.dset-form__day-row {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.dset-form__message-below {
+  margin-top: 8px;
+}
+
+.dset-form__cron-section {
+  padding-top: 16px;
+}
+
+// -- Size unit (hidden selector, value shown in label) --
+
+.dset-form__size-unit-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+// -- Sync dialog --
+
+.dset-form__sync-dialog {
+  max-width: 1064px;
+  width: 100%;
+}
+
+// -- Data source scope (edit mode) --
+
+.dset-form__ds-scope {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  align-items: flex-start;
+}
+
+.dset-form__ds-scope-table {
+  align-self: stretch;
+  border: 1px solid var(--border-main);
+  border-radius: 6px;
+  overflow: hidden;
+  max-width: 616px;
+}
+
+.dset-form__ds-scope-table-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  background: var(--surface-primary, #fff);
+  border-bottom: 1px solid var(--border-main);
+}
+
+.dset-form__ds-scope-table-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  background: var(--surface-primary, #fff);
+
+  & + & {
+    border-top: 1px solid var(--border-main);
+  }
+}
+
+.dset-form__ds-scope-row-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dset-form__ds-scope-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  margin-left: 8px;
+}
+
+.dset-form__ds-scope-row-view {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: 1px solid var(--border-main);
+  border-radius: var(--radius-sm, 4px);
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-size: 12px;
+  padding: 2px 8px;
+  white-space: nowrap;
+
+  &:hover {
+    background: var(--surface-hover);
+    color: var(--text-primary);
+  }
+}
+
+.dset-form__ds-scope-row-remove {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-size: 18px;
+  line-height: 1;
+  padding: 0 4px;
+
+  &:hover {
+    color: var(--text-primary);
+  }
+}
+
+// -- Schema scope --
+
+.dset-form__schema-scope {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.dset-form__schema-query-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--border-main);
+  border-radius: 8px;
+  background: var(--surface-primary, #fff);
+  max-width: 616px;
+}
+
+.dset-form__schema-query-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-primary);
+}
+
+.dset-form__schema-query-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.dset-form__schema-query-editor-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.dset-form__schema-query-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.dset-form__schema-query-editor {
+  width: 100%;
+  min-height: 88px;
+  padding: 8px 12px;
+  border: 1px solid var(--border-main);
+  border-radius: 4px;
+  font-family: var(--font-mono, "Fira Mono", monospace);
+  font-size: 13px;
+  line-height: 1.5;
+  resize: vertical;
+  background: var(--surface-secondary, #fafafa);
+  color: var(--text-primary);
+  box-sizing: border-box;
+
+  &:focus {
+    outline: 2px solid var(--border-focus, #6b57e8);
+    outline-offset: -1px;
+  }
+
+  &::placeholder {
+    color: var(--text-placeholder, #aaa);
+  }
+
+  &--error {
+    border-color: var(--notification-error, #d92d20);
+
+    &:focus {
+      outline-color: var(--notification-error, #d92d20);
+    }
+  }
+}
+
+.dset-form__schema-query-info {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-secondary);
+}
+
+.dset-form__schema-query-hint {
+  margin: 4px 0 0;
+
+  code {
+    font-family: var(--font-family-mono, ui-monospace, monospace);
+    font-size: 0.92em;
+  }
+}
+
+.dset-form__schema-query-error {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--notification-error, #d92d20);
+}

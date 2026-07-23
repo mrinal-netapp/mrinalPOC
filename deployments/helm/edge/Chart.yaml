@@ -1,0 +1,13 @@
+apiVersion: v2
+name: edge
+description: AgentStudio edge tier — ingress Gateway (Istio or NGF) + HTTPRoutes + RequestAuthentication + AuthorizationPolicy + EnvoyFilter + ReferenceGrants. Renders into agentstudio-edge.
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+keywords:
+  - agentstudio
+  - edge
+  - gateway
+  - istio
+maintainers:
+  - name: AgentStudio Team

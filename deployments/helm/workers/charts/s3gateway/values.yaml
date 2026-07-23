@@ -1,0 +1,107 @@
+# Default values for s3gateway sub-chart
+enabled: true
+replicaCount: 1
+
+# Image uses global.imageRepository as registry prefix (same private registry as other images).
+# Tag is pinned here and NOT affected by global.imageTag.
+image:
+  repository: versitygw/versitygw
+  tag: "latest"
+  pullPolicy: IfNotPresent
+  fullImage: ""  # If set, overrides the full image reference (ignores global.imageRepository + repository + tag)
+
+service:
+  type: ClusterIP
+  port: 7070  # VersityGW default S3 port
+
+storage:
+  backend: filesystem
+  dataPath: /mnt/pvcs  # PVCs are mounted directly at this path
+  # Default for shared/multi-replica setups. Override to ReadWriteOnce in restricted environments.
+  accessMode: ReadWriteMany
+
+credentials:
+  accessKey: "testuser"  # Default, should be overridden in production
+  secretKey: "secret"   # Default, should be overridden in production
+
+env: 
+  - name: VGW_BACKEND
+    value: "posix"
+  - name: VGW_BACKEND_ARG
+    value: "/mnt/pvcs"
+  - name: ROOT_ACCESS_KEY
+    value: "testuser"
+  - name: ROOT_SECRET_KEY
+    value: "secret"
+  - name: VGW_ARGS
+    value: "--health /health"
+  - name: VGW_HEALTH
+    value: "/health"
+  - name: VGW_META_SIDECAR
+    value: "/mnt/metadata"
+
+resources:
+  limits:
+    cpu: 2000m
+    memory: 4Gi
+  requests:
+    cpu: 1000m
+    memory: 2Gi
+
+healthEndpoint: "/health"
+
+
+# PVC-based volume management configuration
+pvcsMountPath: /mnt/pvcs  # Base path where PVCs will be mounted
+
+# Base directory volume configuration
+pvcsBase:
+  enabled: false  # Use emptyDir by default for mount root; enable only if you need a persistent base volume
+  size: 2Gi  # Size of base directory volume
+  storageClass: ""  # If empty, uses default storage class or global.storageClass from parent
+
+# Metadata volume configuration
+metadata:
+  enabled: true
+  size: 2Gi  # Size of metadata volume
+  storageClass: ""  # If empty, uses default storage class or global.storageClass from parent
+  volumeName: ""    # If set, statically binds to this PV (used during migration to rebind existing data)
+
+# Region for AWS_REGION env var
+region: ""  # If empty, defaults to us-east-1
+
+# Default bucket (pre-created for Lakekeeper default warehouse)
+# When enabled, a PVC is created and mounted at pvcsMountPath/defaultBucket.name.
+# Parent chart should set defaultBucket.name to default-<release-name> (e.g. default-nemo).
+defaultBucket:
+  enabled: false
+  name: ""  # Set by parent, e.g. default-nemo or default-<release-name>
+  size: 10Gi
+  storageClass: ""    # If empty, uses default storage class or global.storageClass from parent
+  volumeName: ""      # If set, statically binds to this PV (used during migration to rebind existing data)
+  # Cross-namespace sharing on Trident CSI (24.10+). Each entry in this list
+  # is added to the PVC's `trident.netapp.io/shareToNamespace` annotation so
+  # Trident permits a consumer PVC in that namespace (with a matching
+  # `trident.netapp.io/shareFromPVC` annotation + TridentVolumeReference CR)
+  # to bind to this same ONTAP volume. Use ["*"] to allow any namespace.
+  # Example: ["agentstudio-services"] to let kb-retrieval-service /
+  # artifact-service mount the same bucket as the workers.
+  shareToNamespaces: []
+
+# These will be passed from parent chart
+namespace: ""
+serviceAccountName: ""
+podSecurityContext: {}
+securityContext: {}
+nodeSelector: {}
+affinity: {}
+tolerations: []
+# Note: global.imageRepository and global.imagePullSecrets are inherited from parent. image.tag is pinned (not affected by global.imageTag).
+
+serviceAccount:
+  create: false
+  name: ""
+  azureClientId: ""
+
+workloadIdentity:
+  enabled: false

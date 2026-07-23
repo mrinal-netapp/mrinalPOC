@@ -1,0 +1,19 @@
+{{- if .Values.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: gui
+  labels:
+    {{- include "gui.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - port: {{ .Values.service.port }}
+      targetPort: http
+      protocol: TCP
+      appProtocol: http
+      name: http-web
+  selector:
+    {{- include "gui.selectorLabels" . | nindent 4 }}
+{{- end }}
+

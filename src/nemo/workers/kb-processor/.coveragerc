@@ -1,0 +1,12 @@
+[run]
+omit =
+    # Deprecated, unused module (LocalAI embedding provider was replaced by
+    # the gateway-backed EmbeddingGenerator in processing/embedder.py; kept
+    # only for potential future re-enablement). Not imported anywhere in the
+    # active pipeline, so it isn't exercised by unit tests.
+    processing/localai_embedder.py
+
+[report]
+exclude_lines =
+    pragma: no cover
+    if __name__ == .__main__.:

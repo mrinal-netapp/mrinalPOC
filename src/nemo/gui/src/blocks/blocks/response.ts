@@ -1,0 +1,116 @@
+import { ResponseIcon } from '@/components/icons'
+import type { BlockConfig } from '@/blocks/types'
+
+export const ResponseBlock: BlockConfig = {
+  type: 'response',
+  name: 'Response',
+  description: 'Send structured API response',
+  longDescription:
+    'Integrate Response into the workflow. Can send build or edit structured responses into a final workflow response.',
+  docsLink: 'https://docs.agentstudio.io/blocks/response',
+  bestPractices: `
+  - Only use this if the trigger block is the API Trigger.
+  - Prefer the builder mode over the editor mode.
+  - This is usually used as the last block in the workflow.
+  `,
+  category: 'blocks',
+  bgColor: '#1D4ED8', // Blue-700 - API/Integration theme
+  icon: ResponseIcon,
+  subBlocks: [
+    {
+      id: 'dataMode',
+      title: 'Response Data Mode',
+      type: 'dropdown',
+      options: [
+        { label: 'Builder', id: 'structured' },
+        { label: 'Editor', id: 'json' },
+      ],
+      value: () => 'structured',
+      description: 'Choose how to define your response data structure',
+    },
+    {
+      id: 'builderData',
+      title: 'Response Structure',
+      type: 'response-format',
+      condition: { field: 'dataMode', value: 'structured' },
+      description:
+        'Define the structure of your response data. Use <variable.name> in field names to reference workflow variables.',
+    },
+    {
+      id: 'data',
+      title: 'Response Data',
+      type: 'code',
+      placeholder: '{\n  "message": "Hello world",\n  "userId": "<variable.userId>"\n}',
+      language: 'json',
+      condition: { field: 'dataMode', value: 'json' },
+      description:
+        'Data that will be sent as the response body on API calls. Use <variable.name> to reference workflow variables.',
+      wandConfig: {
+        enabled: true,
+        maintainHistory: true,
+        prompt: `You are an expert JSON programmer.
+Generate ONLY the raw JSON object based on the user's request.
+The output MUST be a single, valid JSON object, starting with { and ending with }.
+
+Current response: {context}
+
+Do not include any explanations, markdown formatting, or other text outside the JSON object.
+
+You have access to the following variables you can use to generate the JSON body:
+- 'params' (object): Contains input parameters derived from the JSON schema. Access these directly using the parameter name wrapped in angle brackets, e.g., '<paramName>'. Do NOT use 'params.paramName'.
+- 'environmentVariables' (object): Contains environment variables. Reference these using the double curly brace syntax: '{{ENV_VAR_NAME}}'. Do NOT use 'environmentVariables.VAR_NAME' or env.
+
+Example:
+{
+  "name": "<block.agent.response.content>",
+  "age": <block.function.output.age>,
+  "success": true
+}`,
+        placeholder: 'Describe the API response structure you need...',
+        generationType: 'json-object',
+      },
+    },
+    {
+      id: 'status',
+      title: 'Status Code',
+      type: 'short-input',
+      placeholder: '200',
+      description: 'HTTP status code (default: 200)',
+    },
+    {
+      id: 'headers',
+      title: 'Response Headers',
+      type: 'table',
+      columns: ['Key', 'Value'],
+      description: 'Additional HTTP headers to include in the response',
+    },
+  ],
+  tools: { access: [] },
+  inputs: {
+    dataMode: {
+      type: 'string',
+      description: 'Response data definition mode',
+    },
+    builderData: {
+      type: 'json',
+      description: 'Structured response data',
+    },
+    data: {
+      type: 'json',
+      description: 'JSON response body',
+    },
+    status: {
+      type: 'number',
+      description: 'HTTP status code',
+    },
+    headers: {
+      type: 'json',
+      description: 'Response headers',
+    },
+  },
+  outputs: {
+    data: { type: 'json', description: 'Response data' },
+    status: { type: 'number', description: 'HTTP status code' },
+    headers: { type: 'json', description: 'Response headers' },
+  },
+}

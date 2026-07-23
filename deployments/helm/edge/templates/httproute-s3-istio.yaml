@@ -1,0 +1,29 @@
+{{- /*
+s3.<endpoint> -> apigateway-service (SigV4 re-signing path).
+
+Stays on apigateway-service this PR; PR-B extracts s3-sigv4-proxy and
+this backend flips to s3-sigv4-proxy:7070.
+*/ -}}
+{{- if and .Values.gateway.enabled (eq (.Values.gateway.provider | default "nginx") "istio") -}}
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: agentstudio-s3
+  namespace: {{ include "nemo.namespace" . }}
+  labels:
+    {{- include "edge.labels" . | nindent 4 }}
+spec:
+  parentRefs:
+    - name: {{ include "nemo.gatewayName" . }}
+  hostnames:
+    - {{ include "nemo.s3Subdomain" . | quote }}
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: apigateway-service
+          namespace: {{ include "nemo.servicesNamespace" . }}
+          port: 8080
+{{- end }}

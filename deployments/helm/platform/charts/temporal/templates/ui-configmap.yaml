@@ -1,0 +1,20 @@
+{{- if and .Values.enabled .Values.ui.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "temporal.fullname" . }}-ui-config
+  labels:
+    {{- include "temporal.labels" . | nindent 4 }}
+    component: temporal-ui
+data:
+  docker.yaml: |
+    server:
+      port: {{ .Values.ui.service.targetPort | int }}
+      basePath: ""
+    temporal:
+      address: "temporal:7233"
+    cors:
+      origins:
+        - "*"
+{{- end }}
+

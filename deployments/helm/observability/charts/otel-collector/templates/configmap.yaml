@@ -1,0 +1,300 @@
+{{/*
+Build the OTTL condition that identifies an "agent / LLM" span.
+A span is considered an agent span when ANY of the following is true:
+  - resource.attributes["service.name"] matches a name in .Values.tracing.agentServiceNames
+  - attributes["openinference.span.kind"] is set  (openinference-instrumentation-*)
+  - attributes["gen_ai.system"] is set             (OTel GenAI semantic conventions)
+  - attributes["llm.model_name"] is set            (older LLM instrumentation)
+This intentionally casts a wide net so new services that use standard LLM
+instrumentation are automatically routed to Phoenix without config changes.
+*/}}
+{{- define "otel-collector.agentSpanCondition" -}}
+{{- $parts := list -}}
+{{- range .Values.tracing.agentServiceNames -}}
+  {{- $parts = append $parts (printf "resource.attributes[\"service.name\"] == \"%s\"" .) -}}
+{{- end -}}
+{{- $parts = append $parts "attributes[\"openinference.span.kind\"] != nil" -}}
+{{- $parts = append $parts "attributes[\"gen_ai.system\"] != nil" -}}
+{{- $parts = append $parts "attributes[\"llm.model_name\"] != nil" -}}
+{{- join " or " $parts -}}
+{{- end -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "otel-collector.fullname" . }}-config
+  labels:
+    {{- include "otel-collector.labels" . | nindent 4 }}
+data:
+  config.yaml: |
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: "0.0.0.0:{{ .Values.service.ports.grpc }}"
+          http:
+            endpoint: "0.0.0.0:{{ .Values.service.ports.http }}"
+            cors:
+              allowed_origins:
+                - "http://*"
+                - "https://*"
+
+    extensions:
+      health_check:
+        endpoint: 0.0.0.0:13133
+
+    processors:
+      memory_limiter:
+        check_interval: 1s
+        limit_mib: 192
+
+      # Drop high-frequency health-check and metrics-scrape log lines that
+      # add noise to Loki without diagnostic value.
+      filter/noise:
+        error_mode: ignore
+        logs:
+          log_record:
+            - 'attributes["span_name"] == "GET /metrics"'
+            - 'attributes["span_name"] == "GET /health"'
+            - 'attributes["event"] == "health_ok"'
+
+      # Stamp cluster-level resource attributes onto every log record that
+      # reaches the central collector (both OTLP app logs and DaemonSet pod logs).
+      # These feed Loki label selectors and Grafana dashboard filters.
+      resource/k8s_logs:
+        attributes:
+          - key: environment
+            value: {{ .Values.podLogs.environment | default "production" | quote }}
+            action: upsert
+          - key: cluster
+            value: {{ .Values.podLogs.cluster | default "k8s" | quote }}
+            action: upsert
+
+      # Batch settings match the source observability-service defaults (5 s / 1024 spans).
+      batch:
+        timeout: {{ .Values.batch.timeout }}
+        send_batch_size: {{ .Values.batch.sendBatchSize }}
+
+      # ---------------------------------------------------------------------------
+      # Trace routing — Phoenix gets agent/LLM traces; Tempo gets everything else.
+      #
+      # filter/agent_traces_only: drops spans that are NOT agent/LLM spans.
+      #   → used in traces/phoenix pipeline so only agent spans reach Phoenix.
+      #
+      # filter/infra_traces_only: drops spans that ARE agent/LLM spans.
+      #   → used in traces/tempo pipeline so agent spans don't duplicate into Tempo.
+      #
+      # The condition is built from .Values.tracing.agentServiceNames plus
+      # standard LLM/GenAI OpenTelemetry attributes, so any new service that uses
+      # openinference or OTel GenAI instrumentation is automatically routed to
+      # Phoenix without a config change.
+      # ---------------------------------------------------------------------------
+      filter/agent_traces_only:
+        error_mode: ignore
+        traces:
+          span:
+            # Drop spans that do NOT match the agent-span condition (keep only agent spans).
+            - 'not ({{ include "otel-collector.agentSpanCondition" . }})'
+
+      filter/infra_traces_only:
+        error_mode: ignore
+        traces:
+          span:
+            # Drop spans that DO match the agent-span condition (keep only infra spans).
+            - '{{ include "otel-collector.agentSpanCondition" . }}'
+
+      # Tail sampling for Tempo infrastructure traces.
+      # Mirrors observability-service/.env.example defaults exactly:
+      #   - Always keep error spans
+      #   - Always keep slow traces (> 500 ms)
+      #   - Probabilistic 10 % of the rest
+      tail_sampling:
+        decision_wait: {{ .Values.tracing.decisionWait }}
+        num_traces: {{ .Values.tracing.maxTraces }}
+        expected_new_traces_per_sec: {{ .Values.tracing.expectedNewPerSec }}
+        policies:
+          - name: always-sample-errors
+            type: status_code
+            status_code:
+              status_codes: [ERROR]
+          - name: always-sample-slow
+            type: latency
+            latency:
+              threshold_ms: {{ .Values.tracing.slowThresholdMs }}
+          - name: probabilistic-sample
+            type: probabilistic
+            probabilistic:
+              sampling_percentage: {{ .Values.tracing.samplingPercentage }}
+
+      # Normalise span_kind / span_status values that some SDKs emit with a
+      # "SpanKind." / "StatusCode." prefix (mirrors source transform/trace_normalize).
+      transform/trace_normalize:
+        error_mode: ignore
+        trace_statements:
+          - context: span
+            statements:
+              - replace_pattern(attributes["span_kind"], "^SpanKind\\.", "")
+              - replace_pattern(attributes["span_status"], "^StatusCode\\.", "")
+
+      # Promote trace_id / span_id from log attributes into the native OTel log
+      # record fields so Loki stores them as structured metadata (enabling
+      # log ↔ trace correlation in Grafana without high-cardinality labels).
+      # Also strips high-cardinality or redundant attributes that should live
+      # only in the log body, not as Loki label candidates.
+      # Mirrors observability-service transform/log_attributes exactly.
+      transform/log_attributes:
+        error_mode: ignore
+        log_statements:
+          - context: log
+            statements:
+              - set(trace_id.string, attributes["trace_id"]) where attributes["trace_id"] != nil
+              - set(span_id.string, attributes["span_id"]) where attributes["span_id"] != nil
+              - delete_key(attributes, "trace_id")
+              - delete_key(attributes, "span_id")
+              - delete_key(attributes, "endpoint")
+              - delete_key(attributes, "auth_type")
+              - delete_key(attributes, "duration_ms")
+              - delete_key(attributes, "span_attributes")
+              - delete_key(attributes, "span_name")
+              - delete_key(attributes, "span_kind")
+              - delete_key(attributes, "span_status")
+              - delete_key(attributes, "parent_span_id")
+              - delete_key(attributes, "timestamp")
+              - delete_key(attributes, "service_name")
+
+      # Map the `level` attribute (emitted by Python structlog, Rust tracing,
+      # and most Node.js loggers) to the OTel severity_text / severity_number
+      # fields so Grafana Loki can filter by log level natively.
+      # Mirrors observability-service transform/severity exactly.
+      transform/severity:
+        error_mode: ignore
+        log_statements:
+          - context: log
+            statements:
+              - set(severity_text, attributes["level"]) where attributes["level"] != nil
+              - set(severity_number, SEVERITY_NUMBER_DEBUG) where attributes["level"] == "debug"
+              - set(severity_number, SEVERITY_NUMBER_INFO) where attributes["level"] == "info"
+              - set(severity_number, SEVERITY_NUMBER_WARN) where attributes["level"] == "warn"
+              - set(severity_number, SEVERITY_NUMBER_ERROR) where attributes["level"] == "error"
+              - set(severity_number, SEVERITY_NUMBER_FATAL) where attributes["level"] == "fatal"
+              - delete_key(attributes, "level")
+
+    # ---------------------------------------------------------------------------
+    # Connectors — components that act as both an exporter for one pipeline and
+    # a receiver for another.  spanmetrics taps every span that passes through
+    # and automatically computes RED (Rate / Error / Duration) histograms that
+    # Prometheus can scrape, with zero changes required in application code.
+    # ---------------------------------------------------------------------------
+    connectors:
+      spanmetrics:
+        # Explicit histogram buckets covering typical web-service latency range
+        # (50 ms → 5 s).  Values are duration strings; the generated metric unit
+        # is milliseconds so these map directly to Grafana panel axes.
+        histogram:
+          explicit:
+            buckets: [50ms, 100ms, 250ms, 500ms, 1s, 2s, 5s]
+        # Extra span attributes to carry forward as Prometheus metric labels.
+        # service.name is always included automatically.  http.* and http.route
+        # give per-endpoint breakdown; omit a dimension if the attribute is
+        # absent and you don't want an empty label cluttering dashboards.
+        dimensions:
+          - name: http.method
+            default: ""
+          - name: http.status_code
+            default: ""
+          - name: http.route
+            default: ""
+        # How often generated metric points are flushed to the metrics pipeline.
+        metrics_flush_interval: 15s
+        # Prefix all generated metric names with "traces." so they are clearly
+        # distinct from app-pushed OTLP metrics in Prometheus.
+        namespace: traces
+
+    exporters:
+      # Agent/LLM traces → Arize Phoenix (OTLP HTTP).
+      otlphttp/phoenix:
+        endpoint: "{{ .Values.phoenixEndpoint }}"
+        tls:
+          insecure: true
+      {{- if .Values.tempoEndpoint }}
+
+      # Infrastructure traces → Grafana Tempo (OTLP gRPC).
+      otlp/tempo:
+        endpoint: "{{ .Values.tempoEndpoint }}"
+        tls:
+          insecure: true
+      {{- end }}
+
+      # Prometheus exporter — exposes received OTLP metrics for Prometheus to scrape.
+      # resource_to_telemetry_conversion promotes OTLP resource attributes
+      # (including project_id) to Prometheus labels automatically.
+      prometheus:
+        endpoint: "0.0.0.0:{{ .Values.service.ports.prometheus }}"
+        namespace: "otelcol"
+        resource_to_telemetry_conversion:
+          enabled: true
+
+      # Debug exporter (disabled by default; enable for troubleshooting).
+      debug:
+        verbosity: basic
+      {{- if .Values.lokiEndpoint }}
+
+      # Logs → Grafana Loki via OTLP ingest (Loki v3+ native OTLP path).
+      # Using otlphttp/loki (not the legacy loki exporter) so structured metadata
+      # and trace_id correlation work out of the box.
+      otlphttp/loki:
+        endpoint: "{{ .Values.lokiEndpoint }}"
+        tls:
+          insecure: true
+      {{- end }}
+
+    service:
+      extensions: [health_check]
+      pipelines:
+        # Agent/LLM traces → Phoenix (unsampled — full fidelity for AI observability).
+        # Phoenix is LLM-specific; preserving 100 % of agent spans gives accurate
+        # token usage, latency, and prompt/response data without data loss.
+        traces/phoenix:
+          receivers: [otlp]
+          processors: [memory_limiter, filter/agent_traces_only, transform/trace_normalize, batch]
+          exporters: [otlphttp/phoenix]
+        {{- if .Values.tempoEndpoint }}
+
+        # Infrastructure / non-agent traces → Tempo (tail-sampled).
+        # Errors and slow traces are always kept; 10 % probabilistic sample of the rest.
+        traces/tempo:
+          receivers: [otlp]
+          processors: [memory_limiter, filter/infra_traces_only, tail_sampling, transform/trace_normalize, batch]
+          exporters: [otlp/tempo]
+        {{- end }}
+
+        # All spans → spanmetrics connector.
+        # A dedicated pipeline with no filter ensures RED metrics are generated
+        # for every service regardless of whether Tempo is enabled.  The
+        # spanmetrics connector acts as the exporter here and as the receiver
+        # in the metrics pipeline below.
+        traces/spanmetrics:
+          receivers: [otlp]
+          processors: [memory_limiter, batch]
+          exporters: [spanmetrics]
+
+        # Receives explicit OTLP metrics pushed by apps AND the automatic RED
+        # metrics produced by the spanmetrics connector above.
+        metrics:
+          receivers: [otlp, spanmetrics]
+          processors: [memory_limiter, batch]
+          exporters: [prometheus]
+        {{- if .Values.lokiEndpoint }}
+
+        # Receives both direct OTLP logs from app services (Rust/Python/TS SDK)
+        # and pod logs forwarded as OTLP/gRPC from the per-node DaemonSet
+        # collector. Both sources flow through the same processors so Loki sees
+        # a consistent label/severity/resource set regardless of origin.
+        logs:
+          receivers: [otlp]
+          processors: [memory_limiter, filter/noise, transform/log_attributes, transform/severity, resource/k8s_logs, batch]
+          exporters: [otlphttp/loki]
+        {{- end }}
+
+      telemetry:
+        logs:
+          level: "warn"

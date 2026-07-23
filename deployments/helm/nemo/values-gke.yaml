@@ -1,0 +1,22 @@
+# GKE overlay for the nemo umbrella — RETIRED / documentation only.
+#
+# The GKE deploy path no longer uses the nemo umbrella. PR #20 split the stack
+# into per-tier charts and moved the Gateway into the services tier, so
+# `make deploy-gke` now runs the tiered orchestrator `deploy-all-tiers-gke`
+# instead of the monolith `deploy-all` + nemo umbrella.
+#
+# The GKE storage/gateway overrides that used to live here have moved to the
+# tier overlays:
+#   * GCNV NAS RWX for s3gateway            -> deployments/helm/workers/values-gke.yaml
+#   * GCNV NAS RWX for services bucket      -> deployments/helm/services/values-gke.yaml
+#   * GCNV SAN RWO for postgres/database    -> deployments/helm/database/values-gke.yaml
+#   * Cross-namespace gateway allowedRoutes -> services/values.yaml default
+#                                              (gateway.listeners.*.from: All)
+#   * Keycloak HTTPRoute parentRef          -> deployments/helm/identity/values-gke.yaml
+#
+# See docs/deployment/gke-tiered-deploy-design.md for the full design.
+#
+# This file is intentionally values-free (a no-op if ever passed to a helm
+# command); it is retained only to document that GKE now uses dual GCNV-native
+# Trident classes (`gcnv-nas-rwx`, `gcnv-san-rwo`) provisioned by
+# `make gke-ensure-storage-ready`.

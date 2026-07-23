@@ -1,0 +1,220 @@
+.toolset-config-dialog {
+  width: 100%;
+
+  // -- Layout ---------------------------------------------------------------
+  //
+  // Match Card{Header,Footer}'s `padding-inline: 40px` so the section titles
+  // ("Toolset details" / "Tools") line up with the dialog title above and
+  // the Save/Cancel buttons below. Vertical padding is the Card default for
+  // body content (24px).
+
+  &__content {
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+    padding: 24px 40px;
+
+    // Reset the UA margins on h1-h6 / p / dl that `Typography Component=…`
+    // renders. Otherwise those default `1em` margins stack on top of our
+    // flex `gap` and the dialog ends up with enormous vertical air.
+    h1, h2, h3, h4, h5, h6,
+    p, dl, dd {
+      margin: 0;
+    }
+  }
+
+  &__section {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  &__heading {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  &__field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    width: 100%;
+    max-width: 480px;
+  }
+
+  // -- Status / Labels meta strip ------------------------------------------
+  //
+  // Renders as a 2-column "label / value" grid; mirrors the dataset/KB
+  // detail-overview layout so density and alignment feel native to the app.
+
+  &__meta {
+    display: grid;
+    grid-template-columns: 120px 1fr;
+    row-gap: 6px;
+    column-gap: 16px;
+    margin: 0;
+  }
+
+  &__meta-row {
+    display: contents;
+  }
+
+  &__meta-label,
+  &__meta-value {
+    margin: 0;
+  }
+
+  &__status {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+
+    &--healthy {
+      color: var(--notification-success);
+    }
+
+    &--degraded {
+      color: var(--notification-warning, var(--orange-50));
+    }
+
+    &--unhealthy {
+      color: var(--notification-error, var(--red-30));
+    }
+
+    &--unknown {
+      color: var(--text-secondary);
+    }
+  }
+
+  // -- Selection-count banner ----------------------------------------------
+
+  &__selection-banner {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--text-secondary);
+
+    &--error {
+      color: var(--notification-error);
+
+      .toolset-config-dialog__selection-banner-icon {
+        color: var(--notification-error);
+      }
+    }
+  }
+
+  &__selection-banner-icon {
+    color: var(--notification-information);
+    flex-shrink: 0;
+  }
+
+  // -- Tools table ---------------------------------------------------------
+
+  &__tools-table {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  &__tools-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  &__tools-toolbar-actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  &__tools-search {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    width: 220px;
+  }
+
+  &__table {
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: auto;
+  }
+
+  &__th {
+    text-align: start;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border-main);
+    background: var(--background-content);
+    color: var(--text-secondary);
+    font-weight: 600;
+    font-size: 14px;
+    line-height: 20px;
+    white-space: nowrap;
+
+    &--checkbox {
+      width: 44px;
+      padding-inline-end: 0;
+    }
+  }
+
+  &__sort-button {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+
+    background: transparent;
+    border: none;
+    padding: 0;
+    margin: 0;
+    cursor: pointer;
+    color: inherit;
+    font: inherit;
+
+    &:hover {
+      color: var(--text-primary);
+    }
+
+    &:focus-visible {
+      outline: 2px solid var(--text-button-primary);
+      outline-offset: 2px;
+      border-radius: 2px;
+    }
+  }
+
+  &__tr {
+    background: var(--background-table-row, var(--background-content));
+
+    &:nth-child(even) {
+      background: var(--background-table-row-alt, var(--grey-10));
+    }
+
+    &[data-selected] {
+      background: var(--background-selected, var(--blue-10));
+    }
+
+    &:hover {
+      background: var(--background-table-row-hover, var(--blue-10));
+    }
+  }
+
+  &__td {
+    padding: 12px;
+    border-bottom: 1px solid var(--border-main);
+    vertical-align: middle;
+    font-size: 14px;
+    line-height: 20px;
+
+    &--checkbox {
+      width: 44px;
+      padding-inline-end: 0;
+    }
+  }
+
+  &__empty-cell {
+    padding: 24px 12px;
+    text-align: center;
+  }
+}

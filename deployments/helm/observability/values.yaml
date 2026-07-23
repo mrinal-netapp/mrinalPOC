@@ -1,0 +1,958 @@
+# ---------------------------------------------------------------------------
+# Observability stack values
+# Deploy separately from Agent Studio services:
+#   make helm-observability-upgrade
+#
+# Trace routing overview:
+#   Services → OTel Collector → (agent/LLM spans) → Phoenix
+#                             → (infra spans, tail-sampled) → Tempo
+#   Logs    → OTel Collector → Loki
+#   Metrics → OTel Collector → Prometheus
+# ---------------------------------------------------------------------------
+
+namespace: monitoring
+servicesNamespace: agentstudio-services
+
+# ---------------------------------------------------------------------------
+# Global image registry override
+# ---------------------------------------------------------------------------
+# Set this to redirect every subchart image pull to a corporate mirror.
+# Example (AKS / air-gapped):
+#   global:
+#     imageRegistry: docker.repo.eng.netapp.com
+#
+# When empty (default), images are pulled from their default registry
+# (usually Docker Hub).  All four observability subcharts (otel-collector,
+# loki, tempo, phoenix) respect this setting via their .image helper.
+global:
+  imageRegistry: ""
+
+# kube-prometheus-stack (Prometheus + Grafana + alertmanager + node-exporter)
+kube-prometheus-stack:
+  enabled: true
+  fullnameOverride: prometheus
+
+  # Helm hook Jobs (prometheus-admission-create / -patch) run in the monitoring
+  # namespace, which has istio-injection=enabled. Without this annotation the
+  # istio-proxy sidecar never exits and the hook Job never completes, stalling
+  # `helm upgrade observability` (common on EKS/AKS/GKE with OBSERVABILITY=1).
+  prometheusOperator:
+    admissionWebhooks:
+      patch:
+        podAnnotations:
+          sidecar.istio.io/inject: "false"
+
+  # Prometheus server
+  prometheus:
+    prometheusSpec:
+      # Discover ServiceMonitors across ALL namespaces (including the agentstudio namespace)
+      serviceMonitorSelectorNilUsesHelmValues: false
+      podMonitorSelectorNilUsesHelmValues: false
+
+      # Retention
+      retention: 7d
+      retentionSize: 5GB
+
+      # PVC-backed storage so metric history survives pod restarts and rescheduling.
+      # Without this, Prometheus uses emptyDir and loses all data on restart.
+      # 10 Gi comfortably holds 7 days of metrics for a small cluster; scale up
+      # in values-aks.yaml for production workloads.
+      storageSpec:
+        volumeClaimTemplate:
+          spec:
+            accessModes: ["ReadWriteOnce"]
+            resources:
+              requests:
+                storage: 10Gi
+
+  # Grafana
+  grafana:
+    enabled: true
+    adminPassword: admin  # Override in production via admin.existingSecret
+    service:
+      type: ClusterIP
+    # Additional datasources for Loki, Tempo, and the project-scoped Prometheus proxy.
+    # Mirrors the provisioning in observability-service/grafana/provisioning/datasources/.
+    # IMPORTANT: only one additionalDataSources key is allowed per YAML mapping —
+    # a duplicate key silently drops everything defined before it.
+    additionalDataSources:
+      - name: Loki
+        uid: loki
+        type: loki
+        access: proxy
+        url: http://loki.monitoring.svc.cluster.local:3100
+        editable: true
+        jsonData:
+          derivedFields:
+            # Correlate log lines to Tempo traces via trace_id field.
+            - datasourceUid: tempo
+              matcherRegex: '"trace_id":\s*"([a-f0-9]+)"'
+              name: TraceID
+              url: '${__value.raw}'
+              urlDisplayLabel: View Trace
+      - name: Tempo
+        uid: tempo
+        type: tempo
+        access: proxy
+        url: http://tempo.monitoring.svc.cluster.local:3200
+        editable: true
+        jsonData:
+          # Link traces back to Loki logs filtered by trace ID.
+          tracesToLogs:
+            datasourceUid: loki
+            filterByTraceID: true
+            filterBySpanID: false
+            mapTagNamesEnabled: true
+            mappedTags:
+              - key: service.name
+                value: service_name
+          tracesToMetrics:
+            datasourceUid: prometheus
+            tags:
+              - key: service.name
+                value: service_name
+          nodeGraph:
+            enabled: true
+          lokiSearch:
+            datasourceUid: loki
+      # Project-scoped Prometheus proxy — enforces per-user project_id scope on
+      # every PromQL query before forwarding to Prometheus.
+      # NOT the default datasource: infra dashboards (kube-prometheus-stack /
+      # Compute Resources) must reach raw Prometheus so cluster metrics without a
+      # project_id label render. App dashboards (e.g. Service Overview) pin this
+      # datasource by uid, so their queries stay project-scoped through the proxy.
+      - name: "Prometheus (Project Scoped)"
+        uid: prometheus-proxy
+        type: prometheus
+        access: proxy
+        url: "http://prometheus-proxy.monitoring.svc.cluster.local:9091"
+        isDefault: false
+        editable: false
+
+    # No extra plugins required — the Infinity datasource is replaced by a
+    # standard Prometheus label_values variable query scoped by prometheus-proxy.
+    plugins: []
+
+    sidecar:
+      datasources:
+        # Make the chart's built-in (raw) Prometheus datasource the default so
+        # infra dashboards that don't pin a datasource resolve to unscoped
+        # Prometheus and render cluster metrics (CPU/mem) that carry no
+        # project_id label. App dashboards still pin prometheus-proxy by uid, so
+        # project-level RBAC on app metrics is preserved.
+        # NOTE: this makes raw Prometheus reachable as the Grafana default —
+        # project scoping is now enforced only where the proxy is pinned. Revisit
+        # (Option A: metric-aware proxy) when admin/viewer RBAC is formalized.
+        isDefaultDatasource: true
+
+    grafana.ini:
+      # ---------------------------------------------------------------------------
+      # Auth proxy — trust X-WEBAUTH-USER/ROLE/EMAIL headers injected by the
+      # agent-studio-grafana-proxy. The proxy performs OIDC with Keycloak and
+      # forwards only verified requests here.
+      # whitelist: restrict to the grafana-proxy pod CIDR in production.
+      # ---------------------------------------------------------------------------
+      auth.proxy:
+        enabled: true
+        header_name: X-WEBAUTH-USER
+        header_property: username
+        auto_sign_up: true
+        # Role and email headers are also forwarded by the proxy.
+        headers: "Role:X-WEBAUTH-ROLE Email:X-WEBAUTH-EMAIL Name:X-WEBAUTH-NAME"
+        # Leave empty for local dev; on AKS set to the grafana-proxy pod CIDR.
+        whitelist: ""
+      auth:
+        # Login form disabled — OIDC via grafana-proxy is the only entry point.
+        # This prevents bypassing the proxy with the local admin password.
+        disable_login_form: true
+        disable_signout_menu: false
+      auth.anonymous:
+        enabled: false
+      security:
+        # Allow Grafana to be embedded in the AgentStudio UI via iframe.
+        allow_embedding: true
+        cookie_samesite: none
+        cookie_secure: true
+      # Send the authenticated Grafana username to outbound datasource calls so
+      # prometheus-proxy can identify the caller via X-Grafana-User header.
+      dataproxy:
+        send_user_header: true
+
+    dashboardProviders:
+      dashboardproviders.yaml:
+        apiVersion: 1
+        providers:
+          - name: "default"
+            orgId: 1
+            folder: ""
+            type: file
+            disableDeletion: false
+            editable: true
+            options:
+              path: /var/lib/grafana/dashboards/default
+
+    # ---------------------------------------------------------------------------
+    # Infinity datasource — used by the $project template variable in dashboards.
+    # The proxy exposes GET /.auth/projects which returns the calling user's
+    # project list. Grafana forwards X-Grafana-User to identify the requester
+    # (requires dataproxy.send_user_header: true above).
+    # ---------------------------------------------------------------------------
+    # ---------------------------------------------------------------------------
+    # Dashboards provisioned via kube-prometheus-stack's auto-ConfigMap creation.
+    # Each key under `default` becomes a dashboard file under
+    # /var/lib/grafana/dashboards/default inside the Grafana pod.
+    # ---------------------------------------------------------------------------
+    dashboards:
+      default:
+        service-overview:
+          json: |
+            {
+              "id": null,
+              "uid": "service-overview",
+              "title": "Service Overview",
+              "description": "RED metrics for instrumented services, filtered by project",
+              "tags": ["agentstudio"],
+              "schemaVersion": 39,
+              "version": 2,
+              "refresh": "30s",
+              "timezone": "browser",
+              "graphTooltip": 1,
+              "time": { "from": "now-1h", "to": "now" },
+              "templating": {
+                "list": [
+                  {
+                    "name": "project",
+                    "type": "query",
+                    "label": "Project",
+                    "description": "Filter metrics to a specific project. Defaults to all.",
+                    "datasource": { "type": "prometheus", "uid": "prometheus-proxy" },
+                    "query": "label_values(project_id)",
+                    "refresh": 1,
+                    "sort": 1,
+                    "includeAll": true,
+                    "multi": true,
+                    "allValue": ".*",
+                    "current": { "selected": true, "text": ["All"], "value": ["$__all"] }
+                  },
+                  {
+                    "name": "service",
+                    "type": "query",
+                    "label": "Service",
+                    "description": "Filter metrics by service. All includes every instrumented service.",
+                    "datasource": { "type": "prometheus", "uid": "prometheus-proxy" },
+                    "query": "label_values(http_server_request_count_total, exported_service_name)",
+                    "refresh": 2,
+                    "sort": 1,
+                    "includeAll": true,
+                    "multi": false,
+                    "allValue": ".+",
+                    "current": { "selected": true, "text": "All", "value": "$__all" }
+                  },
+                  {
+                    "name": "excluded_endpoint",
+                    "type": "custom",
+                    "label": "Excluded Endpoint Pattern",
+                    "description": "Regex pattern for URL paths to exclude from all panels (e.g. .*health.* removes health checks).",
+                    "options": [
+                      { "text": "health/ready", "value": ".*(health|ready|metrics).*" }
+                    ],
+                    "current": { "text": "health/ready", "value": ".*(health|ready|metrics).*" },
+                    "includeAll": false,
+                    "multi": false
+                  }
+                ]
+              },
+              "annotations": { "list": [] },
+              "panels": [
+                {
+                  "collapsed": false,
+                  "title": "Overview",
+                  "type": "row",
+                  "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+                  "id": 100
+                },
+                {
+                  "id": 1,
+                  "type": "stat",
+                  "title": "Request Rate",
+                  "description": "Total requests per second across all endpoints",
+                  "datasource": { "type": "prometheus", "uid": "prometheus-proxy" },
+                  "gridPos": { "h": 4, "w": 8, "x": 0, "y": 1 },
+                  "targets": [
+                    {
+                      "expr": "sum(rate(http_server_request_count_total{exported_service_name=~\"$service\", project_id=~\"$project\", url_path!~\"$excluded_endpoint\"}[5m]))",
+                      "refId": "A",
+                      "legendFormat": ""
+                    }
+                  ],
+                  "fieldConfig": {
+                    "defaults": {
+                      "unit": "reqps",
+                      "decimals": 1,
+                      "noValue": "No traffic",
+                      "color": { "mode": "thresholds" },
+                      "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                          { "color": "green", "value": null },
+                          { "color": "yellow", "value": 100 },
+                          { "color": "red", "value": 500 }
+                        ]
+                      }
+                    },
+                    "overrides": []
+                  },
+                  "options": {
+                    "reduceOptions": { "calcs": ["lastNotNull"] },
+                    "colorMode": "value",
+                    "graphMode": "area",
+                    "justifyMode": "auto",
+                    "textMode": "auto",
+                    "orientation": "auto"
+                  }
+                },
+                {
+                  "id": 2,
+                  "type": "stat",
+                  "title": "Error Rate",
+                  "description": "Percentage of requests that ended with ERROR span status in the last 5 minutes",
+                  "datasource": { "type": "prometheus", "uid": "prometheus-proxy" },
+                  "gridPos": { "h": 4, "w": 8, "x": 8, "y": 1 },
+                  "targets": [
+                    {
+                      "expr": "(sum(rate(http_server_request_error_count_total{exported_service_name=~\"$service\", project_id=~\"$project\", url_path!~\"$excluded_endpoint\"}[5m])) / sum(rate(http_server_request_count_total{exported_service_name=~\"$service\", project_id=~\"$project\", url_path!~\"$excluded_endpoint\"}[5m]))) * 100",
+                      "refId": "A",
+                      "legendFormat": ""
+                    }
+                  ],
+                  "fieldConfig": {
+                    "defaults": {
+                      "unit": "percent",
+                      "decimals": 2,
+                      "noValue": "No traffic",
+                      "color": { "mode": "thresholds" },
+                      "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                          { "color": "green", "value": null },
+                          { "color": "yellow", "value": 1 },
+                          { "color": "red", "value": 5 }
+                        ]
+                      }
+                    },
+                    "overrides": []
+                  },
+                  "options": {
+                    "reduceOptions": { "calcs": ["lastNotNull"] },
+                    "colorMode": "value",
+                    "graphMode": "area",
+                    "justifyMode": "auto",
+                    "textMode": "auto",
+                    "orientation": "auto"
+                  }
+                },
+                {
+                  "id": 3,
+                  "type": "stat",
+                  "title": "P95 Latency",
+                  "description": "95th percentile request duration",
+                  "datasource": { "type": "prometheus", "uid": "prometheus-proxy" },
+                  "gridPos": { "h": 4, "w": 8, "x": 16, "y": 1 },
+                  "targets": [
+                    {
+                      "expr": "histogram_quantile(0.95, sum(rate(http_server_request_duration_ms_bucket{exported_service_name=~\"$service\", project_id=~\"$project\", url_path!~\"$excluded_endpoint\"}[5m])) by (le))",
+                      "refId": "A",
+                      "legendFormat": ""
+                    }
+                  ],
+                  "fieldConfig": {
+                    "defaults": {
+                      "unit": "ms",
+                      "decimals": 1,
+                      "noValue": "No traffic",
+                      "color": { "mode": "thresholds" },
+                      "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                          { "color": "green", "value": null },
+                          { "color": "yellow", "value": 200 },
+                          { "color": "red", "value": 1000 }
+                        ]
+                      }
+                    },
+                    "overrides": []
+                  },
+                  "options": {
+                    "reduceOptions": { "calcs": ["lastNotNull"] },
+                    "colorMode": "value",
+                    "graphMode": "area",
+                    "justifyMode": "auto",
+                    "textMode": "auto",
+                    "orientation": "auto"
+                  }
+                },
+                {
+                  "collapsed": false,
+                  "title": "RED Metrics",
+                  "type": "row",
+                  "gridPos": { "h": 1, "w": 24, "x": 0, "y": 5 },
+                  "id": 101
+                },
+                {
+                  "id": 5,
+                  "type": "timeseries",
+                  "title": "Request Rate by Endpoint",
+                  "description": "Requests per second broken down by HTTP method and path",
+                  "datasource": { "type": "prometheus", "uid": "prometheus-proxy" },
+                  "gridPos": { "h": 8, "w": 8, "x": 0, "y": 6 },
+                  "targets": [
+                    {
+                      "expr": "sum by (http_request_method, url_path) (rate(http_server_request_count_total{exported_service_name=~\"$service\", project_id=~\"$project\", url_path!~\"$excluded_endpoint\"}[5m]))",
+                      "refId": "A",
+                      "legendFormat": "{{http_request_method}} {{url_path}}"
+                    }
+                  ],
+                  "fieldConfig": {
+                    "defaults": {
+                      "unit": "reqps",
+                      "custom": {
+                        "drawStyle": "line",
+                        "lineInterpolation": "smooth",
+                        "fillOpacity": 15,
+                        "pointSize": 5,
+                        "showPoints": "auto",
+                        "spanNulls": true,
+                        "lineWidth": 2
+                      }
+                    },
+                    "overrides": []
+                  },
+                  "options": {
+                    "legend": {
+                      "displayMode": "table",
+                      "placement": "bottom",
+                      "calcs": ["mean", "lastNotNull"]
+                    },
+                    "tooltip": { "mode": "multi", "sort": "desc" }
+                  }
+                },
+                {
+                  "id": 6,
+                  "type": "timeseries",
+                  "title": "Error Rate",
+                  "description": "ERROR span status percentage over time",
+                  "datasource": { "type": "prometheus", "uid": "prometheus-proxy" },
+                  "gridPos": { "h": 8, "w": 8, "x": 8, "y": 6 },
+                  "targets": [
+                    {
+                      "expr": "(sum(rate(http_server_request_error_count_total{exported_service_name=~\"$service\", project_id=~\"$project\", url_path!~\"$excluded_endpoint\"}[5m])) / sum(rate(http_server_request_count_total{exported_service_name=~\"$service\", project_id=~\"$project\", url_path!~\"$excluded_endpoint\"}[5m]))) * 100",
+                      "refId": "A",
+                      "legendFormat": "Error %"
+                    }
+                  ],
+                  "fieldConfig": {
+                    "defaults": {
+                      "unit": "percent",
+                      "custom": {
+                        "drawStyle": "line",
+                        "lineInterpolation": "smooth",
+                        "fillOpacity": 15,
+                        "pointSize": 5,
+                        "showPoints": "auto",
+                        "spanNulls": true,
+                        "lineWidth": 2,
+                        "thresholdsStyle": { "mode": "line" }
+                      },
+                      "color": { "mode": "fixed", "fixedColor": "red" },
+                      "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                          { "color": "green", "value": null },
+                          { "color": "red", "value": 5 }
+                        ]
+                      }
+                    },
+                    "overrides": []
+                  },
+                  "options": {
+                    "legend": { "displayMode": "list", "placement": "bottom" },
+                    "tooltip": { "mode": "multi", "sort": "desc" }
+                  }
+                },
+                {
+                  "id": 7,
+                  "type": "timeseries",
+                  "title": "Latency Percentiles",
+                  "description": "P50, P95, and P99 request duration over time",
+                  "datasource": { "type": "prometheus", "uid": "prometheus-proxy" },
+                  "gridPos": { "h": 8, "w": 8, "x": 16, "y": 6 },
+                  "targets": [
+                    {
+                      "expr": "histogram_quantile(0.50, sum(rate(http_server_request_duration_ms_bucket{exported_service_name=~\"$service\", project_id=~\"$project\", url_path!~\"$excluded_endpoint\"}[5m])) by (le))",
+                      "refId": "A",
+                      "legendFormat": "P50"
+                    },
+                    {
+                      "expr": "histogram_quantile(0.95, sum(rate(http_server_request_duration_ms_bucket{exported_service_name=~\"$service\", project_id=~\"$project\", url_path!~\"$excluded_endpoint\"}[5m])) by (le))",
+                      "refId": "B",
+                      "legendFormat": "P95"
+                    },
+                    {
+                      "expr": "histogram_quantile(0.99, sum(rate(http_server_request_duration_ms_bucket{exported_service_name=~\"$service\", project_id=~\"$project\", url_path!~\"$excluded_endpoint\"}[5m])) by (le))",
+                      "refId": "C",
+                      "legendFormat": "P99"
+                    }
+                  ],
+                  "fieldConfig": {
+                    "defaults": {
+                      "unit": "ms",
+                      "custom": {
+                        "drawStyle": "line",
+                        "lineInterpolation": "smooth",
+                        "fillOpacity": 10,
+                        "pointSize": 5,
+                        "showPoints": "auto",
+                        "spanNulls": true,
+                        "lineWidth": 2
+                      }
+                    },
+                    "overrides": [
+                      {
+                        "matcher": { "id": "byName", "options": "P50" },
+                        "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "green" } }]
+                      },
+                      {
+                        "matcher": { "id": "byName", "options": "P95" },
+                        "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "yellow" } }]
+                      },
+                      {
+                        "matcher": { "id": "byName", "options": "P99" },
+                        "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }]
+                      }
+                    ]
+                  },
+                  "options": {
+                    "legend": {
+                      "displayMode": "table",
+                      "placement": "bottom",
+                      "calcs": ["mean", "lastNotNull"]
+                    },
+                    "tooltip": { "mode": "multi", "sort": "desc" }
+                  }
+                }
+              ]
+            }
+
+        app-logs:
+          json: |
+            {
+              "id": null,
+              "uid": "app-logs",
+              "title": "App Logs",
+              "description": "Latest log entries from instrumented services via Loki. Filter by service.",
+              "tags": ["agentstudio"],
+              "schemaVersion": 39,
+              "version": 2,
+              "refresh": "30s",
+              "timezone": "browser",
+              "graphTooltip": 1,
+              "time": { "from": "now-1h", "to": "now" },
+              "templating": {
+                "list": [
+                  {
+                    "name": "service",
+                    "type": "query",
+                    "label": "Service",
+                    "description": "Filter logs to a specific service. Sourced from Loki log labels — every service that has emitted logs is listed.",
+                    "datasource": { "type": "loki", "uid": "loki" },
+                    "query": "label_values(service_name)",
+                    "refresh": 2,
+                    "sort": 1,
+                    "includeAll": true,
+                    "multi": false,
+                    "allValue": ".+",
+                    "current": { "selected": true, "text": "All", "value": "$__all" }
+                  }
+                ]
+              },
+              "annotations": { "list": [] },
+              "panels": [
+                {
+                  "id": 2,
+                  "type": "text",
+                  "title": "",
+                  "transparent": true,
+                  "gridPos": { "h": 3, "w": 24, "x": 0, "y": 0 },
+                  "options": {
+                    "mode": "markdown",
+                    "content": "> **Note:** Application logs are not filtered by project in this release. Use the **Service** dropdown to narrow results. Project-level log filtering will be available in an upcoming update."
+                  }
+                },
+                {
+                  "id": 1,
+                  "type": "logs",
+                  "title": "Recent Logs",
+                  "description": "Latest log entries from the selected service via Loki",
+                  "datasource": { "type": "loki", "uid": "loki" },
+                  "gridPos": { "h": 19, "w": 24, "x": 0, "y": 3 },
+                  "targets": [
+                    {
+                      "expr": "{service_name=~\"$service\"}",
+                      "refId": "A"
+                    }
+                  ],
+                  "options": {
+                    "showTime": true,
+                    "showLabels": false,
+                    "showCommonLabels": false,
+                    "wrapLogMessage": true,
+                    "prettifyLogMessage": true,
+                    "enableLogDetails": true,
+                    "sortOrder": "Descending",
+                    "dedupStrategy": "none"
+                  }
+                }
+              ]
+            }
+
+        app-traces:
+          json: |
+            {
+              "id": null,
+              "uid": "app-traces",
+              "title": "App Traces",
+              "description": "Distributed traces for all services via Grafana Tempo. Filter by service and inspect spans.",
+              "tags": ["agentstudio"],
+              "schemaVersion": 39,
+              "version": 1,
+              "refresh": "30s",
+              "timezone": "browser",
+              "graphTooltip": 1,
+              "time": { "from": "now-1h", "to": "now" },
+              "templating": {
+                "list": [
+                  {
+                    "name": "service",
+                    "type": "query",
+                    "label": "Service",
+                    "description": "Filter traces to a specific service. Sourced from Tempo tag index — only services with stored traces are listed.",
+                    "datasource": { "type": "tempo", "uid": "tempo" },
+                    "query": {
+                      "type": 1,
+                      "label": "service.name"
+                    },
+                    "refresh": 2,
+                    "sort": 1,
+                    "includeAll": true,
+                    "multi": false,
+                    "allValue": ".*",
+                    "current": { "selected": true, "text": "All", "value": "$__all" }
+                  }
+                ]
+              },
+              "annotations": { "list": [] },
+              "panels": [
+                {
+                  "id": 1,
+                  "type": "table",
+                  "title": "Recent Traces",
+                  "description": "Latest traces from Tempo filtered by service. Click any Trace ID to inspect the full span waterfall in Explore.",
+                  "datasource": { "type": "tempo", "uid": "tempo" },
+                  "gridPos": { "h": 22, "w": 24, "x": 0, "y": 0 },
+                  "targets": [
+                    {
+                      "datasource": { "type": "tempo", "uid": "tempo" },
+                      "queryType": "traceql",
+                      "query": "{resource.service.name=~\"$service\"}",
+                      "refId": "A",
+                      "tableType": "traces",
+                      "limit": 100,
+                      "spss": 3
+                    }
+                  ],
+                  "options": {
+                    "sortBy": [{ "displayName": "Start time", "desc": true }]
+                  },
+                  "fieldConfig": {
+                    "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] } },
+                    "overrides": [
+                      { "matcher": { "id": "byName", "options": "nested" }, "properties": [{ "id": "custom.hidden", "value": true }] }
+                    ]
+                  }
+                }
+              ]
+            }
+
+    # NOTE: additionalDataSources is defined once above (Loki + Tempo + Prometheus proxy).
+    # Prometheus (Project Scoped) is included there to avoid duplicate key override.
+    # DO NOT add a second additionalDataSources block here — YAML last-wins semantics
+    # would silently drop Loki and Tempo.
+
+  # Disable components not needed in dev/local
+  alertmanager:
+    enabled: false
+  nodeExporter:
+    enabled: true
+  kubeStateMetrics:
+    enabled: true
+
+# Phoenix (LLM traces + UI; OTLP HTTP on service port 6006)
+phoenix:
+  enabled: true
+  fullnameOverride: "phoenix"
+  image:
+    repository: arizephoenix/phoenix
+    # Pin tag for reproducible deploys (latest is large and can fail on flaky registry pulls).
+    tag: "version-15.12.0"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 6006
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 2Gi
+    requests:
+      cpu: 500m
+      memory: 1Gi
+  # SQLite on PVC (/data) — no dependency on shared-postgresql; safe for make deploy-all OBSERVABILITY=1 before foundation.
+  # For PostgreSQL instead: set database.backend: postgresql, database.create: true, and a postgres PHOENIX_SQL_DATABASE_URL.
+  database:
+    backend: sqlite
+    create: false
+    host: shared-postgresql.database.svc.cluster.local
+    port: 5432
+    name: phoenix
+    user: postgres
+    password: agentstudio-postgres-password
+    initImage: init-tools:latest  # Overridden at deploy time via --set phoenix.database.initImage
+  env:
+    - name: PHOENIX_SQL_DATABASE_URL
+      value: ""
+    - name: PHOENIX_WORKING_DIR
+      value: "/data"
+    - name: PHOENIX_TELEMETRY_ENABLED
+      value: "false"
+    - name: PHOENIX_DEFAULT_RETENTION_POLICY_DAYS
+      value: "30"
+  persistence:
+    enabled: true
+    size: 10Gi
+    storageClass: ""
+  # Cloud routing for Phoenix is provided by the edge tier
+  # (httproute-phoenix-istio.yaml). Keep the subchart route disabled here;
+  # values-local.yaml turns it on for local dev.
+  httproute:
+    enabled: false
+
+# prometheus-adapter (bridges Prometheus metrics → custom.metrics.k8s.io for HPA)
+#
+# Required infrastructure for worker HPAs with customMetric.enabled=true.
+# Without this, HPA custom metrics show <unknown> and scaling is frozen.
+#
+# Prerequisites for backlog-based worker HPAs (see worker-hpa-runbook.md):
+#   1. Temporal ServiceMonitor enabled (e.g. nemo values-enable-observability.yaml)
+#   2. metrics-server installed if any worker HPA still uses CPU: KIND_METRICS_SETUP.md
+#   3. Verify Temporal metrics in Prometheus: query schedule_to_start_latency_count
+#   4. Adjust metricsQuery PromQL below if Temporal metric names differ in your version
+prometheus-adapter:
+  enabled: true
+  prometheus:
+    url: http://prometheus-kube-prometheus-prometheus.monitoring.svc
+    port: 9090
+  rules:
+    custom:
+      # Each rule maps a Temporal server metric to a custom.metrics.k8s.io name
+      # that worker HPAs reference. The schedule_to_start_latency_count rate
+      # indicates how many tasks are being scheduled — when it drops to 0 the
+      # queue is idle and HPA can scale down.
+      - seriesQuery: 'schedule_to_start_latency_count{task_queue="dataset-processing"}'
+        resources:
+          overrides:
+            namespace: {resource: "namespace"}
+        name:
+          as: "temporal_queue_backlog_dataset"
+        metricsQuery: 'sum(rate(schedule_to_start_latency_count{<<.LabelMatchers>>,task_queue="dataset-processing"}[2m]))'
+      - seriesQuery: 'schedule_to_start_latency_count{task_queue="kb-processing"}'
+        resources:
+          overrides:
+            namespace: {resource: "namespace"}
+        name:
+          as: "temporal_queue_backlog_kb"
+        metricsQuery: 'sum(rate(schedule_to_start_latency_count{<<.LabelMatchers>>,task_queue="kb-processing"}[2m]))'
+      - seriesQuery: 'schedule_to_start_latency_count{task_queue="connector-operations"}'
+        resources:
+          overrides:
+            namespace: {resource: "namespace"}
+        name:
+          as: "temporal_queue_backlog_connector"
+        metricsQuery: 'sum(rate(schedule_to_start_latency_count{<<.LabelMatchers>>,task_queue="connector-operations"}[2m]))'
+
+# OpenTelemetry Collector — receives OTLP from all AgentStudio services and
+# routes traces to Phoenix (agent/LLM spans) and Tempo (infrastructure spans),
+# logs to Loki, and metrics to Prometheus.
+#
+# In-cluster OTLP endpoints (set as AGENT_STUDIO_OBSERVABILITY_OTLP_TRACES_ENDPOINT):
+#   HTTP: http://observability-otel-collector.monitoring.svc.cluster.local:4318
+#   gRPC: grpc://observability-otel-collector.monitoring.svc.cluster.local:4317
+otel-collector:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: otel/opentelemetry-collector-contrib
+    tag: "0.119.0"
+    pullPolicy: IfNotPresent
+  # Agent/LLM traces → Phoenix (unsampled, full fidelity for AI observability).
+  phoenixEndpoint: "http://phoenix.monitoring.svc.cluster.local:6006"
+  # Infrastructure traces → Tempo (tail-sampled). Set to "" to disable.
+  tempoEndpoint: "tempo.monitoring.svc.cluster.local:4317"
+  # Logs → Loki via OTLP ingest. Set to "" to disable.
+  lokiEndpoint: "http://loki.monitoring.svc.cluster.local:3100/otlp"
+  resources:
+    limits:
+      cpu: 500m
+      memory: 256Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+  # Tail sampling for Tempo infrastructure traces (mirrors observability-service defaults).
+  tracing:
+    agentServiceNames:
+      - agent-service
+      - agent-service-maf
+      - apigateway-service
+    decisionWait: "10s"
+    maxTraces: 200
+    expectedNewPerSec: 50
+    slowThresholdMs: 500
+    samplingPercentage: 10
+  batch:
+    timeout: "5s"
+    sendBatchSize: 1024
+  # Per-node DaemonSet log collector — tails /var/log/pods and forwards to the
+  # central collector via OTLP/gRPC. Set enabled: false in resource-constrained
+  # environments (e.g. local Kind clusters) where host log access is not needed.
+  daemonset:
+    enabled: true
+    resources:
+      limits:
+        cpu: 200m
+        memory: 128Mi
+      requests:
+        cpu: 50m
+        memory: 64Mi
+    tolerations:
+      - operator: Exists
+        effect: NoSchedule
+      - operator: Exists
+        effect: NoExecute
+  # Resource attributes stamped on all log records by the central collector.
+  podLogs:
+    environment: "production"
+    cluster: "k8s"
+
+# Grafana Loki — log aggregation backend.
+# Retention, ingestion limits, and compactor settings mirror
+# observability-service/loki/loki-config.yaml + its Helm production defaults.
+loki:
+  enabled: true
+  # Pin the service name to "loki" so OTel collector can reach it at
+  # loki.monitoring.svc.cluster.local (same as the tempoEndpoint / lokiEndpoint defaults).
+  fullnameOverride: "loki"
+  persistence:
+    enabled: true
+    size: 30Gi
+    storageClass: ""
+  retention:
+    period: 168h     # 7 days
+  ingestion:
+    rateMb: 64
+    burstSizeMb: 128
+
+# Grafana Tempo — distributed tracing backend.
+# Block retention and per-trace limits mirror
+# observability-service/tempo/tempo-config.yaml.
+tempo:
+  enabled: true
+  # Pin the service name to "tempo" so OTel collector can reach it at
+  # tempo.monitoring.svc.cluster.local (same as the tempoEndpoint default).
+  fullnameOverride: "tempo"
+  persistence:
+    enabled: true
+    size: 30Gi
+    storageClass: ""
+  retention:
+    blockRetention: 168h   # 7 days
+  overrides:
+    maxBytesPerTrace: 5000000   # 5 MB per trace
+
+# Jaeger (trace backend; disabled — traces go to Phoenix/Tempo via otel-collector)
+jaeger:
+  enabled: false
+
+# ---------------------------------------------------------------------------
+# Grafana proxy — OIDC auth-code proxy that sits in front of Grafana.
+# Set enabled: true and fill in keycloak.issuer + keycloak/session secrets
+# to activate. See charts/grafana-proxy/values.yaml for the full option set.
+#
+# Local dev example (helm-observability-upgrade with extra args):
+#   --set grafana-proxy.enabled=true
+#   --set grafana-proxy.keycloak.issuer=http://keycloak.agent-studio-identity.svc.cluster.local:8080/realms/nemo
+#   --set grafana-proxy.keycloak.publicIssuer=https://auth.agentstudio.local:8443/realms/nemo
+#   --set grafana-proxy.keycloak.clientSecret=dev-grafana-proxy-secret
+#   --set grafana-proxy.session.hashKey=<32+ char string>
+#   --set grafana-proxy.session.blockKey=<16/24/32 char string>
+#   --set grafana-proxy.keycloak.tlsSkipVerify=true
+# ---------------------------------------------------------------------------
+grafana-proxy:
+  enabled: true
+  namespace: monitoring
+  hostname: "grafana.agentstudio.dev.openeng.netapp.com"
+  image:
+    repository: nemo/grafana-proxy
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  keycloak:
+    issuer: ""
+    publicIssuer: ""
+    clientId: "agentstudio-grafana-proxy"
+    clientSecret: ""
+    ## keycloak-oidc-secrets is synced into every consumer namespace (including monitoring) by
+    ## sync-shared-secrets, which runs as part of helm-observability-upgrade-* targets.
+    ## The post-realm-bootstrap Job patches grafana-proxy-client-secret into this Secret.
+    existingSecret: "keycloak-oidc-secrets"
+    clientSecretKey: "grafana-proxy-client-secret"
+    tlsSkipVerify: false
+  session:
+    hashKey: ""
+    blockKey: ""
+    existingSecret: ""
+    ttlHours: 8
+  projectCacheTTLSeconds: 300
+  platformAdminRole: "platform-admin"
+  grafanaUpstreamURL: "http://observability-grafana.monitoring.svc.cluster.local:80"
+  configServiceURL: "http://config-service.agentstudio-services.svc.cluster.local:3000"
+  gateway:
+    name: agentstudio-gateway
+    namespace: agentstudio-edge
+    sectionName: https
+  # Shared secret for prometheus-proxy /.internal/projects auth.
+  # Must match prometheus-proxy.internalToken.value below.
+  internalToken:
+    value: ""
+    existingSecret: ""
+
+# prometheus-proxy: PromQL-aware authorization proxy between Grafana and Prometheus.
+# Enforces per-user project_id scope on every query.
+prometheus-proxy:
+  enabled: true
+  image:
+    repository: nemo/prometheus-proxy
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  prometheusUpstreamURL: "http://prometheus-prometheus.monitoring.svc.cluster.local:9090"
+  grafanaProxyURL: "http://grafana-proxy.monitoring.svc.cluster.local:8080"
+  projectCacheTTLSeconds: 300
+  internalToken:
+    value: ""
+    existingSecret: ""

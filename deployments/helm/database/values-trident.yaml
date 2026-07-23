@@ -1,0 +1,16 @@
+# Trident CSI / ONTAP overlay for the shared PostgreSQL database chart.
+# Use when the cluster has Trident CSI (e.g. ONTAP NAS/SAN) and no default StorageClass,
+# or when you want to force RWO volumes to use Trident.
+#
+# Usage:
+#   make helm-database-upgrade HELM_EXTRA_ARGS="-f deployments/helm/database/values-trident.yaml"
+#
+# Discover your Trident StorageClass:
+#   kubectl get storageclass
+# Use a class that supports ReadWriteOnce (e.g. ontap-san or trident-csi).
+
+postgresql:
+  primary:
+    persistence:
+      # Replace with your Trident StorageClass name (e.g. trident-csi, ontap-san).
+      storageClass: "ontap-nas"

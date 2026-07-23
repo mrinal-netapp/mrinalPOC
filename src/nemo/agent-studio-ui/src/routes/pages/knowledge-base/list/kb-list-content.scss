@@ -1,0 +1,35 @@
+// Table cell helpers (aligned with data-management list tables)
+
+.kb-list-name-link {
+  all: unset;
+  cursor: pointer;
+  display: inline-flex;
+
+  &:hover span {
+    text-decoration: underline;
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--border-focus-outline);
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+}
+
+.kb-list-status-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+
+  .ds-status-spinner {
+    flex-shrink: 0;
+
+    .spinner__circle {
+      stroke: var(--notification-information);
+    }
+  }
+}
+
+.kb-list-cell-placeholder {
+  color: var(--text-disabled);
+}

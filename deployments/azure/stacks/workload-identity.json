@@ -1,0 +1,111 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "description": "Per-service UAMIs for AgentStudio Workload Identity. Creates one UAMI + federated credential per service, and assigns Key Vault Secrets User at the vault level. The services[].resources[] field documents intended per-secret access for a future PR that narrows scope to individual secrets."
+  },
+  "parameters": {
+    "location": {
+      "type": "string",
+      "defaultValue": "[resourceGroup().location]",
+      "metadata": {
+        "description": "Azure region for the UAMIs."
+      }
+    },
+    "oidcIssuerUrl": {
+      "type": "string",
+      "metadata": {
+        "description": "OIDC issuer URL of the cluster. For AKS: az aks show -g <rg> -n <cluster> --query oidcIssuerProfile.issuerUrl -o tsv"
+      }
+    },
+    "keyVaultName": {
+      "type": "string",
+      "metadata": {
+        "description": "Key Vault name. Each service UAMI receives Key Vault Secrets User on this vault."
+      }
+    },
+    "tenantId": {
+      "type": "string",
+      "metadata": {
+        "description": "Entra ID tenant ID. Run: az account show --query tenantId -o tsv"
+      }
+    },
+    "uamiNamePrefix": {
+      "type": "string",
+      "metadata": {
+        "description": "Name prefix for the UAMIs. Final UAMI name: <prefix><serviceName>."
+      }
+    },
+    "services": {
+      "type": "array",
+      "metadata": {
+        "description": "Array of { name, namespace, resources[] } objects. resources[] entries document intended per-secret access (future PR). The canonical list is generated at deploy time by `make wi-list-services`."
+      }
+    }
+  },
+  "variables": {
+    "keyVaultSecretsUserRoleId": "4633458b-17de-408a-b874-0445c86b69e6",
+    "keyVaultSecretsUserRoleDefinitionId": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Authorization/roleDefinitions/', variables('keyVaultSecretsUserRoleId'))]"
+  },
+  "resources": [
+    {
+      "type": "Microsoft.ManagedIdentity/userAssignedIdentities",
+      "apiVersion": "2023-01-31",
+      "name": "[concat(parameters('uamiNamePrefix'), parameters('services')[copyIndex()].name)]",
+      "location": "[parameters('location')]",
+      "copy": {
+        "name": "uamiCopy",
+        "count": "[length(parameters('services'))]"
+      }
+    },
+    {
+      "type": "Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials",
+      "apiVersion": "2023-01-31",
+      "name": "[concat(parameters('uamiNamePrefix'), parameters('services')[copyIndex()].name, '/primary-fic')]",
+      "dependsOn": [
+        "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', concat(parameters('uamiNamePrefix'), parameters('services')[copyIndex()].name))]"
+      ],
+      "copy": {
+        "name": "ficCopy",
+        "count": "[length(parameters('services'))]"
+      },
+      "properties": {
+        "issuer": "[parameters('oidcIssuerUrl')]",
+        "subject": "[concat('system:serviceaccount:', parameters('services')[copyIndex()].namespace, ':', parameters('services')[copyIndex()].name)]",
+        "audiences": [
+          "api://AzureADTokenExchange"
+        ]
+      }
+    },
+    {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "name": "[guid(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', concat(parameters('uamiNamePrefix'), parameters('services')[copyIndex()].name)), resourceId('Microsoft.KeyVault/vaults', parameters('keyVaultName')), variables('keyVaultSecretsUserRoleId'))]",
+      "scope": "[resourceId('Microsoft.KeyVault/vaults', parameters('keyVaultName'))]",
+      "dependsOn": [
+        "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', concat(parameters('uamiNamePrefix'), parameters('services')[copyIndex()].name))]"
+      ],
+      "copy": {
+        "name": "vaultAccessCopy",
+        "count": "[length(parameters('services'))]"
+      },
+      "properties": {
+        "roleDefinitionId": "[variables('keyVaultSecretsUserRoleDefinitionId')]",
+        "principalId": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', concat(parameters('uamiNamePrefix'), parameters('services')[copyIndex()].name)), '2023-01-31').principalId]",
+        "principalType": "ServicePrincipal"
+      }
+    }
+  ],
+  "outputs": {
+    "clientIds": {
+      "type": "array",
+      "copy": {
+        "count": "[length(parameters('services'))]",
+        "input": {
+          "name": "[parameters('services')[copyIndex()].name]",
+          "value": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', concat(parameters('uamiNamePrefix'), parameters('services')[copyIndex()].name)), '2023-01-31').clientId]"
+        }
+      }
+    }
+  }
+}

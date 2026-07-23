@@ -1,0 +1,37 @@
+apiVersion: v2
+name: workers
+description: AgentStudio workers tier — dataset-worker, kb-worker, connector-worker, s3gateway, storage-manager
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+keywords:
+  - agentstudio
+  - workers
+maintainers:
+  - name: AgentStudio Team
+
+dependencies:
+  - name: dataset-worker
+    version: "1.0.0"
+    repository: "file://./charts/dataset-worker"
+    condition: dataset-worker.enabled
+  - name: kb-worker
+    version: "1.0.0"
+    repository: "file://./charts/kb-worker"
+    condition: kb-worker.enabled
+  - name: connector-worker
+    version: "1.0.0"
+    repository: "file://./charts/connector-worker"
+    condition: connector-worker.enabled
+  - name: s3gateway
+    version: "1.0.0"
+    repository: "file://./charts/s3gateway"
+    condition: s3gateway.enabled
+  - name: storage-manager
+    version: "1.0.0"
+    repository: "file://./charts/storage-manager"
+    condition: storage-manager.enabled
+  - name: eval-worker
+    version: "1.0.0"
+    repository: "file://./charts/eval-worker"
+    condition: eval-worker.enabled

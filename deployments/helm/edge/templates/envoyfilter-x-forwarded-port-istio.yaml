@@ -1,0 +1,88 @@
+{{- /*
+X-Forwarded-Port injection at the istio gateway.
+
+Envoy's gateway listener sets X-Forwarded-For / X-Forwarded-Proto /
+X-Forwarded-Host on incoming requests but does NOT set X-Forwarded-Port
+(it's not in Envoy's automatic header set). Backends that derive
+absolute URLs from forwarded headers — notably Keycloak with
+`KC_HOSTNAME_BACKCHANNEL_DYNAMIC=true`, which our identity chart turns on
+to give in-cluster OIDC consumers (Lakekeeper, services tier) cluster-
+internal discovery URLs — need this header to include the correct
+public-facing port. Without it Keycloak defaults to the protocol's
+default port (80/443), emitting discovery URLs like
+`https://auth.<endpoint>/realms/...` (port 443 implicit). On any
+deployment where the public listener is on a non-default port (e.g.
+8443 on local for OrbStack/KIND), the browser then 404s the OIDC
+discovery callbacks → CORS errors → broken UI login flows
+(Lakekeeper UI, console, etc.).
+
+Renders ONLY when gateway.istio.listeners.https.port differs from 443.
+On AKS/GKE/EKS (port=443 implicit) this is a no-op file — no
+EnvoyFilter is created.
+
+The Lua filter inspects each request's actual downstream local port
+(the listener it landed on) and stamps that value into
+X-Forwarded-Port. Works for both the HTTP listener (8080) and the
+HTTPS listener (8443) on a single filter without per-listener config.
+
+INSERT_FIRST puts this filter at the top of the HTTP filter chain so
+every downstream filter (jwt_authn, parity-headers, uma_rpt) sees the
+correctly-populated header. Backend services see it via the upstream
+hop chain.
+*/ -}}
+{{- if and .Values.gateway.enabled
+            (eq (.Values.gateway.provider | default "nginx") "istio")
+            (ne (int .Values.gateway.istio.listeners.https.port) 443) }}
+{{- /*
+EnvoyFilter is alpha at networking.istio.io/v1alpha3 — there is no
+stable v1. Mirrors envoyfilter-parity-headers-istio.yaml /
+envoyfilter-uma-rpt-istio.yaml.
+*/ -}}
+apiVersion: networking.istio.io/v1alpha3
+kind: EnvoyFilter
+metadata:
+  name: x-forwarded-port-inject
+  namespace: {{ include "nemo.namespace" . }}
+  labels:
+    {{- include "edge.labels" . | nindent 4 }}
+spec:
+  workloadSelector:
+    labels:
+      {{- include "nemo.istioGatewaySelector" . | nindent 6 }}
+  configPatches:
+    - applyTo: HTTP_FILTER
+      match:
+        context: GATEWAY
+        listener:
+          filterChain:
+            filter:
+              name: envoy.filters.network.http_connection_manager
+      patch:
+        operation: INSERT_FIRST
+        value:
+          name: envoy.filters.http.lua.x_forwarded_port
+          typed_config:
+            "@type": type.googleapis.com/envoy.extensions.filters.http.lua.v3.Lua
+            default_source_code:
+              inline_string: |
+                -- Stamp X-Forwarded-Port with the listener's actual local
+                -- port. downstreamLocalAddress() returns the address the
+                -- request landed on (i.e. the istio gateway listener); its
+                -- :portValue() is the port we want to forward. Replaces
+                -- any value the client may have sent (defense in depth —
+                -- never trust client-provided X-Forwarded-Port on an edge
+                -- gateway).
+                function envoy_on_request(handle)
+                  local port = handle:streamInfo():downstreamLocalAddress()
+                  if port then
+                    -- downstreamLocalAddress() returns "ip:port" string in
+                    -- Envoy Lua's StreamInfo API. Parse the port from the
+                    -- trailing :NNNN. IPv6 addresses use [addr]:port; the
+                    -- final colon-separated token is still the port.
+                    local p = string.match(port, ":(%d+)$")
+                    if p then
+                      handle:headers():replace("x-forwarded-port", p)
+                    end
+                  end
+                end
+{{- end }}

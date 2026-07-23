@@ -1,0 +1,69 @@
+# AWS EKS overlay for the WORKERS tier.
+#
+# FSx Trident (fsxn-nas, ReadWriteMany) for s3gateway PVCs; mirrors the GKE
+# Filestore strategy re-homed to the workers tier where s3gateway lives.
+#
+# Why s3gateway PVCs need RWX on fsxn-nas:
+#   s3gateway, connector-worker, dataset-worker, and kb-worker co-mount the
+#   default-bucket PVC. ReadWriteOnce cannot satisfy that on EKS.
+#
+# Prerequisites: StorageClass fsxn-nas (Trident + FSx); see runbook Step 6.
+
+global:
+  imagePullPolicy: Always
+
+s3gateway:
+  storage:
+    accessMode: ReadWriteMany
+  defaultBucket:
+    storageClass: "fsxn-nas"
+    # Keep the historical 1Ti request so Helm does not try to shrink an
+    # existing workers PVC on upgrade (PVC storage requests can only grow,
+    # never shrink). Also matches services/values-eks.yaml's
+    # defaultBucketPvc.size, which shares this same underlying FSxN volume.
+    size: 1Ti
+    # Authorize the services namespace to bind (Trident shareFromPVC) to this
+    # SAME FSxN volume, so kb-retrieval-service & artifact-service read the KB
+    # indexes kb-worker publishes here. Paired with services/values-eks.yaml
+    # defaultBucketPvc.shareFromPVC (which also emits the TridentVolumeReference).
+    shareToNamespaces:
+      - agentstudio-services
+  metadata:
+    storageClass: "fsxn-nas"
+    # Match values-aks.yaml's metadata size so the metadata PVC's requested
+    # capacity is consistent across clouds (avoids the same immutable-shrink
+    # risk as defaultBucket above if this ever needs bumping later).
+    size: 50Gi
+  pvcsBase:
+    storageClass: "fsxn-nas"
+
+# Dedicated ServiceAccounts for the worker pods (mirrors services/values-eks.yaml
+# and the AKS overlay). The base chart defaults serviceAccount.create=false, so
+# without these the pods run as the namespace `default` SA — which trips the
+# mesh's `admissionPolicies.denyDefaultServiceAccount` guardrail and gives every
+# worker the same shared SPIFFE identity. AKS gets named SAs for free via Azure
+# Workload Identity; on EKS we create them explicitly (no WI/azureClientId — only
+# the SPIFFE identity matters). SA name defaults to each worker's fullname.
+dataset-worker:
+  serviceAccount:
+    create: true
+
+kb-worker:
+  serviceAccount:
+    create: true
+
+connector-worker:
+  serviceAccount:
+    create: true
+# eval-worker needs its own ServiceAccount so it presents a stable SPIFFE
+# identity to the mesh `allow-services-to-bifrost` AuthorizationPolicy
+# (istio-mesh-policies) instead of the namespace `default` SA, which that
+# allow-list rejects with 403 RBAC: access denied (LLM-as-judge calls to
+# Bifrost fail). The SA name MUST be `workers-eval` to match the policy
+# principal (cluster.local/ns/agentstudio-workers/sa/workers-eval). No cloud
+# Workload Identity here (EKS WI is not enabled for this tier); this is mesh
+# identity only.
+eval-worker:
+  serviceAccount:
+    create: true
+    name: workers-eval

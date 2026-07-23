@@ -1,0 +1,191 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "description": "AKS cluster for AgentStudio. Provisions a Free-tier Base SKU cluster with Azure CNI, a Standard load balancer, OIDC issuer and workload identity enabled. Node pools are fully data-driven from the nodePools array (one System pool minimum; add User pools for workload isolation). Per-pool autoscaling, cluster auto-upgrade channels (autoUpgradeProfile), and cluster-autoscaler tuning (autoScalerProfile) are all parameterized. A Network Contributor role assignment is created on the AKS subnet so the cluster can manage network resources. Deploy networking.json first and pass its aksSubnetId output as aksSubnetResourceId."
+  },
+  "parameters": {
+    "clusterName": {
+      "type": "string",
+      "metadata": {
+        "description": "Name of the AKS managed cluster."
+      }
+    },
+    "location": {
+      "type": "string",
+      "defaultValue": "[resourceGroup().location]",
+      "metadata": {
+        "description": "Azure region; defaults to the resource group location."
+      }
+    },
+    "kubernetesVersion": {
+      "type": "string",
+      "metadata": {
+        "description": "Kubernetes version. Check supported versions: az aks get-versions -l <region> --query 'orchestrators[].orchestratorVersion' -o tsv"
+      }
+    },
+    "dnsPrefix": {
+      "type": "string",
+      "metadata": {
+        "description": "DNS prefix for the cluster FQDN. Must be unique within the region."
+      }
+    },
+    "aksSubnetResourceId": {
+      "type": "string",
+      "metadata": {
+        "description": "Full resource ID of the AKS node subnet. Get from networking.json output: aksSubnetId. Example: /subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.Network/virtualNetworks/<vnet>/subnets/<subnet>"
+      }
+    },
+    "nodePools": {
+      "type": "array",
+      "minLength": 1,
+      "metadata": {
+        "description": "One object per agent (node) pool. At least one pool with mode=System is required. Required keys per pool: name, mode (System|User), vmSize, count, enableAutoScaling (bool), minCount, maxCount, osDiskSizeGB (0=SKU default). Optional keys: osSKU (default Ubuntu), osDiskType (default Managed), maxPods (default: Azure default for the network plugin), availabilityZones (array, e.g. ['1','2','3']), nodeLabels (object), nodeTaints (array, e.g. ['workload=gpu:NoSchedule']), maxSurge (default 10%). minCount/maxCount are ignored when enableAutoScaling=false but must still be present."
+      }
+    },
+    "autoUpgradeProfile": {
+      "type": "object",
+      "defaultValue": {
+        "upgradeChannel": "none",
+        "nodeOSUpgradeChannel": "NodeImage"
+      },
+      "metadata": {
+        "description": "Cluster auto-upgrade channels. upgradeChannel: none|patch|stable|rapid|node-image (Kubernetes version auto-upgrade). nodeOSUpgradeChannel: None|Unmanaged|SecurityPatch|NodeImage (node OS image auto-upgrade)."
+      }
+    },
+    "autoScalerProfile": {
+      "type": "object",
+      "defaultValue": {},
+      "metadata": {
+        "description": "Cluster-autoscaler tuning (applies when any pool has enableAutoScaling=true). Pass-through object of kebab-case keys per AKS ARM API, e.g. scan-interval, scale-down-delay-after-add, scale-down-unneeded-time, expander, max-graceful-termination-sec, balance-similar-node-groups. Empty {} = Azure defaults."
+      }
+    },
+    "serviceCidr": {
+      "type": "string",
+      "defaultValue": "10.0.16.0/20",
+      "metadata": {
+        "description": "Kubernetes service CIDR. Must not overlap any VNet subnet (default clears AgentStudio layout: aks 10.0.0.0/22, ilb 10.0.4.0/24, anf 10.0.8.0/24)."
+      }
+    },
+    "dnsServiceIP": {
+      "type": "string",
+      "defaultValue": "10.0.16.10",
+      "metadata": {
+        "description": "Cluster DNS service IP; must be within serviceCidr."
+      }
+    }
+  },
+  "variables": {
+    "networkContributorRoleId": "4d97b98b-1d4f-4787-a291-c67834d212e7",
+    "networkContributorRoleDefinitionId": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Authorization/roleDefinitions/', variables('networkContributorRoleId'))]"
+  },
+  "resources": [
+    {
+      "type": "Microsoft.ContainerService/managedClusters",
+      "apiVersion": "2024-02-01",
+      "name": "[parameters('clusterName')]",
+      "location": "[parameters('location')]",
+      "identity": {
+        "type": "SystemAssigned"
+      },
+      "sku": {
+        "name": "Base",
+        "tier": "Free"
+      },
+      "properties": {
+        "dnsPrefix": "[parameters('dnsPrefix')]",
+        "kubernetesVersion": "[parameters('kubernetesVersion')]",
+        "supportPlan": "KubernetesOfficial",
+        "copy": [
+          {
+            "name": "agentPoolProfiles",
+            "count": "[length(parameters('nodePools'))]",
+            "input": {
+              "name": "[parameters('nodePools')[copyIndex('agentPoolProfiles')].name]",
+              "mode": "[parameters('nodePools')[copyIndex('agentPoolProfiles')].mode]",
+              "type": "VirtualMachineScaleSets",
+              "osType": "Linux",
+              "osSKU": "[if(contains(parameters('nodePools')[copyIndex('agentPoolProfiles')], 'osSKU'), parameters('nodePools')[copyIndex('agentPoolProfiles')].osSKU, 'Ubuntu')]",
+              "vmSize": "[parameters('nodePools')[copyIndex('agentPoolProfiles')].vmSize]",
+              "count": "[parameters('nodePools')[copyIndex('agentPoolProfiles')].count]",
+              "enableAutoScaling": "[parameters('nodePools')[copyIndex('agentPoolProfiles')].enableAutoScaling]",
+              "minCount": "[if(parameters('nodePools')[copyIndex('agentPoolProfiles')].enableAutoScaling, parameters('nodePools')[copyIndex('agentPoolProfiles')].minCount, json('null'))]",
+              "maxCount": "[if(parameters('nodePools')[copyIndex('agentPoolProfiles')].enableAutoScaling, parameters('nodePools')[copyIndex('agentPoolProfiles')].maxCount, json('null'))]",
+              "osDiskSizeGB": "[parameters('nodePools')[copyIndex('agentPoolProfiles')].osDiskSizeGB]",
+              "osDiskType": "[if(contains(parameters('nodePools')[copyIndex('agentPoolProfiles')], 'osDiskType'), parameters('nodePools')[copyIndex('agentPoolProfiles')].osDiskType, 'Managed')]",
+              "maxPods": "[if(contains(parameters('nodePools')[copyIndex('agentPoolProfiles')], 'maxPods'), parameters('nodePools')[copyIndex('agentPoolProfiles')].maxPods, json('null'))]",
+              "availabilityZones": "[if(contains(parameters('nodePools')[copyIndex('agentPoolProfiles')], 'availabilityZones'), parameters('nodePools')[copyIndex('agentPoolProfiles')].availabilityZones, json('null'))]",
+              "nodeLabels": "[if(contains(parameters('nodePools')[copyIndex('agentPoolProfiles')], 'nodeLabels'), parameters('nodePools')[copyIndex('agentPoolProfiles')].nodeLabels, json('{}'))]",
+              "nodeTaints": "[if(contains(parameters('nodePools')[copyIndex('agentPoolProfiles')], 'nodeTaints'), parameters('nodePools')[copyIndex('agentPoolProfiles')].nodeTaints, json('[]'))]",
+              "vnetSubnetID": "[parameters('aksSubnetResourceId')]",
+              "upgradeSettings": {
+                "maxSurge": "[if(contains(parameters('nodePools')[copyIndex('agentPoolProfiles')], 'maxSurge'), parameters('nodePools')[copyIndex('agentPoolProfiles')].maxSurge, '10%')]"
+              }
+            }
+          }
+        ],
+        "networkProfile": {
+          "networkPlugin": "azure",
+          "loadBalancerSku": "Standard",
+          "outboundType": "loadBalancer",
+          "serviceCidr": "[parameters('serviceCidr')]",
+          "dnsServiceIP": "[parameters('dnsServiceIP')]"
+        },
+        "oidcIssuerProfile": {
+          "enabled": true
+        },
+        "securityProfile": {
+          "workloadIdentity": {
+            "enabled": true
+          }
+        },
+        "autoUpgradeProfile": {
+          "upgradeChannel": "[parameters('autoUpgradeProfile').upgradeChannel]",
+          "nodeOSUpgradeChannel": "[parameters('autoUpgradeProfile').nodeOSUpgradeChannel]"
+        },
+        "autoScalerProfile": "[if(empty(parameters('autoScalerProfile')), json('null'), parameters('autoScalerProfile'))]",
+        "addonProfiles": {}
+      }
+    },
+    {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "name": "[guid(parameters('aksSubnetResourceId'), parameters('clusterName'), variables('networkContributorRoleId'))]",
+      "scope": "[parameters('aksSubnetResourceId')]",
+      "dependsOn": [
+        "[resourceId('Microsoft.ContainerService/managedClusters', parameters('clusterName'))]"
+      ],
+      "properties": {
+        "roleDefinitionId": "[variables('networkContributorRoleDefinitionId')]",
+        "principalId": "[reference(resourceId('Microsoft.ContainerService/managedClusters', parameters('clusterName')), '2024-02-01', 'Full').identity.principalId]",
+        "principalType": "ServicePrincipal"
+      }
+    }
+  ],
+  "outputs": {
+    "clusterName": {
+      "type": "string",
+      "value": "[parameters('clusterName')]"
+    },
+    "clusterResourceId": {
+      "type": "string",
+      "value": "[resourceId('Microsoft.ContainerService/managedClusters', parameters('clusterName'))]"
+    },
+    "oidcIssuerUrl": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.ContainerService/managedClusters', parameters('clusterName')), '2024-02-01').oidcIssuerProfile.issuerURL]"
+    },
+    "kubeletIdentityObjectId": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.ContainerService/managedClusters', parameters('clusterName')), '2024-02-01').identityProfile.kubeletidentity.objectId]"
+    },
+    "kubeletIdentityClientId": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.ContainerService/managedClusters', parameters('clusterName')), '2024-02-01').identityProfile.kubeletidentity.clientId]"
+    },
+    "clusterIdentityObjectId": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.ContainerService/managedClusters', parameters('clusterName')), '2024-02-01', 'Full').identity.principalId]"
+    }
+  }
+}

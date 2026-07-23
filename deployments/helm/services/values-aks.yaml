@@ -1,0 +1,124 @@
+# AKS overlay for the services tier.
+# azureClientId values are populated by `make wi-fill-client-ids` before helm upgrade.
+# Real client IDs for rg-agentstudio-dev-eus2-001 (id-agentstudio-* UAMIs). For new clusters,
+# run `make wi-fill-client-ids` to re-populate from the new cluster's UAMI list.
+
+global:
+  storageClass: anf-nfs
+  endpoint: "agentstudio.dev.openeng.netapp.com"
+
+endpoint: "agentstudio.dev.openeng.netapp.com"
+
+# Create the default-bucket PVC in the services namespace.
+# artifact-service and kb-retrieval-service mount this PVC; it cannot cross namespaces.
+# For shared data with the platform tier, set volumeName to the PV backing the
+# platform-tier s3gateway-default-bucket PVC.
+defaultBucketPvc:
+  create: true
+  size: 1Ti
+  accessMode: ReadWriteMany
+
+# Gateway / TLS configuration moved to the new `edge` Helm chart
+# (deployments/helm/edge/values-aks.yaml). The static Azure PIP and the
+# Istio listener settings are configured there.
+
+# ── Azure Workload Identity (per-service) ──────────────────────────────────────
+# azureClientId values are populated by `make wi-fill-client-ids`.
+
+agent-service:
+  serviceAccount:
+    create: true
+    azureClientId: "7179d46b-6e0b-4541-ab3d-fc7da78de9a6"
+  workloadIdentity:
+    enabled: true
+
+# agent-service-maf (the MAF rewrite of agent-service) needs its own
+# ServiceAccount so it has a stable SPIFFE identity for the mesh
+# AuthorizationPolicies that gate Bifrost and Phoenix (allow-services-to-bifrost,
+# allow-phoenix-from-services in the istio-mesh-policies chart). Without it the
+# pod runs as the namespace `default` SA, which those allow-lists reject (403
+# RBAC: access denied) and which the denyDefaultServiceAccount admission
+# guardrail forbids. No azureClientId / workloadIdentity: MAF reaches Azure only
+# via in-cluster services (config-service, bifrost), not Azure resource APIs.
+# Add a UAMI here (via `make wi-fill-client-ids`) if it ever needs one.
+agent-service-maf:
+  serviceAccount:
+    create: true
+    name: agent-service-maf
+
+apigateway-service:
+  serviceAccount:
+    create: true
+    azureClientId: "bddd5b02-2085-4a49-b728-b02d1346c1f2"
+  workloadIdentity:
+    enabled: true
+
+config-service:
+  serviceAccount:
+    create: true
+    azureClientId: "f8b165a0-457b-4fa3-87a2-6e5fd0768228"
+  workloadIdentity:
+    enabled: true
+  database:
+    existingSecret: "shared-postgresql-secret"
+    existingSecretKey: "postgres-password"
+  # Keycloak master-realm admin credentials for /api/v1/setup/status realm checks.
+  # Sourced from keycloak-bootstrap-admin (mirrored into the services
+  # namespace by `make sync-shared-secrets`); keys are `username` and `password`.
+  # Use extraEnv — Helm replaces env[] wholesale; do not override env here.
+  extraEnv:
+    - name: KEYCLOAK_ADMIN_USER
+      valueFrom:
+        secretKeyRef:
+          name: keycloak-bootstrap-admin
+          key: username
+    - name: KEYCLOAK_ADMIN_PASSWORD
+      valueFrom:
+        secretKeyRef:
+          name: keycloak-bootstrap-admin
+          key: password
+
+storage-manager:
+  serviceAccount:
+    create: true
+    azureClientId: "259d35d0-7987-44fb-9e01-ad492c2de39e"
+  workloadIdentity:
+    enabled: true
+
+workflow-engine:
+  serviceAccount:
+    create: true
+    azureClientId: "94ec08fc-4df5-4ebf-a76c-40f69f89f85c"
+  workloadIdentity:
+    enabled: true
+
+kb-retrieval-service:
+  serviceAccount:
+    create: true
+    azureClientId: "0fde1033-ac78-4470-b2e5-7aa86a15e82a"
+  workloadIdentity:
+    enabled: true
+
+analytics-engine:
+  serviceAccount:
+    create: true
+    azureClientId: "082000a5-d8ca-4cd5-a2a9-28f28c13a65d"
+  workloadIdentity:
+    enabled: true
+
+analytics-mcp-server:
+  serviceAccount:
+    create: true
+    azureClientId: "f31512d2-bcc3-4075-b4cf-21ef965d3e5e"
+  workloadIdentity:
+    enabled: true
+
+artifact-service:
+  serviceAccount:
+    create: true
+    azureClientId: "9cf13ada-61fa-48f8-b3ce-eb08e7ae0159"
+  workloadIdentity:
+    enabled: true
+  database:
+    existingSecret: "shared-postgresql-secret"
+    existingSecretKey: "postgres-password"

@@ -1,0 +1,201 @@
+# Default off. The agent-service-maf chart ships disabled until the cutover
+# from the legacy `agent-service` chart. Flip per environment with
+# `--set agent-service-maf.enabled=true` (and `--set agent-service.enabled=false`
+# if running both side-by-side for canary).
+enabled: false
+replicaCount: 1
+
+image:
+  repository: nemo/agent-service-maf
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 8000
+
+resources:
+  limits:
+    cpu: 2000m
+    memory: 4Gi
+  requests:
+    cpu: 500m
+    memory: 1Gi
+
+# CONFIG_SERVICE_URL is set in deployment.yaml (FQDN to config-service in nemo.namespace).
+# Override with configServiceUrl if config-service runs elsewhere.
+configServiceUrl: ""
+
+# When true (e.g. redis.architecture: standalone), REDIS_SENTINEL_* entries in env are omitted.
+redisStandalone: false
+
+# Environment variables MAF reads at startup. The deployment template additionally
+# injects KEYCLOAK_INTERNAL_ISSUER (from helper), KEYCLOAK_CLIENT_ID / _SECRET (from
+# secret), and CONFIG_SERVICE_URL (from helper) — they are NOT listed here.
+#
+# MAF env-naming convention differs from legacy agent-service:
+#   * Gateway URL:  AGENT_GATEWAY__URL          (legacy used LLM_GATEWAY_URL)
+#   * KB endpoint:  KB_ENDPOINT_URL             (legacy used KB_RETRIEVAL_SERVICE_URL)
+# Observability uses the platform-standard AGENT_STUDIO_OBSERVABILITY_* / OTEL_*
+# vars (shared with config-service, kb-retrieval-service, and the workers), read
+# by the observability_client_runtime SDK — see the Observability block below.
+# The deployment template rewrites the leading-underscore-empty value for
+# AGENT_GATEWAY__URL using the same nemo.llmGatewayUrl helper the legacy chart uses.
+env:
+  # --- bind ---
+  - name: AGENT_INTERFACE__HOST
+    value: "0.0.0.0"
+  - name: AGENT_INTERFACE__PORT
+    value: "8000"
+
+  # --- LLM gateway (Bifrost) ---
+  - name: AGENT_GATEWAY__URL
+    value: ""  # Placeholder; resolved by deployment template via nemo.llmGatewayUrl helper
+
+  # --- Config source (config-service over HTTP) ---
+  - name: CONFIG_SOURCE
+    value: "remote"
+  - name: CONFIG_CACHE_TTL
+    value: "60"
+  - name: CONFIG_CACHE_MAX_SIZE
+    value: "1000"
+  - name: CONFIG_HTTP_TIMEOUT
+    value: "10.0"
+  - name: CONFIG_STALE_WHILE_ERROR
+    value: "true"
+
+  # --- KB retrieval (kb-retrieval-service) ---
+  - name: KB_ENDPOINT_URL
+    # Path template — MAF's kb_retrieve.py substitutes {projectId}/{kbId}
+    # before the POST. Bare hostname routes to the kb-retrieval-service's
+    # root, which has no handler and returns 404.
+    value: "http://kb-retrieval-service:5000/api/v1/projects/{projectId}/knowledgebases/{kbId}/search"
+  - name: KB_TIMEOUT_SECONDS
+    value: "30"
+  - name: KB_MAX_RESPONSE_BYTES
+    value: "1048576"  # 1 MiB
+
+  # --- Observability (platform-standard OTLP export via observability_client_runtime) ---
+  # Traces, metrics, and logs all export to the shared OTel collector. Empty
+  # global.observability.otlpEndpoint => the client omits export and logs to
+  # stdout only. Mirrors the apigateway-service / agent-service convention.
+  - name: LOG_LEVEL
+    value: "INFO"
+  - name: OTEL_SERVICE_NAME
+    value: "agent-service-maf"
+  # Preferred trace export on AKS: app-monitoring rewrites OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+  # to the node-local Azure Monitor receiver; this var is left untouched (legacy agent-service pattern).
+  - name: PHOENIX_COLLECTOR_ENDPOINT
+    value: "{{ .Values.global.observability.otlpEndpoint }}/v1/traces"
+  - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+    value: "{{ .Values.global.observability.otlpEndpoint }}"
+  - name: AGENT_STUDIO_OBSERVABILITY_METRICS_OTLP_ENDPOINT
+    value: "{{ .Values.global.observability.otlpEndpoint }}"
+  - name: AGENT_STUDIO_OBSERVABILITY_OTLP_LOGS_ENDPOINT
+    value: "{{ .Values.global.observability.otlpEndpoint }}"
+  - name: AGENT_STUDIO_OBSERVABILITY_LOG_FILE_PATH
+    value: "/dev/stdout"
+  # Local span JSONL sink (writable tmpfs; primary export is OTLP above).
+  - name: AGENT_STUDIO_OBSERVABILITY_TRACE_FILE_PATH
+    value: "/tmp/App_Logs/trace.jsonl"
+  # Capture prompt/completion (input/output) message content on Agent Framework
+  # spans so Phoenix shows the actual conversation, not just span shells.
+  # AF_ENABLE_SENSITIVE_TELEMETRY drives the adapter's runtime enable call;
+  # ENABLE_SENSITIVE_DATA is the AF SDK's own env (read at import time) that the
+  # instrumentation layers latch — both are needed to avoid the import-order race.
+  # WARNING: this exports raw prompts/completions (potential PII/secrets) into
+  # traces. Scope to environments where that is acceptable.
+  - name: AF_ENABLE_SENSITIVE_TELEMETRY
+    value: "true"
+  - name: ENABLE_SENSITIVE_DATA
+    value: "true"
+
+  # --- Redis (task store; sentinel optional, see redisStandalone) ---
+  - name: REDIS_URL
+    value: "redis://redis-master.{{ .Values.global.platformNamespace | default \"agentstudio-platform\" }}.svc.cluster.local:6379/0"
+  - name: REDIS_SENTINEL_URL
+    value: ""
+  - name: REDIS_SENTINEL_MASTER
+    value: ""
+
+  # --- Session memory backend ---
+  # MAF runs --workers 2 in the production Dockerfile. With the in-process
+  # "memory" backend each worker keeps its own Python dict, so a session
+  # written by worker A is invisible to worker B — surfaces as intermittent
+  # 404s on GET /sessions/{id} and mid-conversation message loss when turns
+  # round-robin across workers. Pin to redis so all workers share state via
+  # the same Redis instance. Sentinel URLs follow the same redisStandalone
+  # toggle as the task-store REDIS_SENTINEL_* entries above.
+  - name: AGENT_MEMORY__STORAGE_BACKEND
+    value: "redis"
+  - name: AGENT_MEMORY__REDIS_URL
+    value: "redis://redis-master.{{ .Values.global.platformNamespace | default \"agentstudio-platform\" }}.svc.cluster.local:6379/0"
+  - name: AGENT_MEMORY__REDIS_SENTINEL_URL
+    value: ""
+  - name: AGENT_MEMORY__REDIS_SENTINEL_MASTER
+    value: ""
+
+  # --- MCP knobs ---
+  - name: AGENT_MCP__STRICT_SCHEMAS
+    value: "true"
+
+  # --- Warm-up (optional; empty = pure lazy) ---
+  - name: AGENT_WARM_TEAMS
+    value: ""
+
+  # --- Environment marker ---
+  - name: AGENT_ENVIRONMENT
+    value: "production"
+
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 8000
+  initialDelaySeconds: 15
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 3
+
+readinessProbe:
+  httpGet:
+    path: /ready
+    port: 8000
+  initialDelaySeconds: 10
+  periodSeconds: 5
+  timeoutSeconds: 3
+  failureThreshold: 3
+
+autoscaling:
+  enabled: true
+  minReplicas: 1
+  maxReplicas: 3
+  targetCPUUtilizationPercentage: 70
+
+metrics:
+  path: /metrics
+  # MAF exposes Prometheus metrics on the same http port (8000); no dedicated metrics port.
+  port: http
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+
+namespace: ""
+serviceAccountName: ""
+podSecurityContext: {}
+securityContext: {}
+nodeSelector: {}
+affinity: {}
+tolerations: {}
+
+serviceAccount:
+  create: true
+  name: "agent-service-maf"
+  azureClientId: ""
+
+workloadIdentity:
+  enabled: false
+
+# Global defaults for nil-safe sub-chart rendering; overridden by parent chart global.
+global:
+  observability:
+    otlpEndpoint: ""

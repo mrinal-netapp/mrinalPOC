@@ -1,0 +1,15 @@
+.metrics-row {
+  .card-content {
+    padding: 0;
+  }
+}
+
+.metrics-row__grid {
+  display: flex;
+  align-items: stretch;
+}
+
+.metrics-row__tile {
+  flex: 1;
+  padding: 24px;
+}

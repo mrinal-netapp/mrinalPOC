@@ -1,0 +1,612 @@
+/*
+ * AddEntityForm (components/common/add-entity-form) now owns the page chrome:
+ *   - the fixed top bar with the "Add model" title + close X
+ *   - the scrollable body wrapped in a Card
+ *   - the frozen Add / Cancel footer
+ *   - the 24/32 negative-margin override that fills the route content area
+ *   - the entity heading block ("Model" + description) via entityName/entityDescription props
+ *
+ * The styles previously here for `.add-model`, `.add-model__bar`,
+ * `.add-model__scroll`, `.add-model__intro`, `.add-model__intro-text`,
+ * `.add-model__panel`, `.add-model__footer*` are intentionally gone — they
+ * would either fight AddEntityForm's layout or render twice.
+ */
+
+.add-model__section {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  width: 100%;
+}
+
+/*
+ * AddEntityForm caps each section's content column at 616px to match the
+ * dataset/KB form field width (see add-entity-form.scss). The provider
+ * details section embeds a multi-column table (Provider / Connection
+ * status / Capabilities / Data residency / Actions) and a tab strip that
+ * legitimately need the full CardBlock width, so we release the cap.
+ *
+ * The override is scoped under `.add-entity-form__form-card .card-block`
+ * to match the cap's selector specificity exactly — a bare
+ * `.add-model__section { max-width: none }` rule loses to the cap (1 class
+ * vs 2 classes + child combinator) and the section silently re-clamps to
+ * 616px. This is the same escape-hatch pattern the AddEntityForm docs
+ * point at for table-heavy sections.
+ */
+.add-entity-form__form-card .card-block > .add-model__section {
+  max-width: none;
+}
+
+.add-model__section-heading {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  line-height: 24px;
+  color: var(--text-primary);
+}
+
+.add-model__tabs {
+  width: 100%;
+  max-width: 100%;
+}
+
+.add-model__tab-panel {
+  padding-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.add-model__tab-panel--providers {
+  max-width: 100%;
+}
+
+.add-model__providers-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 100%;
+}
+
+.add-model__providers-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.add-model__providers-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.add-model__providers-search-input {
+  width: 240px;
+}
+
+.add-model__providers-state {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 24px 0;
+  min-height: 120px;
+  justify-content: center;
+}
+
+.add-model__providers-state--error {
+  color: var(--text-primary);
+}
+
+// Semantic table via baseTableMcpBxp/table primitives — block layout keeps column grid.
+.add-model__providers-table.table-container {
+  width: 100%;
+  max-width: 100%;
+  border: 1px solid var(--border-drop-shadow);
+  border-radius: 2px;
+  overflow-x: auto;
+  overflow-y: visible;
+  -webkit-overflow-scrolling: touch;
+  background-color: var(--background-content);
+}
+
+.add-model__providers-table .table {
+  display: block;
+  width: max(100%, 52rem);
+  min-width: 52rem;
+  border-collapse: separate;
+  border-spacing: 0;
+  background-color: var(--background-content);
+}
+
+.add-model__providers-table thead,
+.add-model__providers-table tbody {
+  display: block;
+  width: 100%;
+}
+
+.add-model__providers-table .table-header,
+.add-model__providers-table .table-body {
+  display: block;
+  width: 100%;
+}
+
+.add-model__table-head-row,
+.add-model__table-row {
+  display: grid;
+  grid-template-columns: 56px minmax(140px, 1fr) minmax(200px, 2fr) minmax(160px, 1.2fr);
+  align-items: stretch;
+  min-height: 56px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.add-model__table-head-row {
+  background-color: var(--background-content);
+  box-shadow: inset 0 -1px 0 0 var(--border-drop-shadow);
+}
+
+.add-model__table-head-cell {
+  box-shadow: inset 0 -1px 0 0 var(--border-drop-shadow);
+}
+
+.add-model__providers-table .table-row.add-model__table-head-row {
+  cursor: default;
+  border-bottom: none;
+}
+
+.add-model__providers-table .table-row.add-model__table-head-row:hover {
+  filter: none;
+  background-color: var(--background-content);
+}
+
+.add-model__providers-table .table-row {
+  border-bottom: none;
+}
+
+.add-model__th-btn {
+  display: inline-flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+
+  &.btn {
+    height: auto;
+    min-height: 0;
+    padding: 0;
+    // The Button renders [icon][label]; row-reverse flips it to [label][icon].
+    // In a reversed row the main-start is the right edge, so `flex-end` packs
+    // the label+icon against the left edge — aligning the header label with the
+    // body cell values below it (both sit at the cell's 24px left padding).
+    flex-direction: row-reverse;
+    justify-content: flex-end;
+    width: 100%;
+    font-weight: 600;
+  }
+}
+
+.add-model__th-btn:focus-visible {
+  outline: 2px solid var(--field-border-selected);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+.add-model__th-btn--active .add-model__th-sort {
+  color: var(--text-button-primary);
+  opacity: 1;
+}
+
+.add-model__th-sort {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  color: var(--text-secondary);
+  opacity: 0.85;
+}
+
+.add-model__providers-table .table-row.add-model__table-row {
+  margin: 0;
+  padding: 0;
+  border: none;
+  background-color: var(--background-main);
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  box-shadow: inset 0 -1px 0 0 var(--border-drop-shadow);
+}
+
+.add-model__providers-table .table-row.add-model__table-row:hover {
+  filter: brightness(0.98);
+}
+
+.add-model__providers-table .table-row.add-model__table-row--selected {
+  background-color: var(--background-main);
+  box-shadow:
+    inset 3px 0 0 0 var(--button-secondary),
+    inset 0 -1px 0 0 var(--border-drop-shadow);
+}
+
+.add-model__providers-table .table-row.add-model__table-row:focus-visible {
+  outline: 2px solid var(--field-border-selected);
+  outline-offset: -2px;
+}
+
+.add-model__providers-table .table-head,
+.add-model__providers-table .table-cell {
+  display: flex;
+  align-items: center;
+  padding: 8px 16px 8px 24px;
+  position: relative;
+  min-width: 0;
+}
+
+.add-model__table-cell--radio {
+  position: relative;
+  justify-content: center;
+  padding-left: 8px;
+  padding-right: 8px;
+}
+
+.add-model__sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.add-model__radio {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+}
+
+.add-model__radio-ring {
+  color: var(--field-border);
+}
+
+.add-model__radio-dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background-color: var(--button-secondary);
+  border: 2px solid var(--background-content);
+  outline: 2px solid var(--button-secondary);
+}
+
+.add-model__pagination {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 24px;
+  padding: 8px 16px;
+  background-color: var(--background-main);
+  box-shadow: inset 0 1px 0 0 var(--border-drop-shadow);
+}
+
+.add-model__pagination-arrows {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.add-model__props--single {
+  flex-direction: row;
+  gap: 16px;
+  align-items: center;
+}
+
+.add-model__warn-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.add-model__warn-icon {
+  flex-shrink: 0;
+  color: var(--notification-warning);
+}
+
+.add-model__dropdown--placeholder {
+  justify-content: space-between;
+  cursor: default;
+}
+
+.add-model__dropdown-chevron {
+  flex-shrink: 0;
+  color: var(--text-primary);
+}
+
+.add-model__notice {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  max-width: 616px;
+}
+
+.add-model__notice-icon {
+  flex-shrink: 0;
+  margin-top: 4px;
+  color: var(--text-primary);
+}
+
+/*
+ * Placeholder shown on the not-yet-functional "Self-hosted" tab. Centered
+ * empty state inside a dashed card that clearly reads as "nothing to do
+ * here yet" rather than an interactive form.
+ */
+.add-model__coming-soon {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: center;
+  justify-content: center;
+  max-width: 616px;
+  margin: 16px auto;
+  padding: 48px 32px;
+  border: 1px dashed var(--border-drop-shadow);
+  border-radius: 12px;
+  background-color: var(--background-content);
+  text-align: center;
+}
+
+.add-model__coming-soon-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background-color: var(--background-main);
+  color: var(--text-secondary);
+}
+
+.add-model__coming-soon-title {
+  color: var(--text-primary);
+}
+
+.add-model__coming-soon-text {
+  max-width: 420px;
+  color: var(--text-secondary);
+}
+
+/*
+ * Toggle sits left-aligned inside the tab panel's flex column (which
+ * stretches children by default). `align-self: flex-start` + `width:
+ * fit-content` keeps the button hugging its label instead of spanning
+ * the column. The icon is rendered AFTER the label via `flex-direction:
+ * row` so the chevron sits to the right of "Proxy configuration".
+ */
+.add-model__proxy-toggle {
+  align-self: flex-start;
+  width: fit-content;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+  font: inherit;
+
+  &.btn {
+    height: auto;
+    min-height: 0;
+    padding: 0;
+    gap: 8px;
+    flex-direction: row-reverse;
+    justify-content: flex-start;
+    color: var(--button-secondary);
+    font-weight: 600;
+  }
+}
+
+.add-model__proxy-chevron {
+  color: var(--button-secondary);
+  transition: transform 0.15s ease;
+}
+
+.add-model__proxy-chevron--open {
+  transform: rotate(180deg);
+}
+
+.add-model__proxy-body {
+  margin-top: 16px;
+  max-width: 616px;
+  width: 100%;
+}
+
+.add-model__proxy-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  width: 100%;
+}
+
+.add-model__divider {
+  width: 100%;
+  border: none;
+  border-top: 1px solid var(--grey-15);
+  margin: 0;
+}
+
+.add-model__rule-conditions-group {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  padding: 0;
+  gap: 40px;
+  width: 100%;
+  align-self: stretch;
+}
+
+.add-model__rule-conditions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  padding: 0;
+  gap: 24px;
+  width: 100%;
+  align-self: stretch;
+}
+
+// Heading + Models field only — keeps 24px gap before model cards below.
+.add-model__model-config-intro {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  width: 100%;
+  max-width: 616px;
+}
+
+.add-model__section-heading--rule {
+  gap: 16px;
+}
+
+.add-model__card.card {
+  width: 100%;
+  max-width: 616px;
+  align-self: stretch;
+  border-radius: 2px;
+  box-shadow: 2px 2px 6px var(--grey-15);
+}
+
+.add-model__card-body {
+  padding: 24px 40px;
+}
+
+.add-model__props {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+}
+
+.add-model__props-labels,
+.add-model__props-values {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.add-model__success-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.add-model__success-icon {
+  color: var(--notification-success);
+  flex-shrink: 0;
+}
+
+.add-model__mono-url {
+  font-family: var(--font-family-mono, monospace);
+}
+
+.add-model__field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  max-width: 616px;
+}
+
+.add-model__dropdown {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 8px 8px 16px;
+  border: 1px solid var(--grey-30);
+  border-radius: 4px;
+  background-color: var(--background-content);
+}
+
+.add-model__dropdown-inner {
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+  min-width: 0;
+}
+
+.add-model__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 240px;
+  padding: 2px 8px 2px 16px;
+  border-radius: 16px;
+  background-color: var(--tag-1-bg);
+  color: var(--tag-1-text);
+}
+
+.add-model__chip-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+  color: inherit;
+}
+
+.add-model__dropdown-actions {
+  display: flex;
+  align-items: center;
+  color: var(--text-primary);
+}
+
+.add-model__detail-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.add-model__detail-row {
+  display: grid;
+  grid-template-columns: minmax(140px, 1fr) minmax(180px, 399px);
+  gap: 16px;
+  align-items: start;
+  line-height: 24px;
+  color: var(--text-primary);
+}
+
+.add-model__detail-value--empty {
+  color: var(--text-secondary);
+}
+
+.add-model__error {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  max-width: 616px;
+  padding-bottom: 16px;
+  color: var(--text-primary);
+}
+
+.add-model__error-icon {
+  flex-shrink: 0;
+  color: var(--notification-error);
+}
+

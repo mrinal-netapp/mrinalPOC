@@ -1,0 +1,186 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "AgentStudio platform tier values",
+  "description": "Helm JSON schema for deployments/helm/platform (Temporal, Lakekeeper, Redis, s3gateway stub). Validates umbrella-level keys at helm install/upgrade time. Permissive (additionalProperties: true) — only type-checks known high-risk keys so cloud overlays and --set flags never trip it.",
+  "type": "object",
+  "additionalProperties": true,
+
+  "properties": {
+    "createNamespace": { "type": "boolean" },
+    "deploymentName": { "type": "string" },
+    "endpoint": { "type": "string" },
+    "consoleSubdomain": { "type": "string" },
+
+    "global": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "storageClass": {
+          "type": "string",
+          "description": "Per-cloud managed storage for Redis persistence (anf-nfs / fsxn-nas / standard). Empty falls back to cluster default."
+        },
+        "endpoint": { "type": "string" },
+        "imageRegistry": { "type": "string" },
+        "imageRepository": { "type": "string" },
+        "imageTag": { "type": "string" },
+        "imagePullPolicy": {
+          "type": "string",
+          "enum": ["", "Always", "IfNotPresent", "Never"],
+          "description": "Global image pull policy override. EKS forces Always; empty leaves each chart default in effect."
+        },
+        "gatewayHttpsPort": {
+          "type": ["string", "integer"],
+          "description": "Public HTTPS port. 443 for cloud; 8443 for local KIND clusters."
+        },
+        "s3gatewayFullname": { "type": "string" },
+        "deploymentName": { "type": "string" },
+        "lakekeeperCatalogUrl": { "type": "string" }
+      }
+    },
+
+    "defaultSetup": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "lakekeeperEnabled": { "type": "boolean" },
+        "s3gatewayBootstrapEnabled": { "type": "boolean" }
+      }
+    },
+
+    "keycloak": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "setup": {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "keycloakNamespace": { "type": "string" },
+            "keycloakUrl": { "type": "string" },
+            "realmName": { "type": "string" },
+            "image": {
+              "type": "object",
+              "additionalProperties": true,
+              "properties": {
+                "pullPolicy": {
+                  "type": "string",
+                  "enum": ["", "Always", "IfNotPresent", "Never"]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+
+    "redis": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "architecture": {
+          "type": "string",
+          "enum": ["standalone", "replication"]
+        },
+        "auth": {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": { "enabled": { "type": "boolean" } }
+        },
+        "master": {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "persistence": {
+              "type": "object",
+              "additionalProperties": true,
+              "properties": {
+                "enabled": { "type": "boolean" },
+                "storageClass": { "type": "string" },
+                "size": {
+                  "type": "string",
+                  "pattern": "^[0-9]+(Ki|Mi|Gi|Ti|Pi|Ei|K|M|G|T|P|E)?$"
+                }
+              }
+            }
+          }
+        },
+        "metrics": {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "serviceMonitor": {
+              "type": "object",
+              "additionalProperties": true,
+              "properties": { "enabled": { "type": "boolean" } }
+            }
+          }
+        },
+        "workloadIdentity": {
+          "type": "object",
+          "properties": { "enabled": { "type": "boolean" } }
+        }
+      }
+    },
+
+    "temporal": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "replicaCount": { "type": "integer", "minimum": 0 },
+        "serviceAccountName": { "type": "string" },
+        "database": {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "host": { "type": "string" },
+            "port": { "type": ["string", "integer"] },
+            "name": { "type": "string" },
+            "user": { "type": "string" },
+            "existingSecret": { "type": "string" },
+            "existingSecretKey": { "type": "string" }
+          }
+        },
+        "workloadIdentity": {
+          "type": "object",
+          "properties": { "enabled": { "type": "boolean" } }
+        }
+      }
+    },
+
+    "lakekeeper": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "helmWait": { "type": "boolean" },
+        "keycloakUrl": { "type": "string" },
+        "postgresql": {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": { "enabled": { "type": "boolean" } }
+        },
+        "externalDatabase": {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "type": { "type": "string" },
+            "host_read": { "type": "string" },
+            "host_write": { "type": "string" },
+            "port": { "type": ["string", "integer"] },
+            "database": { "type": "string" },
+            "user": { "type": "string" }
+          }
+        },
+        "workloadIdentity": {
+          "type": "object",
+          "properties": { "enabled": { "type": "boolean" } }
+        }
+      }
+    }
+  }
+}

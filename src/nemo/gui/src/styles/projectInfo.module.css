@@ -1,0 +1,19 @@
+.card {
+  padding: 16px;
+}
+
+.infoRow {
+  display: flex;
+  justify-content: space-between;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--colorNeutralStroke2);
+}
+
+.label {
+  font-weight: 600;
+}
+
+.value {
+  color: var(--colorNeutralForeground1);
+}
+

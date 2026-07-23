@@ -1,0 +1,6 @@
+apiVersion: v2
+name: analytics-mcp-server
+description: A Helm sub-chart for the Analytics MCP Server (FastMCP shim for project dataset analytics)
+type: application
+version: 1.0.0
+appVersion: "1.0.0"

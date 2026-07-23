@@ -1,0 +1,30 @@
+{{- if and .Values.enabled .Values.metadata.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "s3gateway.fullname" . }}-metadata
+  namespace: {{ include "nemo.namespace" . | default .Release.Namespace }}
+  labels:
+    {{- include "s3gateway.labels" . | nindent 4 }}
+    app.kubernetes.io/component: metadata
+spec:
+  accessModes:
+    ## Precedence: operator-set global.accessMode (cluster-wide override
+    ## for RWX-capable storage like ontap-nas) → chart-local
+    ## storage.accessMode (may be pinned by workers values-local for the
+    ## legacy hostPath flow) → hard default RWMany. global.accessMode
+    ## wins so a single `--set global.accessMode=ReadWriteMany` flips
+    ## every shared PVC at once.
+    - {{ .Values.global.accessMode | default .Values.storage.accessMode | default "ReadWriteMany" }}
+  resources:
+    requests:
+      storage: {{ .Values.metadata.size | default "2Gi" }}
+  {{- if .Values.metadata.storageClass }}
+  storageClassName: {{ .Values.metadata.storageClass }}
+  {{- else if .Values.global.storageClass }}
+  storageClassName: {{ .Values.global.storageClass }}
+  {{- end }}
+  {{- if .Values.metadata.volumeName }}
+  volumeName: {{ .Values.metadata.volumeName | quote }}
+  {{- end }}
+{{- end }}

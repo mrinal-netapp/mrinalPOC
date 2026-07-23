@@ -1,0 +1,45 @@
+{{- /*
+Realm-bootstrap ConfigMap (T-102 — agent-studio realm declarative source).
+
+Purpose
+-------
+Renders realms/agent-studio-realm.json (chart-relative file) through Helm's
+`tpl` so `.Values.realmBootstrap.*` substitutions take effect, and surfaces
+the result as a single key (`realm.json`) on a ConfigMap. The companion
+post-install/post-upgrade Job (templates/realm-bootstrap-job.yaml) mounts
+this ConfigMap at /realm and feeds the JSON to `kcadm.sh create realms`
+(or `update realms/<r>` if the realm already exists).
+
+Why a ConfigMap and not an inline command argument
+--------------------------------------------------
+Two reasons:
+  1. The realm JSON grows as later commits add IdP, roles, clients, and
+     client scopes. Embedding 200+ lines of JSON inside a Job's `args:`
+     would be unreadable and would push the PodSpec past the 1 MiB API
+     server limit once we add the user-facing scopes.
+  2. Mounting via ConfigMap makes the Job pod-restart-safe: the kubelet
+     re-projects the latest ConfigMap revision on retry, no rebuild needed.
+
+Lifecycle
+---------
+Annotated as a `pre-install,pre-upgrade` Helm hook so the ConfigMap exists
+before the Job (which is `post-install,post-upgrade` at hook-weight 5)
+fires. `hook-delete-policy: before-hook-creation` ensures stale ConfigMaps
+from previous releases don't linger, matching the Job's policy below.
+*/}}
+{{- if .Values.realmBootstrap.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "keycloak.fullname" . }}-realm-bootstrap
+  labels:
+    {{- include "keycloak.labels" . | nindent 4 }}
+    app.kubernetes.io/component: realm-bootstrap
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "0"
+    "helm.sh/hook-delete-policy": before-hook-creation
+data:
+  realm.json: |-
+{{ tpl (.Files.Get "realms/agent-studio-realm.json") . | indent 4 }}
+{{- end }}

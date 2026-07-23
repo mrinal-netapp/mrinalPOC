@@ -1,0 +1,9 @@
+linux:
+  enabled: true
+  privileged: true   # provider pod needs privileged to write to the UDS host directory
+  rbac:
+    install: false   # driver chart already owns the shared secrets-store-csi-driver ServiceAccount
+  resources:
+    requests:
+      cpu: 50m
+      memory: 100Mi

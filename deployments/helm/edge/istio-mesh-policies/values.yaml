@@ -1,0 +1,449 @@
+# AgentStudio Istio mesh-policies values.
+#
+# Flip individual feature flags or override namespace lists / principals
+# per environment by layering an additional values file:
+#   helm upgrade ... -f values.yaml -f values-aks.yaml
+
+# ---------------------------------------------------------------------------
+# Namespace list that receives mesh policies (PeerAuthentication, etc.).
+# The chart does NOT render or patch Namespace resources — sidecar
+# injection labelling is handled by the Makefile (istio-label-namespaces);
+# see templates/namespace-injection.yaml.
+# ---------------------------------------------------------------------------
+namespaces:
+  - name: agentstudio-edge
+  - name: agentstudio-console
+  - name: agentstudio-workers
+  - name: agentstudio-llm-gateway
+  - name: agentstudio-services
+  - name: agentstudio-platform
+  - name: agentstudio-identity
+  - name: monitoring
+  - name: database
+
+# ---------------------------------------------------------------------------
+# Per-hop Keycloak JWT enforcement (RequestAuthentication + mesh-require-jwt).
+# Installed in the bootstrap phase so the exemptions are live before the
+# services-tier post-install hooks run. issuer/jwksUri are derived from
+# global.endpoint + global.gatewayHttpsPort unless set explicitly.
+#
+# SYNC: this is the mesh-side JWT trust config; the edge gateway has its own
+# at edge chart `gateway.istio.requestAuthentication.*`. They are intentionally
+# independent (you may loosen one / tighten the other). If you change one and
+# the trees diverge UNINTENTIONALLY, a token can pass the edge but 401 at the
+# first in-mesh hop (or vice versa) — decide consciously whether to mirror.
+# Note the issuer also derives differently: edge substitutes endpoint into the
+# literal overlay value; mesh derives purely from global.endpoint.
+# ---------------------------------------------------------------------------
+meshJwt:
+  enabled: true
+  issuer: ""
+  jwksUri: ""
+  identityNamespace: agentstudio-identity
+  audiences: ["agent-studio-api"]
+  includeKeycloakMasterRealm: true
+  forwardOriginalToken: true
+  extraJwtRules: []
+  exemptions:
+    namespaces:
+      - agentstudio-edge      # ingress gateway → services (north-south); app returns 401
+      - agentstudio-workers
+      - monitoring
+    principals: []
+    paths:
+      - /health
+      - /ready
+      - /metrics
+      - /api/v1/setup/*
+      - /config/api/v1/setup/*
+      - /api/v1/internal/platform-mcp-servers
+      - /api/v1/internal/platform-mcp-servers/*
+  namespaces:
+    - name: agentstudio-services
+      requireJwt: true
+    - name: agentstudio-console
+      requireJwt: false
+
+# ---------------------------------------------------------------------------
+# mTLS PeerAuthentication
+# ---------------------------------------------------------------------------
+mtls:
+  # PERMISSIVE during rollout; switch to STRICT after validation.
+  # Set to STRICT once all pods are 2/2 and istiod egress rules are in place.
+  mode: STRICT
+
+  # Workload-specific port-level overrides.
+  # Used for pods that accept traffic from outside the mesh (e.g. ingress gateways)
+  # where Istio mTLS cannot be enforced on specific ports (browser has no SPIFFE cert).
+  portLevelOverrides:
+    # The Istio ingress gateway auto-provisioned by istiod into agentstudio-edge
+    # receives external browser traffic (no SPIFFE client cert). Allow PERMISSIVE
+    # on the listener ports so the mTLS enforcement does not reject browser
+    # connections at the gateway entry point.
+    - name: istio-gateway-listener-ports
+      namespace: agentstudio-edge
+      selector:
+        gateway.networking.k8s.io/gateway-name: agentstudio-gateway
+      ports:
+        80: PERMISSIVE    # HTTP listener (browser → Istio gateway)
+        443: PERMISSIVE   # HTTPS/TLS-terminated listener (browser → Istio gateway)
+
+    # Keycloak HTTP and management ports allow plain-text callers.
+    # One-time bootstrap / migration jobs (realm-bootstrap, lakekeeper-bootstrap,
+    # keycloak-setup) run without an Istio sidecar to avoid proxy startup races;
+    # they connect to Keycloak via plain HTTP. PERMISSIVE on these two ports lets
+    # Keycloak accept both plain HTTP (from un-meshed jobs) and mTLS (from services
+    # within the mesh) on the same ports. All other inter-service traffic remains
+    # governed by the namespace-level STRICT PeerAuthentication.
+    - name: keycloak-http-permissive
+      namespace: agentstudio-identity
+      selector:
+        app.kubernetes.io/name: keycloak
+      ports:
+        8080: PERMISSIVE  # HTTP API — kcadm / service-to-Keycloak
+        9000: PERMISSIVE  # Management port — health + readiness probes
+
+    # ----------------------------------------------------------------------
+    # Prometheus metrics scrape ports.
+    # Prometheus runs in-mesh but scrapes raw pod IPs (ServiceMonitor endpoints
+    # role), which Istio routes via the PassthroughCluster as plaintext — the
+    # target's STRICT sidecar then resets the connection (scrape targets up=0).
+    # Each entry below relaxes ONLY the workload's dedicated metrics port to
+    # PERMISSIVE so plaintext scrapes succeed; all real service-to-service app
+    # ports remain STRICT. NOTE: port 8000 is the *metrics* port for
+    # apigateway/analytics/workflow but the *app* port for agent-service, so
+    # these overrides are scoped per-workload (never namespace-wide).
+    - name: config-service-metrics-permissive
+      namespace: agentstudio-services
+      selector:
+        component: config-service
+      ports:
+        9090: PERMISSIVE  # /metrics scrape (dedicated metrics port)
+    - name: agent-service-metrics-permissive
+      namespace: agentstudio-services
+      selector:
+        component: agent-service
+      ports:
+        9090: PERMISSIVE  # /metrics scrape (dedicated metrics port)
+    - name: artifact-service-metrics-permissive
+      namespace: agentstudio-services
+      selector:
+        component: artifact-service
+      ports:
+        9090: PERMISSIVE  # /metrics scrape (dedicated metrics port)
+    - name: apigateway-service-metrics-permissive
+      namespace: agentstudio-services
+      selector:
+        component: apigateway-service
+      ports:
+        8000: PERMISSIVE  # /metrics scrape (dedicated metrics port; app on 8080/8443)
+    - name: analytics-engine-metrics-permissive
+      namespace: agentstudio-services
+      selector:
+        component: analytics-engine
+      ports:
+        8000: PERMISSIVE  # /metrics scrape (dedicated metrics port; app on 8080)
+    - name: workflow-engine-metrics-permissive
+      namespace: agentstudio-services
+      selector:
+        component: workflow-engine
+      ports:
+        8000: PERMISSIVE  # /metrics scrape (dedicated metrics port; app on 8080)
+    - name: kb-retrieval-service-metrics-permissive
+      namespace: agentstudio-services
+      selector:
+        component: kb-retrieval-service
+      ports:
+        9090: PERMISSIVE  # /metrics scrape (dedicated metrics port; app on 5000 stays STRICT)
+    - name: otel-collector-metrics-permissive
+      namespace: monitoring
+      selector:
+        app.kubernetes.io/name: otel-collector
+      ports:
+        8889: PERMISSIVE  # Prometheus exporter scrape (dedicated metrics port)
+    # kube-state-metrics exposes cluster-object metrics (kube_pod_info,
+    # kube_pod_container_resource_requests, etc.) on :8080. Prometheus scrapes it
+    # over plaintext via the PassthroughCluster; without this override the STRICT
+    # sidecar resets the scrape (up=0, HTTP 503), so ALL kube_* series vanish and
+    # the kube-prometheus-stack CPU/memory recording rules (which join on
+    # kube_pod_info) return no data — leaving the Grafana "Compute Resources"
+    # dashboards empty even when the datasource routing is correct.
+    - name: kube-state-metrics-metrics-permissive
+      namespace: monitoring
+      selector:
+        app.kubernetes.io/name: kube-state-metrics
+      ports:
+        8080: PERMISSIVE  # /metrics scrape (dedicated metrics port)
+
+# ---------------------------------------------------------------------------
+# Service-to-service authorization (allow-list + X-Forwarded-Client-Cert).
+#
+# East-west (service-lane) hardening only; the user JWT lane (meshJwt) is
+# separate and untouched. When `enabled`, this block:
+#   1. renders the per-pair allowList below — token-less service traffic is
+#      admitted ONLY via these caller→target mTLS SPIFFE pairs;
+#   2. injects an unforgeable x-forwarded-client-cert (from the verified mTLS
+#      SAN) on inbound to each injectTargets workload; and
+#   3. drops the dropNamespaceExemptions source-namespaces from mesh-require-jwt
+#      (their callers must be in allowList; the user JWT lane is untouched).
+#
+# dropNamespaceExemptions removes the agentstudio-workers blanket exemption, so
+# token-less worker→service calls must be named in allowList (else 403). Self-
+# contained (independent of #249, the agentstudio-services token-less lane).
+# ---------------------------------------------------------------------------
+authorizationPolicies:
+  enabled: true
+  # Source-namespace exemptions to stop honoring. agentstudio-workers dropped
+  # (callers now in allowList); monitoring stays exempt (default-SA grafana-proxy
+  # + /metrics path exemption).
+  dropNamespaceExemptions:
+    - agentstudio-workers
+  # Workloads whose inbound sidecar strips + re-injects X-Forwarded-Client-Cert.
+  injectTargets:
+    - name: config-service
+      namespace: agentstudio-services
+      selectorLabels:
+        component: config-service
+    - name: workflow-engine
+      namespace: agentstudio-services
+      selectorLabels:
+        component: workflow-engine
+    # NOTE: agent-service is intentionally NOT an injectTarget — it consumes
+    # X-User-ID (not XFCC) and its only in-mesh caller is apigateway.
+    - name: agent-service-maf
+      namespace: agentstudio-services
+      selectorLabels:
+        component: agent-service-maf
+    - name: kb-retrieval-service
+      namespace: agentstudio-services
+      selectorLabels:
+        component: kb-retrieval-service
+
+  # AuthorizationPolicy allow-list. Each entry becomes one ALLOW policy.
+  allowList:
+    - name: allow-apigateway-to-agent-service
+      namespace: agentstudio-services
+      targetLabels:
+        component: agent-service
+      principals:
+        - cluster.local/ns/agentstudio-services/sa/apigateway-service
+
+    # KB retrieval: agent-service / agent-service-maf call kb-retrieval-service
+    # (:5000 /api/v1/.../search) for the `kb_retrieve` tool. kb-retrieval-service
+    # lives in the JWT-gated agentstudio-services namespace, so the namespace-wide
+    # mesh-require-jwt AuthorizationPolicy denies these in-mesh hops with
+    # 403 "RBAC: access denied" unless this explicit ALLOW names the callers.
+    - name: allow-services-to-kb-retrieval
+      namespace: agentstudio-services
+      targetLabels:
+        component: kb-retrieval-service
+      principals:
+        - cluster.local/ns/agentstudio-services/sa/agent-service
+        - cluster.local/ns/agentstudio-services/sa/agent-service-maf
+
+    - name: allow-services-to-bifrost
+      namespace: agentstudio-llm-gateway
+      targetLabels:
+        component: bifrost
+      principals:
+        - cluster.local/ns/agentstudio-services/sa/agent-service
+        - cluster.local/ns/agentstudio-services/sa/agent-service-maf
+        - cluster.local/ns/agentstudio-services/sa/config-service
+        - cluster.local/ns/agentstudio-services/sa/workflow-engine
+        - cluster.local/ns/agentstudio-services/sa/kb-retrieval-service
+        - cluster.local/ns/agentstudio-workers/sa/workers-kb
+        - cluster.local/ns/agentstudio-workers/sa/workers-eval
+
+    # Reverse hop: Bifrost calls the in-cluster TEI embedding backend
+    # (built-in `as-tei-minilm` provider -> tei-minilm Service) for KB
+    # embeddings. TEI runs in the JWT-gated agentstudio-services namespace, so
+    # the namespace-wide mesh-require-jwt AuthorizationPolicy denies the
+    # token-less Bifrost->TEI hop (403 "RBAC: access denied") without this allow.
+    # The companion 401 (jwt_authn validating Bifrost's placeholder upstream
+    # bearer) is handled by the tei-strip-authorization EnvoyFilter.
+    - name: allow-bifrost-to-tei
+      namespace: agentstudio-services
+      targetLabels:
+        component: tei
+      principals:
+        - cluster.local/ns/agentstudio-llm-gateway/sa/bifrost-proxy
+
+    - name: allow-bifrost-to-analytics-mcp
+      namespace: agentstudio-services
+      targetLabels:
+        app: analytics-mcp-server
+      principals:
+        - cluster.local/ns/agentstudio-llm-gateway/sa/bifrost-proxy
+
+    # Reverse hop: the analytics MCP shim forwards agent tool calls to
+    # analytics-engine (/api/v1/agent/*) carrying only X-Project-ID and NO
+    # aud=agent-studio-api JWT — Bifrost consumes the user token for its own
+    # virtual-key auth and does not forward it downstream. analytics-engine
+    # runs in the JWT-gated agentstudio-services namespace, so the
+    # namespace-wide mesh-require-jwt AuthorizationPolicy denies this
+    # token-less hop with 403 "RBAC: access denied" unless this explicit
+    # ALLOW names the caller. Tenant isolation is still enforced downstream by
+    # the engine via the X-Project-ID header.
+    - name: allow-analytics-mcp-to-analytics-engine
+      namespace: agentstudio-services
+      targetLabels:
+        component: analytics-engine
+      principals:
+        - cluster.local/ns/agentstudio-services/sa/analytics-mcp-server
+
+    # Managed MCP runner pods (dynamically provisioned by config-service).
+    # Bifrost routes LLM tool calls to them; config-service polls /health for
+    # readiness. No other principal may reach mcp-stdio-runner pods.
+    - name: allow-bifrost-and-config-to-mcp-runners
+      namespace: agentstudio-services
+      targetLabels:
+        component: mcp-stdio-runner
+      principals:
+        - cluster.local/ns/agentstudio-llm-gateway/sa/bifrost-proxy
+        - cluster.local/ns/agentstudio-services/sa/config-service
+
+    - name: allow-phoenix-from-services
+      namespace: monitoring
+      targetLabels:
+        app.kubernetes.io/name: phoenix
+      principals:
+        - cluster.local/ns/agentstudio-services/sa/agent-service
+        - cluster.local/ns/agentstudio-services/sa/agent-service-maf
+        - cluster.local/ns/agentstudio-services/sa/apigateway-service
+        # Edge gateway identity — required for browser access to the Phoenix UI
+        # via phoenix.<endpoint> (the HTTPRoute on agentstudio-gateway). Phoenix
+        # has no auth proxy, so this exposes all traces to anyone who can reach
+        # the gateway; gate further with network policy/VPN where needed.
+        - cluster.local/ns/agentstudio-edge/sa/agentstudio-gateway-istio
+        # Central OTel collector identity — required so the collector can export
+        # agent/LLM traces to Phoenix's OTLP ingest (/v1/traces). Without this,
+        # STRICT-mTLS RBAC returns 403 and all agent traces are dropped.
+        - cluster.local/ns/monitoring/sa/observability-otel-collector
+
+    # ----------------------------------------------------------------------
+    # Service lane: per-pair token-less worker→service allow-list. With the
+    # agentstudio-workers exemption dropped, these token-less calls are admitted
+    # ONLY via the explicit pairs below (user traffic still matches the JWT rule).
+    # Source of truth: service-graph canvas (caller→target matrix).
+    # ----------------------------------------------------------------------
+    - name: allow-services-to-config-service
+      namespace: agentstudio-services
+      targetLabels:
+        component: config-service
+      principals:
+        - cluster.local/ns/agentstudio-services/sa/workflow-engine
+        - cluster.local/ns/agentstudio-services/sa/agent-service
+        - cluster.local/ns/agentstudio-services/sa/agent-service-maf
+        - cluster.local/ns/agentstudio-workers/sa/storage-manager
+        - cluster.local/ns/agentstudio-workers/sa/workers-connector
+        - cluster.local/ns/agentstudio-workers/sa/workers-dataset
+        - cluster.local/ns/agentstudio-workers/sa/workers-kb
+        - cluster.local/ns/agentstudio-workers/sa/workers-eval
+
+    - name: allow-services-to-workflow-engine
+      namespace: agentstudio-services
+      targetLabels:
+        component: workflow-engine
+      principals:
+        - cluster.local/ns/agentstudio-services/sa/config-service
+        - cluster.local/ns/agentstudio-workers/sa/workers-connector
+
+    - name: allow-services-to-agent-service-maf
+      namespace: agentstudio-services
+      targetLabels:
+        component: agent-service-maf
+      principals:
+        - cluster.local/ns/agentstudio-services/sa/workflow-engine
+        - cluster.local/ns/agentstudio-workers/sa/workers-eval
+
+  # Default-deny entries (empty spec → deny-all for namespace).
+  # Applied after the allow-list is verified.
+  defaultDeny:
+    enabled: false
+    namespaces:
+      - agentstudio-services
+      - agentstudio-llm-gateway
+
+# ---------------------------------------------------------------------------
+# TEI upstream-bearer stripping.
+#
+# Bifrost fronts the in-cluster TEI embedding backend as a custom
+# openai-compatible provider and forwards a placeholder upstream credential
+# (`Authorization: Bearer tei-no-auth`) on every call. TEI lives in the
+# JWT-gated agentstudio-services namespace, whose namespace-wide
+# `keycloak-jwt-mesh` RequestAuthentication validates ANY Authorization bearer
+# as a Keycloak JWT — and rejects the placeholder with
+#   401 "Jwt is not in the form of Header.Payload.Signature".
+# Istio RequestAuthentication rules MERGE (a workload-specific empty-jwtRules
+# policy does NOT override the namespace-wide one), so the only reliable fix is
+# to make the hop token-less. This EnvoyFilter inserts a Lua filter BEFORE
+# jwt_authn on the TEI sidecar inbound chain that strips the Authorization
+# header. TEI needs no auth (reached only by Bifrost, gated by NetworkPolicy +
+# the allow-bifrost-to-tei AuthorizationPolicy above).
+teiStripAuthorization:
+  enabled: true
+  namespace: agentstudio-services
+  selectorLabels:
+    component: tei
+
+# ---------------------------------------------------------------------------
+# RequestAuthentication + JWT AuthorizationPolicy
+# ---------------------------------------------------------------------------
+jwtAuth:
+  enabled: false
+  # Set these to real values in values-aks.yaml or via --set
+  issuer: "<jwt-issuer>"
+  jwksUri: "<jwks-uri>"
+  expectedAudience: "<expected-audience>"
+  targetNamespace: agentstudio-services
+  targetLabels:
+    component: apigateway-service
+
+# ---------------------------------------------------------------------------
+# RBAC (Kubernetes Role/RoleBinding for Istio resources)
+# ---------------------------------------------------------------------------
+rbac:
+  enabled: true
+  developerGroup: agentstudio-developers
+  # Namespace where developer read-only and GitOps admin roles are created.
+  namespace: agentstudio-services
+  gitopsServiceAccount:
+    name: gitops-deployer
+    namespace: "<gitops-namespace>"
+
+# ---------------------------------------------------------------------------
+# ValidatingAdmissionPolicy guardrails
+# ---------------------------------------------------------------------------
+admissionPolicies:
+  enabled: true
+  # Label that must be present on a Namespace for policies to apply.
+  # Add 'env: production' to app namespaces to activate enforcement.
+  productionLabel:
+    key: env
+    value: production
+  denyDefaultServiceAccount: true
+  denyMtlsDisable: true
+  requireAuthzRules: true
+
+# ---------------------------------------------------------------------------
+# Optional Istio IngressGateway + VirtualService
+# Disabled by default; enable and fill hosts for exposed ingress.
+# ---------------------------------------------------------------------------
+gateway:
+  enabled: false
+  clusterBaseDomain: "<cluster-name>"
+  hosts:
+    - "app"
+    - "catalog"
+    - "workflows"
+    - "auth"
+  apigatewayPort: 8080
+  apigatewayNamespace: agentstudio-services
+  apigatewayHost: apigateway-service
+
+# ---------------------------------------------------------------------------
+# Sample test workloads (mesh-test namespace)
+# Useful for initial mesh validation; disable in production.
+# ---------------------------------------------------------------------------
+samples:
+  enabled: false

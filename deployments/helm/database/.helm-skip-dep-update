@@ -1,0 +1,5 @@
+# Skips `helm dependency update` for this chart. See helm-deps-update in
+# mk/common.mk. postgresql is vendored under charts/ and pinned to an
+# exact version in Chart.yaml to avoid drifting on every deploy.
+#
+# To bump the version: edit Chart.yaml, then run `make vendor-database-deps`.

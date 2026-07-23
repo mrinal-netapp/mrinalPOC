@@ -1,0 +1,44 @@
+{{- if .Values.jwtAuth.enabled }}
+---
+apiVersion: security.istio.io/v1
+kind: RequestAuthentication
+metadata:
+  name: apigateway-jwt
+  namespace: {{ .Values.jwtAuth.targetNamespace }}
+  labels:
+    {{- include "istio-mesh-policies.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- range $k, $v := .Values.jwtAuth.targetLabels }}
+      {{ $k }}: {{ $v }}
+      {{- end }}
+  jwtRules:
+    - issuer: {{ .Values.jwtAuth.issuer | quote }}
+      jwksUri: {{ .Values.jwtAuth.jwksUri | quote }}
+      forwardOriginalToken: true
+---
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: apigateway-require-jwt
+  namespace: {{ .Values.jwtAuth.targetNamespace }}
+  labels:
+    {{- include "istio-mesh-policies.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- range $k, $v := .Values.jwtAuth.targetLabels }}
+      {{ $k }}: {{ $v }}
+      {{- end }}
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            requestPrincipals:
+              - "*"
+      when:
+        - key: request.auth.claims[aud]
+          values:
+            - {{ .Values.jwtAuth.expectedAudience | quote }}
+{{- end }}

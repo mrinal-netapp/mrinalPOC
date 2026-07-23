@@ -1,0 +1,70 @@
+@use "@/styles/mixins" as *;
+
+.playground-results {
+  &__body {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    padding: 16px;
+  }
+
+  &__empty {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    width: 100%;
+  }
+
+  &__chunk-card {
+    border: 2px solid transparent;
+    border-radius: 8px;
+    background: var(--background-content, white);
+    box-shadow: 0 1px 3px rgb(0 0 0 / 8%);
+    cursor: pointer;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+
+    &:hover {
+      box-shadow: 0 2px 6px rgb(0 0 0 / 12%);
+    }
+
+    &:focus-visible {
+      outline: 2px solid var(--border-focus, #0067c5);
+      outline-offset: 2px;
+    }
+
+    &--selected {
+      border-color: var(--border-focus, #0067c5);
+    }
+  }
+
+  &__chunk-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 40px;
+    min-height: 72px;
+    gap: 16px;
+  }
+
+  &__chunk-title {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+    flex: 1;
+  }
+
+  &__chunk-body {
+    padding: 0 40px 24px;
+  }
+
+  &__chunk-content {
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: var(--text-secondary);
+  }
+}

@@ -1,0 +1,92 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "description": "Optional Azure DNS public zone with app/auth A records pointing at the gateway static IP."
+  },
+  "parameters": {
+    "zoneName": {
+      "type": "string",
+      "metadata": {
+        "description": "Azure DNS zone resource name (e.g. agentstudio-preprod-example-com)."
+      }
+    },
+    "dnsName": {
+      "type": "string",
+      "metadata": {
+        "description": "FQDN of the zone with trailing dot (e.g. agentstudio-preprod.example.com.)."
+      }
+    },
+    "appRecordName": {
+      "type": "string",
+      "defaultValue": "app",
+      "metadata": {
+        "description": "Relative name for the console host (app.<zone>)."
+      }
+    },
+    "authRecordName": {
+      "type": "string",
+      "defaultValue": "auth",
+      "metadata": {
+        "description": "Relative name for Keycloak (auth.<zone>)."
+      }
+    },
+    "targetIpAddress": {
+      "type": "string",
+      "metadata": {
+        "description": "IPv4 address of the gateway public IP."
+      }
+    }
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Network/dnsZones",
+      "apiVersion": "2018-05-01",
+      "name": "[parameters('zoneName')]",
+      "location": "global",
+      "properties": {}
+    },
+    {
+      "type": "Microsoft.Network/dnsZones/A",
+      "apiVersion": "2018-05-01",
+      "name": "[concat(parameters('zoneName'), '/', parameters('appRecordName'))]",
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/dnsZones', parameters('zoneName'))]"
+      ],
+      "properties": {
+        "TTL": 300,
+        "ARecords": [
+          {
+            "ipv4Address": "[parameters('targetIpAddress')]"
+          }
+        ]
+      }
+    },
+    {
+      "type": "Microsoft.Network/dnsZones/A",
+      "apiVersion": "2018-05-01",
+      "name": "[concat(parameters('zoneName'), '/', parameters('authRecordName'))]",
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/dnsZones', parameters('zoneName'))]"
+      ],
+      "properties": {
+        "TTL": 300,
+        "ARecords": [
+          {
+            "ipv4Address": "[parameters('targetIpAddress')]"
+          }
+        ]
+      }
+    }
+  ],
+  "outputs": {
+    "zoneName": {
+      "type": "string",
+      "value": "[parameters('zoneName')]"
+    },
+    "dnsName": {
+      "type": "string",
+      "value": "[parameters('dnsName')]"
+    }
+  }
+}

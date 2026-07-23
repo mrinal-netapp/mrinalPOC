@@ -1,0 +1,353 @@
+# Tiered review enforcement. Posts a `review-level-gate` commit status
+# whose state (success/failure) blocks merges into `main` and
+# `release/**`. Configure branch protection to require the status named
+# `review-level-gate` (NOT the auto-generated workflow-run check
+# `review-level-gate / gate`, which always succeeds — see "Why no
+# core.setFailed" below).
+#
+# Why a commit status (and not a check run)? GitHub's checks.create API
+# always creates a NEW check run, so re-evaluating on title edits / label
+# flips / review events would accrete duplicate `review-level-gate`
+# entries on the same head SHA. Commit statuses are keyed by
+# (sha, context) and idempotently overwrite, so the gate updates in place.
+# The detailed blocker list still lives in the workflow run summary, which
+# the status's `target_url` points at.
+#
+# Policy:
+#   L1 = entire team           always required
+#   L2 = senior reviewers      always required
+#   L3 = lead arch reviewers   required when the PR title is a Conventional-
+#                              Commit `feat:`, has a breaking-change marker
+#                              (`!:` in the title or `BREAKING CHANGE:` in
+#                              the body), or carries the `requires-l3` label
+#
+#   Override labels:  requires-l3 forces on; skip-l3 forces off (audited).
+#   Bot exemption:    PRs labelled `bot` or `dependencies` skip L2/L3.
+#
+# Why a custom check? Branch-protection "required approvals" only counts
+# approvals — it can't enforce "1 from team A AND 1 from team B AND
+# conditionally 1 from team C". We compute that here as a binary status.
+#
+# Why no core.setFailed? The commit status carries the verdict; failing
+# the workflow run itself adds nothing to enforcement and triggers a
+# "workflow run failed" email to the PR author every time the gate runs
+# in its expected pre-approval state. The job exits cleanly; the commit
+# status still reports failure.
+#
+# Token: GITHUB_TOKEN can't list org team members, so we mint a short-lived
+# installation token from the `agentstudio-review-gate` GitHub App
+# (Members:Read). Credentials are in repo secrets REVIEW_GATE_APP_ID and
+# REVIEW_GATE_APP_KEY; the token is auto-revoked at job end.
+#
+# Triggers:
+#   pull_request (opened/edited/synchronize/reopened/labeled/unlabeled) —
+#     re-evaluate on title edits and label flips.
+#   pull_request_review (submitted/dismissed/edited) — flip the status the
+#     moment an approval lands or is dismissed.
+#   workflow_dispatch (input: pr_number) — external nudge from
+#     pr-comment-commands.yml after it applies a label (GitHub suppresses
+#     the resulting `labeled` event to prevent loops), and for manual
+#     re-checks from the Actions UI.
+
+name: review-level-gate
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened, labeled, unlabeled]
+  pull_request_review:
+    types: [submitted, dismissed, edited]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "PR number to re-evaluate"
+        required: true
+        type: string
+
+permissions:
+  pull-requests: read
+  contents: read
+  statuses: write     # post the `review-level-gate` commit status
+
+concurrency:
+  # Key on PR number (stable across all trigger shapes — review/label
+  # events don't carry head_ref reliably). Two-arm only: a third fallback
+  # could collapse to empty and cancel across PRs.
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.event.inputs.pr_number }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    name: gate
+    runs-on: ubuntu-latest
+    steps:
+      # Mint a short-lived installation token from the
+      # `agentstudio-review-gate` App (Members:Read on the org) — needed
+      # to list team membership, which GITHUB_TOKEN can't do. Auto-revoked
+      # at job end. Required secrets: REVIEW_GATE_APP_ID, REVIEW_GATE_APP_KEY.
+      - name: Mint org-read token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        continue-on-error: true   # fail-closed: let the script run and overwrite the status
+        with:
+          app-id: ${{ secrets.REVIEW_GATE_APP_ID }}
+          private-key: ${{ secrets.REVIEW_GATE_APP_KEY }}
+          owner: ${{ github.repository_owner }}
+
+      - name: Evaluate required approvals
+        uses: actions/github-script@v7
+        env:
+          ORG: ${{ github.repository_owner }}
+          # App token, used only for the team-membership listing below
+          # (Members:Read). Repo-scoped reads/writes (PR, reviews, commit
+          # status) go through GITHUB_TOKEN so we don't have to expand the
+          # App's permissions beyond what review-level-gate strictly needs.
+          ORG_READ_TOKEN: ${{ steps.app-token.outputs.token }}
+        with:
+          # GITHUB_TOKEN: pull-requests:read, statuses:write, contents:read
+          # (see top-level `permissions:` block).
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            // Don't `require("@actions/github")` to spawn a second Octokit —
+            // github-script@v7 bundles its deps into dist/index.js with no
+            // node_modules at runtime (MODULE_NOT_FOUND). The one call that
+            // needs the org-read token uses plain fetch() inline below.
+            const org = process.env.ORG;
+            const orgToken = process.env.ORG_READ_TOKEN;
+
+            // Resolve the PR across all trigger shapes:
+            //   pull_request / pull_request_review → payload.pull_request
+            //     (note: payload.review has NO nested pull_request)
+            //   workflow_dispatch                  → inputs.pr_number
+            //   fallback (issue_comment etc)       → context.issue.number
+            let pr;
+            if (context.payload.pull_request) {
+              pr = context.payload.pull_request;
+            } else {
+              const prNumber =
+                context.eventName === "workflow_dispatch"
+                  ? parseInt(context.payload.inputs.pr_number, 10)
+                  : context.issue.number;
+              if (!Number.isFinite(prNumber)) {
+                core.setFailed(`Could not determine PR number from event "${context.eventName}".`);
+                return;
+              }
+              pr = (await github.rest.pulls.get({
+                ...context.repo,
+                pull_number: prNumber,
+              })).data;
+            }
+
+            const title  = pr.title || "";
+            const body   = pr.body  || "";
+            const labels = (pr.labels || []).map(l => l.name);
+            const author = pr.user.login;
+            const headSha = pr.head.sha;
+
+            // ─── 1. Parse conventional commit ────────────────────
+            // Matches `type(scope)!: subject` — type/scope/bang are all
+            // captured; bang and `BREAKING CHANGE:` footer both signal a
+            // breaking change (per conventionalcommits.org).
+            // Keep aligned with auto-assign-reviewers.yml so reviewer
+            // assignment never diverges from gate enforcement.
+            const cc = title.match(
+              /^(?<type>\w+)(?<scope>\([^)]+\))?(?<bang>!)?:\s*(?<subject>.+)$/
+            );
+            const type    = cc?.groups?.type?.toLowerCase() ?? "";
+            const scope   = cc?.groups?.scope?.replace(/[()]/g, "") ?? "";
+            const banged  = !!cc?.groups?.bang;
+            const breakingFooter = /^BREAKING[ -]CHANGE:/m.test(body);
+            const breaking = banged || breakingFooter;
+
+            // ─── 2. Decide which levels are required ─────────────
+            // L3 escalates only on `feat:` or breaking signals; all other
+            // types (fix/perf/refactor/docs/chore/test/style/ci/build/
+            // revert) stay L1+L2. Labels override; explicit beats implicit.
+            const isBot = labels.includes("bot") || labels.includes("dependencies");
+
+            let needsL2 = !isBot;
+            let needsL3 = !isBot && (breaking || type === "feat");
+
+            if (labels.includes("skip-l3"))     needsL3 = false;
+            if (labels.includes("requires-l3")) needsL3 = true;
+
+            // L3 is additive on top of L2 — requiring L3 implies L2.
+            // Matters when `requires-l3` is applied to a bot PR, which
+            // would otherwise end up needing L1+L3 but skipping L2.
+            if (needsL3) needsL2 = true;
+
+            // ─── 3. Fetch team memberships (excluding author) ────
+            // Plain fetch() — github-script@v7 ships without node_modules
+            // (see top-of-script note), so we can't instantiate a second
+            // Octokit for the org-read token.
+            //
+            // On failure we throw a rich error and let the caller decide;
+            // we MUST NOT abort the script here, otherwise we'd skip the
+            // commit-status update and a previously-green status on this
+            // SHA would remain stale (fail-open). The caller below catches
+            // and fails closed by leaving every team set empty.
+            async function members(slug) {
+              const out = new Set();
+              for (let page = 1; ; page++) {
+                const url = `https://api.github.com/orgs/${org}/teams/${slug}/members` +
+                  `?per_page=100&page=${page}`;
+                const res = await fetch(url, {
+                  headers: {
+                    "Authorization": `Bearer ${orgToken}`,
+                    "Accept": "application/vnd.github+json",
+                    "X-GitHub-Api-Version": "2022-11-28",
+                    "User-Agent": "agentstudio-review-gate",
+                  },
+                });
+                if (!res.ok) {
+                  const body = await res.text().catch(() => "");
+                  throw new Error(
+                    `Failed to list members of @${org}/${slug}: ` +
+                    `${res.status} ${res.statusText}` +
+                    (body ? `: ${body.slice(0, 200)}` : "") + ". " +
+                    `Check that the agentstudio-review-gate App is installed on the org ` +
+                    `with Members:Read, and that the team @${org}/${slug} exists.`
+                  );
+                }
+                const batch = await res.json();
+                for (const m of batch) {
+                  if (m.login !== author) out.add(m.login);
+                }
+                if (batch.length < 100) break;
+              }
+              return out;
+            }
+
+            // Fail-closed: if the membership lookup throws (App un-
+            // installed, secret rotated, team renamed, network blip),
+            // keep l1/l2/l3 empty so every required-level check fails
+            // and we post a failure commit status with the underlying
+            // cause surfaced in the summary. Falling through to the
+            // status update is critical — bailing out early would leave
+            // any previously-green status on this SHA stale.
+            let membershipError = null;
+            let l1 = new Set(), l2 = new Set(), l3 = new Set();
+            try {
+              [l1, l2, l3] = await Promise.all([
+                members("eng-l1"),
+                members("eng-l2"),
+                members("eng-l3"),
+              ]);
+            } catch (err) {
+              membershipError = err.message;
+              core.warning(`Team-membership lookup failed: ${err.message}`);
+            }
+
+            // ─── 4. Tally the latest review per reviewer ─────────
+            // Reviews come back chronologically; the last non-COMMENTED
+            // entry per user is their effective state.
+            const reviews = await github.paginate(
+              github.rest.pulls.listReviews,
+              { ...context.repo, pull_number: pr.number, per_page: 100 }
+            );
+            const latest = new Map();
+            for (const r of reviews) {
+              if (r.state === "COMMENTED") continue;
+              if (r.user?.type === "Bot") continue;
+              if (r.user?.login === author) continue;
+              latest.set(r.user.login, r.state);
+            }
+            const approvers = new Set(
+              [...latest.entries()].filter(([, s]) => s === "APPROVED").map(([u]) => u)
+            );
+            const changesRequested = [...latest.entries()].some(
+              ([, s]) => s === "CHANGES_REQUESTED"
+            );
+
+            // ─── 5. Verify each required level ───────────────────
+            const has = (set) => [...set].some(u => approvers.has(u));
+            const okL1 = has(l1);
+            const okL2 = needsL2 ? has(l2) : true;
+            const okL3 = needsL3 ? has(l3) : true;
+
+            const reasons = [];
+            if (membershipError) {
+              // Root cause; suppress the per-level "Missing LX" reasons
+              // (which all derive from the same lookup failure) so the
+              // summary points reviewers at the actual config problem.
+              reasons.push(`Team-membership lookup failed: ${membershipError}`);
+            } else {
+              if (!okL1)             reasons.push("Missing L1 approval");
+              if (needsL2 && !okL2)  reasons.push("Missing L2 approval");
+              if (needsL3 && !okL3)  reasons.push("Missing L3 approval");
+            }
+            if (changesRequested)  reasons.push("Outstanding 'Changes requested' review");
+
+            // ─── 6. Render summary + post commit status ──────────
+            // Drive both lines off needsL2/needsL3 (the effective decision
+            // after label overrides) — NOT off isBot. A bot PR escalated
+            // via `requires-l3` has needsL2 = needsL3 = true, and the
+            // summary must reflect that. The bot-exemption parenthetical
+            // is shown only when it's actually in effect (bot + no L3
+            // override active).
+            const banner = breaking
+              ? " — **BREAKING**"
+              : (type === "feat" ? " — new feature" : "");
+
+            const tiers = ["L1"];
+            if (needsL2) tiers.push("L2");
+            if (needsL3) tiers.push("L3");
+            const botExempt = isBot && !needsL2 && !needsL3;
+            const requiredLine = botExempt
+              ? "L1 (bot exemption — L2/L3 skipped)"
+              : tiers.join(", ");
+
+            const checks = [`L1 ${okL1 ? "✓" : "✗"}`];
+            if (needsL2) checks.push(`L2 ${okL2 ? "✓" : "✗"}`);
+            if (needsL3) checks.push(`L3 ${okL3 ? "✓" : "✗"}`);
+            const statusLine = checks.join(" · ");
+
+            const summary = [
+              `**Conventional type:** \`${type || "(unparsed)"}\`` +
+                (scope ? ` (scope: \`${scope}\`)` : "") + banner,
+              `**Required levels:** ${requiredLine}`,
+              `**Approvals:** ${statusLine}`,
+              labels.length ? `**Labels:** ${labels.join(", ")}` : "",
+            ].filter(Boolean).join("\n");
+
+            const text = reasons.length
+              ? "### Blocking\n" + reasons.map(r => `- ${r}`).join("\n")
+              : "All required approvals are in. The PR is mergeable from a review standpoint.";
+
+            // Commit status (not check run): keyed by (sha, context), so
+            // re-evaluations idempotently overwrite the same entry instead
+            // of accreting duplicates on the Checks tab. The blocker list
+            // and per-level breakdown live in the workflow run summary;
+            // target_url points there.
+            const description = membershipError
+              ? "Team-membership lookup failed — failing closed"
+              : (reasons.length
+                  ? `Approvals incomplete: ${reasons.length} blocker${reasons.length > 1 ? "s" : ""}`
+                  : "All required approvals present");
+            const runUrl =
+              `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}` +
+              `/actions/runs/${process.env.GITHUB_RUN_ID}`;
+            await github.rest.repos.createCommitStatus({
+              ...context.repo,
+              sha: headSha,
+              state: reasons.length ? "failure" : "success",
+              context: "review-level-gate",
+              description: description.slice(0, 140),  // GitHub caps at 140
+              target_url: runUrl,
+            });
+
+            core.summary
+              .addHeading("Review Level Gate")
+              .addRaw(summary)
+              .addBreak()
+              .addRaw(text)
+              .write();
+
+            // Don't core.setFailed — the merge gate is the commit status
+            // posted above (state: failure when blocking). Failing the
+            // workflow run itself adds nothing to enforcement and triggers
+            // GitHub's "workflow run failed" notification email to the PR
+            // author every time the gate runs in its expected pre-approval
+            // state.
+            if (reasons.length) {
+              core.warning(`Gate is currently blocking: ${reasons.join("; ")}`);
+            }

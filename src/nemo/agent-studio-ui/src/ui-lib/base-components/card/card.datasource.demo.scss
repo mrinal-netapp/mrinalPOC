@@ -1,0 +1,24 @@
+.ds-demo {
+  padding: 32px;
+  font-family: var(--font-family);
+  color: var(--text-primary);
+  background-color: var(--background-main);
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.ds-demo__title {
+  font-size: 18px;
+  font-weight: 600;
+  margin: 0;
+  color: var(--text-primary);
+}
+
+.ds-demo__subtitle {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin: 0;
+}

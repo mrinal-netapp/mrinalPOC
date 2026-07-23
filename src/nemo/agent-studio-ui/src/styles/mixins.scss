@@ -1,0 +1,265 @@
+@use 'sass:math';
+
+$break-medium: 1690px;
+$break-small: 1366px;
+$break-tablet: 1024px;
+$break-mobile: 640px;
+$basePaddingLeft: 104px;
+$tab-header-height: 56px;
+
+@mixin medium {
+  @media (max-width: $break-medium) {
+    @content;
+  }
+}
+
+@mixin small {
+  @media (max-width: $break-small) {
+    @content;
+  }
+}
+
+// Tablets and small laptops. Use to relax desktop spacing/widths before
+// the layout starts squeezing inputs (~1024px and below).
+@mixin tablet {
+  @media (max-width: $break-tablet) {
+    @content;
+  }
+}
+
+// Phones and small tablets in portrait. Use to collapse paddings, allow
+// flex containers to wrap, and avoid horizontal scroll (~640px and below).
+@mixin mobile {
+  @media (max-width: $break-mobile) {
+    @content;
+  }
+}
+
+@mixin transparent-button {
+  padding: 0;
+  border: 0;
+  outline: none;
+  margin: 0;
+  background-color: transparent;
+}
+
+
+@mixin ellipsis ($max-width) {
+  display: inline-block;
+  max-width: $max-width;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@mixin ellipsisMultiLine($lines) {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: $lines;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  box-sizing: border-box;
+}
+
+@mixin standard-scroll($width: 6px, $border-size:8px) {
+
+  &::-webkit-scrollbar {
+    box-sizing: content-box;
+    width: $width + $border-size;
+    height: $width;
+  }
+
+  &::-webkit-scrollbar-track  {
+    background-color: transparent;
+    margin: 8px 0;
+  }
+
+  &::-webkit-scrollbar-thumb {
+    background-color: var(--border-scroller);
+    border-radius: 4px 16px 16px 4px / 6px;
+    border-right: $border-size solid transparent;
+    background-clip: padding-box;
+  }
+}
+
+@mixin standard-horizontal-scroll($width: 6px, $border-size:5px) {
+
+  &::-webkit-scrollbar {
+    box-sizing: content-box;
+    width: $width + $border-size;
+    height: $width+ $border-size;
+  }
+
+  &::-webkit-scrollbar-track  {
+    background-color: transparent;
+    margin: 0 8px ;
+  }
+
+  &::-webkit-scrollbar-thumb {
+    background-color: var(--border-scroller);
+    border-radius: 4px 4px 8px 8px / 4px 4px 8px 8px;
+    border-bottom: $border-size solid transparent;
+    background-clip: padding-box;
+  }
+}
+
+@keyframes bgshimmer {
+  0% {
+    background-position: 300% 0
+  }
+  100% {
+    background-position: -300% 0
+  }
+}
+
+@mixin loading-mask($height: 13px) {
+  width: 100%;
+  height: $height;
+  animation-duration: 3.818181818181818s;
+  animation-fill-mode: forwards;
+  animation-iteration-count: infinite;
+  animation-name: bgshimmer;
+  animation-timing-function: linear;
+  background: var(--loader-skeleton-bg);
+  background: linear-gradient(to right, var(--loader-skeleton-bg) 8%, var(--loader-skeleton) 18%, var(--loader-skeleton-bg) 33%);
+  background-size: 200% 102%;
+}
+
+@mixin color-svg($fill: null, $stroke: null, $secondaryFill: null, $secondaryStroke: null, $primary: null, $secondary: null) {
+  @if $primary {
+    [class*="primary-fill"] {
+      fill: $primary;
+    }
+
+    [class*="primary-stroke"] {
+      stroke: $primary;
+    }
+  }
+
+  @if $secondary {
+    [class*="secondary-fill"] {
+      fill: $secondary;
+    }
+
+    [class*="secondary-stroke"] {
+      stroke: $secondary;
+    }
+  }
+
+  @if $fill {
+    [class*="primary-fill"] {
+      fill: $fill;
+    }
+  }
+
+  @if $secondaryFill {
+    [class*="secondary-fill"] {
+      fill: $secondaryFill;
+    }
+  }
+
+  @if $stroke {
+    [class*="primary-stroke"] {
+      stroke: $stroke;
+    }
+  }
+
+  @if $secondaryStroke {
+    [class*="secondary-stroke"] {
+      stroke: $secondaryStroke;
+    }
+  }
+}
+
+@mixin disabledField() {
+  border-color: var(--field-border-disabled);
+  background-color: var(--field-bg-disabled);
+  color: var(--text-disabled);
+}
+
+@mixin fieldStyling(){
+  font-family: var(--font-family);
+  box-sizing: border-box;
+  min-height: 40px;
+  height: 40px;
+  box-shadow: none;
+  background-color: var(--background-content);
+  color: var(--text-primary);
+  padding: 0 16px;
+  border: 1px solid var(--field-border);
+  outline: none;
+  border-radius: 4px;
+  width: 100%;
+  font-size: 14px;
+  &::placeholder{
+    color: var(--text-disabled)
+  }
+  &:not(:disabled):not(:focus):not(:read-only):hover{
+    outline: 1px solid var(--field-border);
+  }
+  &:not(:read-only):focus{
+    border-color: var(--field-border-selected);
+    outline: 1px solid var(--field-border-selected);
+    caret-color: var(--field-border-selected);
+
+  }
+  &:disabled {
+    background-color: var(--field-bg-disabled);
+    border-color: var(--field-border-disabled);
+    color:var(--text-disabled);
+  }
+  &:read-only {
+    background-color: var(--field-bg-disabled);
+    border-color: var(--field-border-disabled);
+  }
+  &.error {
+    border-color: var(--notification-error);
+  }
+
+  &:-webkit-autofill,
+  &:-webkit-autofill:hover,
+  &:-webkit-autofill:focus {
+    -webkit-box-shadow: 0 0 0px 1000px var(--background-content) inset;
+    -webkit-text-fill-color: var(--text-primary);
+    caret-color: var(--text-primary);
+    transition: background-color 5000s ease-in-out 0s;
+  }
+
+  &:disabled:-webkit-autofill {
+    -webkit-box-shadow: 0 0 0px 1000px var(--field-bg-disabled) inset;
+    -webkit-text-fill-color: var(--text-disabled);
+  }
+}
+
+@mixin transition($args...) {
+  transition: $args;
+}
+
+@mixin rotate($deg) {
+  transform: rotate($deg);
+}
+
+@keyframes fadeIn {
+  0% {
+      opacity: 0;
+  }
+
+  100% {
+      opacity: 1;
+  }
+}
+
+@mixin fadeIn($sec, $delay: 0s) {
+  opacity: 0;
+  animation: fadeIn $sec;
+  animation-delay: $delay;
+  animation-fill-mode: forwards;
+}
+
+@mixin capitalFirst() {
+  text-transform: lowercase;
+
+  &::first-letter {
+      text-transform: uppercase;
+  }
+}

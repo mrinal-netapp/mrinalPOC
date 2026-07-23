@@ -1,0 +1,15 @@
+# Use an external Bifrost (e.g. Azure) instead of the in-cluster bifrost-proxy pod.
+# Phase 1 testing: point config-service / agent-service / workflow-engine at Azure.
+#
+#   export BIFROST_URL=http://agent-studio-bifrost-dev.eastus2.cloudapp.azure.com
+#
+#   helm upgrade --install nemo ./deployments/helm/nemo -n agentstudio \
+#     -f values.yaml -f values-external-bifrost.yaml \
+#     --set global.llmGateway.bifrost.url="${BIFROST_URL}"
+
+bifrost:
+  enabled: false
+
+llmGateway:
+  bifrost:
+    url: ""   # set via --set global.llmGateway.bifrost.url=...

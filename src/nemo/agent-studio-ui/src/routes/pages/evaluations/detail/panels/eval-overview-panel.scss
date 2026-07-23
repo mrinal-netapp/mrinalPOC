@@ -1,0 +1,16 @@
+.eval-overview {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  min-width: 0;
+}
+
+.eval-overview__tabs {
+  width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+}
+
+.eval-overview__tabs .tab-content {
+  padding-top: 8px;
+}

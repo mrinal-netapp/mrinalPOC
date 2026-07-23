@@ -1,0 +1,120 @@
+enabled: true
+
+replicaCount: 1
+
+image:
+  repository: otel/opentelemetry-collector-contrib
+  tag: "0.119.0"
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  ports:
+    grpc: 4317    # OTLP gRPC
+    http: 4318    # OTLP HTTP
+    prometheus: 8889  # Prometheus metrics scrape endpoint
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 256Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+# ---------------------------------------------------------------------------
+# Trace backend endpoints
+# ---------------------------------------------------------------------------
+
+# Phoenix OTLP HTTP endpoint — receives agent/LLM traces (unsampled).
+# Services should send OTLP to this collector, NOT directly to Phoenix.
+phoenixEndpoint: "http://phoenix.monitoring.svc.cluster.local:6006"
+
+# Tempo OTLP gRPC endpoint — receives infrastructure/non-agent traces (tail-sampled).
+# Set to "" to disable the Tempo pipeline.
+tempoEndpoint: "tempo.monitoring.svc.cluster.local:4317"
+
+# Loki OTLP HTTP endpoint — receives log records.
+# Uses Loki's native OTLP ingest path (Loki v3+), not the legacy push API.
+# Set to "" to disable the logs pipeline.
+lokiEndpoint: "http://loki.monitoring.svc.cluster.local:3100/otlp"
+
+# ---------------------------------------------------------------------------
+# Trace routing — agent / LLM trace identification
+# ---------------------------------------------------------------------------
+# A span is considered an "agent trace" and routed to Phoenix when ANY of the
+# following is true:
+#   1. resource.attributes["service.name"] matches one of agentServiceNames
+#   2. The span carries an OpenInference span-kind attribute
+#      (openinference.span.kind — set by openinference-instrumentation-*)
+#   3. The span carries a GenAI semantic convention attribute
+#      (gen_ai.system — set by opentelemetry-instrumentation-openai etc.)
+#   4. The span carries an LLM model-name attribute (llm.model_name)
+#
+# All other spans are routed to Tempo and subject to tail sampling.
+tracing:
+  # Services whose ALL spans go to Phoenix (extend this list as new agent services are added).
+  agentServiceNames:
+    - agent-service
+    - agent-service-maf
+    - apigateway-service
+
+  # Tail sampling for Tempo — mirrors observability-service/.env.example defaults.
+  decisionWait: "10s"
+  maxTraces: 200
+  expectedNewPerSec: 50
+  slowThresholdMs: 500
+  samplingPercentage: 10
+
+# ---------------------------------------------------------------------------
+# Batch processor settings (mirrors source observability-service defaults)
+# ---------------------------------------------------------------------------
+batch:
+  timeout: "5s"
+  sendBatchSize: 1024
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# ServiceMonitor for Prometheus to scrape OTLP-push metrics from :8889.
+# Requires kube-prometheus-stack (or another Prometheus operator) to be installed.
+serviceMonitor:
+  enabled: true
+  interval: "30s"
+  scrapeTimeout: "10s"
+
+# ---------------------------------------------------------------------------
+# Per-node DaemonSet log collector
+# ---------------------------------------------------------------------------
+# When enabled, one lightweight OTel Collector pod runs on every node. It
+# tails /var/log/pods/*/*/*.log, strips infrastructure-namespace records, and
+# forwards all remaining pod logs to the central Deployment Collector via
+# OTLP/gRPC on service.ports.grpc.
+#
+# tolerations defaults include NoSchedule + NoExecute so the DaemonSet reaches
+# tainted nodes (e.g. GPU, spot, or system node pools on AKS/EKS/GKE).
+daemonset:
+  enabled: true
+  resources: {}
+  nodeSelector: {}
+  tolerations:
+    - operator: Exists
+      effect: NoSchedule
+    - operator: Exists
+      effect: NoExecute
+  affinity: {}
+  podAnnotations: {}
+
+# ---------------------------------------------------------------------------
+# Resource attributes stamped on log records by the central collector
+# ---------------------------------------------------------------------------
+# Applied to both OTLP app logs (from Rust/Python/TS SDKs) and pod logs
+# forwarded from the DaemonSet, so Loki label selectors stay consistent.
+podLogs:
+  environment: "production"
+  cluster: "k8s"
+
+# Optional image pull secrets (passed to both the central Deployment and the
+# DaemonSet when pulling from a private registry).
+imagePullSecrets: []

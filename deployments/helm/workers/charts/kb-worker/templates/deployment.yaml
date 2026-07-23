@@ -1,0 +1,125 @@
+{{- if .Values.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "kb-worker.fullname" . }}
+  labels:
+    {{- include "kb-worker.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicas }}
+  {{- end }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      {{- include "kb-worker.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "kb-worker.selectorLabels" . | nindent 8 }}
+        {{- if .Values.workloadIdentity.enabled }}
+        azure.workload.identity/use: "true"
+        {{- end }}
+      annotations:
+        # Native Istio sidecar so the `wait-for-temporal` initContainer
+        # (`python -m shared.temporal_readiness probe`) can reach temporal
+        # in the STRICT-mTLS agentstudio-platform namespace.
+        sidecar.istio.io/nativeSidecar: "true"
+    spec:
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds | default 120 }}
+      serviceAccountName: {{ include "kb-worker.serviceAccountName" . }}
+      {{- with .Values.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      volumes:
+        - name: nemo-default-bucket
+          persistentVolumeClaim:
+            claimName: {{ include "nemo.defaultBucketPvcName" . }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      initContainers:
+        - name: wait-for-temporal
+          # See dataset-worker/templates/deployment.yaml for why this
+          # uses the worker image + `python -m shared.temporal_readiness`
+          # instead of init-tools + `nc -z`. Same race fix.
+          image: "{{ .Values.global.imageRepository }}/{{ .Values.image.repository }}:{{ .Values.global.imageTag | default .Values.image.tag }}"
+          imagePullPolicy: {{ if .Values.global.imagePullPolicy }}{{ .Values.global.imagePullPolicy }}{{ else }}IfNotPresent{{ end }}
+          command: ['python', '-m', 'shared.temporal_readiness', 'probe']
+          env:
+            - name: TEMPORAL_ADDRESS
+              value: "{{ .Values.temporalHost | default "temporal.agentstudio-platform.svc.cluster.local" }}:7233"
+            - name: TEMPORAL_NAMESPACE
+              value: "default"
+            - name: TEMPORAL_PROBE_MAX_ATTEMPTS
+              value: "90"
+          resources:
+            limits:
+              cpu: 200m
+              memory: 256Mi
+            requests:
+              cpu: 50m
+              memory: 128Mi
+      containers:
+        - name: kb-worker
+          image: "{{ .Values.global.imageRepository }}/{{ .Values.image.repository }}:{{ .Values.global.imageTag | default .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy | default .Values.image.pullPolicy }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: nemo-default-bucket
+              mountPath: /mnt/pvcs/default-nemo
+          env:
+            {{- $root := . }}
+            {{- /* Pull umbrella-level overrides via nested `with` blocks
+                   so missing intermediate keys (e.g. when the umbrella has
+                   no global.defaultSetup) don't blow up with a nil-deref.
+                   Sprig's `dig` would be tidier but it rejects Helm's
+                   `chartutil.Values` type ("interface {} is common.Values,
+                   not map[string]interface {}"), so we use the verbose
+                   `with`-chain that works on every Helm version. The
+                   in-values default at .value below is the in-cluster FQDN. */}}
+            {{- $globalLLMGateway := "" }}
+            {{- $globalConfigService := "" }}
+            {{- with $root.Values.global }}
+              {{- with .defaultSetup }}
+                {{- with .llmGatewayUrl }}{{- $globalLLMGateway = . }}{{- end }}
+                {{- with .configServiceUrl }}{{- $globalConfigService = . }}{{- end }}
+              {{- end }}
+            {{- end }}
+            {{- range .Values.env }}
+            {{- if eq .name "LLM_GATEWAY_URL" }}
+            - name: LLM_GATEWAY_URL
+              value: {{ ($globalLLMGateway | default .value) | quote }}
+            {{- else if eq .name "CONFIG_SERVICE_URL" }}
+            - name: CONFIG_SERVICE_URL
+              value: {{ ($globalConfigService | default .value) | quote }}
+            {{- else }}
+            - name: {{ .name }}
+              {{- if .value }}
+              value: {{ .value | quote }}
+              {{- else if .valueFrom }}
+              valueFrom:
+                {{- toYaml .valueFrom | nindent 16 }}
+              {{- end }}
+            {{- end }}
+            {{- end }}
+            - name: TEMPORAL_GRACEFUL_SHUTDOWN_TIMEOUT
+              value: {{ .Values.gracefulShutdownTimeout | default "90" | quote }}
+            - name: NEMO_DEFAULT_STORE_ROOT
+              value: "/mnt/pvcs/default-nemo"
+{{- end }}

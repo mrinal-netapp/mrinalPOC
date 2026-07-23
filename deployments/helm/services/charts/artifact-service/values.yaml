@@ -1,0 +1,133 @@
+# Default values for artifact-service sub-chart.
+enabled: true
+
+# Single replica is fine for v1; per-store async mutex serialises writes.
+# For horizontal scaling, set replicaCount > 1 AND set REDIS_URL so the
+# distributed lock (P3) prevents cross-pod write races on the same store.
+replicaCount: 1
+
+image:
+  repository: nemo/artifact-service
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 8080
+  metricsPort: 9090  # Dedicated Prometheus port served by the Node.js observability client lib (must match AGENT_STUDIO_OBSERVABILITY_PROMETHEUS_METRICS_PORT)
+
+resources:
+  limits:
+    cpu: 1000m
+    memory: 1Gi
+  requests:
+    cpu: 200m
+    memory: 256Mi
+
+# Where to mount the shared NFS PVC inside the pod.
+# Bare repos live under <mount>/projects/{projectId}/artifacts/{storeId}/
+nemoDataMount: /mnt/pvcs/default-nemo
+
+# DB connection — same Postgres as config-service. The schema is owned
+# by config-service (TypeORM synchronize creates artifact_stores and
+# artifact_store_acls); artifact-service reads/writes rows via raw SQL.
+database:
+  host: "shared-postgresql.database.svc.cluster.local"
+  port: "5432"
+  name: "nemo"
+  user: "postgres"
+  password: "agentstudio-postgres-password"
+  existingSecret: ""      # Name of an existing Secret containing the DB password
+  existingSecretKey: ""   # Key within that Secret (e.g. "postgres-password")
+
+# Optional: Redis for idempotency-key dedup. Without it the service
+# degrades to "best-effort cache miss"; git's content addressing
+# handles identical retries naturally.
+redis:
+  # Set to e.g. "redis://nemo-redis-master.default.svc.cluster.local:6379/5"
+  # to enable cross-pod dedup. Empty string = idempotency cache disabled.
+  url: ""
+
+# Log verbosity for the service process.
+logLevel: "info"
+
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 8080
+  initialDelaySeconds: 30
+  periodSeconds: 10
+
+readinessProbe:
+  httpGet:
+    path: /ready
+    port: 8080
+  initialDelaySeconds: 5
+  periodSeconds: 5
+
+# Init container configuration.
+# artifact-service has no Keycloak OIDC client — the API gateway handles auth
+# and injects X-User-ID / X-Project-ID headers. Set waitForKeycloakSetup: false
+# (unlike storage-manager which does need its own client credentials).
+initContainer:
+  enabled: false
+  waitForKeycloakSetup: false
+
+# Observability — RED metrics served by the observability client lib on metricsPort
+# Traces flow: service → OTel collector → Phoenix
+metrics:
+  path: /metrics
+  port: metrics
+  serviceMonitor:
+    enabled: true
+    interval: 30s
+tracing:
+  otlpEndpoint: ""  # Legacy; AGENT_STUDIO_OBSERVABILITY_OTLP_TRACES_ENDPOINT is used instead
+
+# NetworkPolicy: gate ingress to the Bifrost proxy (for /mcp) and the
+# API gateway (for /v1/projects/.../artifact-stores REST). Auth
+# middleware trusts gateway-injected headers, so without this policy
+# any pod that can reach :8080 could spoof an X-User-ID. Matches the
+# convention used by sibling charts (agentstudio-mcp-server, etc.).
+networkPolicy:
+  enabled: true
+
+# Inherited from parent chart
+namespace: ""
+serviceAccountName: ""
+platformNamespace: "agentstudio-platform"
+
+# Pod- and container-level security defaults. Matches the platform
+# baseline used by the analytics-mcp-server / agentstudio-mcp-server
+# charts. The artifact-service image runs as UID 1000 (set in the
+# Dockerfile); these settings ensure the kernel enforces non-root +
+# dropped caps + read-only rootfs regardless.
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  fsGroup: 1000
+securityContext:
+  capabilities:
+    drop:
+      - ALL
+  readOnlyRootFilesystem: true
+  allowPrivilegeEscalation: false
+  runAsNonRoot: true
+  runAsUser: 1000
+
+nodeSelector: {}
+affinity: {}
+tolerations: {}
+
+serviceAccount:
+  create: false
+  name: ""
+  azureClientId: ""
+
+workloadIdentity:
+  enabled: false
+
+# Global defaults for nil-safe sub-chart rendering; overridden by parent chart global.
+global:
+  observability:
+    otlpEndpoint: ""

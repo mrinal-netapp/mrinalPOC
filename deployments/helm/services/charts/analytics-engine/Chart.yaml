@@ -1,0 +1,7 @@
+apiVersion: v2
+name: analytics-engine
+description: A Helm sub-chart for AgentStudio Analytics Engine
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+

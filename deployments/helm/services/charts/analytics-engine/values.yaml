@@ -1,0 +1,85 @@
+# Default values for analytics-engine sub-chart
+enabled: true
+replicaCount: 1
+
+image:
+  repository: nemo/analytics-engine
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 5000
+  metricsPort: 8000  # Dedicated Prometheus port served by the observability client lib
+
+resources:
+  limits:
+    cpu: 1000m
+    memory: 2.5Gi
+  requests:
+    cpu: 500m
+    memory: 512Mi
+
+# DuckDB configuration
+warehouseName: "nemo"
+extensionDir: "/opt/duckdb/extensions"
+
+env:
+  - name: PORT
+    value: "5000"
+  - name: K8S_NAMESPACE
+    value: ""  # If empty, uses parent chart's namespace
+  - name: KEYCLOAK_ISSUER
+    value: ""  # Overridden by template with nemo.keycloakIssuer (public external issuer)
+  - name: DEPLOYMENT_ID
+    valueFrom:
+      configMapKeyRef:
+        name: deployment-config
+        key: deployment-id
+
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 5000
+  initialDelaySeconds: 30
+  periodSeconds: 10
+
+readinessProbe:
+  httpGet:
+    path: /ready
+    port: 5000
+  initialDelaySeconds: 5
+  periodSeconds: 5
+
+# Observability — RED metrics served by the observability client lib on metricsPort
+metrics:
+  path: /metrics
+  port: metrics
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+tracing:
+  otlpEndpoint: ""  # Legacy; AGENT_STUDIO_OBSERVABILITY_OTLP_TRACES_ENDPOINT is used instead
+
+# These will be passed from parent chart
+namespace: ""
+serviceAccountName: ""
+podSecurityContext: {}
+securityContext: {}
+nodeSelector: {}
+affinity: {}
+tolerations: {}
+# Note: global values (imageRegistry, imagePullSecrets) are automatically inherited from parent chart's root-level global
+
+serviceAccount:
+  create: false
+  name: ""
+  azureClientId: ""
+
+workloadIdentity:
+  enabled: false
+
+# Global defaults for nil-safe sub-chart rendering; overridden by parent chart global.
+global:
+  observability:
+    otlpEndpoint: ""

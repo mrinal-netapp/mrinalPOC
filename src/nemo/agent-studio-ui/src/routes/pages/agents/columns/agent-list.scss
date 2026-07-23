@@ -1,0 +1,171 @@
+.agent-list-name-link {
+  all: unset;
+  cursor: pointer;
+  display: inline-flex;
+
+  &:hover span {
+    text-decoration: underline;
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--border-focus-outline);
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+}
+
+// Marker span used by `<CellMarker>` in `agents-list.columns.tsx`.
+// `display: contents` removes it from the layout box tree, so the
+// table's existing flex/text-overflow rules continue to apply to the
+// real cell content. The `--deprecated` modifier is queried via
+// `:has()` from the parent body row so a single rule can grey every
+// cell in the row.
+.agent-list-row-marker {
+  display: contents;
+}
+
+// Deprecated row treatment.
+//
+// We grey ALL cell content in the row (Name through Actions) by
+// hanging `opacity` off the body row's `<td>` children whenever any
+// cell contains the `--deprecated` marker. This is the only place
+// the opacity actually applies — `display: contents` elements have
+// no rendering box and so cannot carry their own `opacity`.
+//
+// The cell background is left untouched on purpose: only the
+// components (text, status icons, badges, kebab) fade, the row's
+// own background continues to show through unchanged.
+//
+// The Actions kebab inherits the visual fade but stays clickable
+// because we never set `pointer-events: none` on its cell — that's
+// what lets the user open the menu and undeprecate the row. The per-
+// item enabled/disabled state is the menu's job (see
+// `buildActionMenu` in the list components).
+.dt-table .dt-row:has(.agent-list-row-marker--deprecated) > .table-cell {
+  opacity: 0.55;
+}
+
+// Block stray interactive controls inside the deprecated cells
+// (e.g. the "+N" overflow buttons inside `<OverflowListCell>`)
+// from stealing clicks. The Name cell already renders as plain
+// Typography when deprecated, and the Actions kebab is intentionally
+// rendered OUTSIDE the marker so it remains clickable.
+.agent-list-row-marker--deprecated button,
+.agent-list-row-marker--deprecated a {
+  pointer-events: none;
+  cursor: default;
+}
+
+.agent-list-status-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.agent-list-cell-placeholder {
+  color: var(--text-disabled);
+}
+
+.labels-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: nowrap;
+  overflow: hidden;
+}
+
+// The shared `.dt-table .table-cell` rule sets `text-overflow: ellipsis;
+// white-space: nowrap; overflow: hidden;`. When the icon-only action button
+// is even slightly wider than the cell's content box, the browser draws
+// its truncation indicator (a horizontal "..." next to the kebab). The
+// actions cell only ever holds an icon button, so we disable text-overflow
+// on it and recenter the button inside the cell.
+.dt-table .table-cell:has(> .agent-list-actions-cell) {
+  text-overflow: clip;
+  padding-left: 8px;
+  padding-right: 8px;
+}
+
+.agent-list-actions-cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+}
+
+// Shared list cell used by the Models and Associated columns. Renders up to
+// three items inline and collapses the rest behind a clickable "+N" control.
+.overflow-list-cell {
+  position: relative;
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
+
+  &__item {
+    display: inline-flex;
+    flex-shrink: 0;
+  }
+
+  // When an item is a react-router Link, colour it like a link and
+  // underline on hover so users know it's clickable.
+  &__link {
+    display: inline-flex;
+    align-items: center;
+    color: var(--text-button-primary);
+    text-decoration: none;
+
+    &:hover span {
+      text-decoration: underline;
+    }
+
+    &:focus-visible {
+      outline: 2px solid var(--border-focus-outline);
+      outline-offset: 2px;
+      border-radius: 2px;
+    }
+  }
+
+  &__separator {
+    margin-right: 2px;
+    flex-shrink: 0;
+  }
+
+  // "+N" trigger button. Resets the inherited dropdown trigger styles and
+  // renders the count as a compact, clickable link-style affordance.
+  &__overflow {
+    all: unset;
+    flex-shrink: 0;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    border-radius: 4px;
+    padding: 0 4px;
+
+    &:hover span {
+      text-decoration: underline;
+    }
+
+    &:focus-visible {
+      outline: 2px solid var(--border-focus-outline);
+      outline-offset: 1px;
+    }
+  }
+}
+
+// Popover listing the overflow ("+N") items.
+.overflow-list-cell__overflow-list {
+  max-height: 240px;
+  overflow-y: auto;
+  min-width: 160px;
+}
+
+// When a dropdown item is rendered as a Link root (for keyboard + a11y),
+// force it to lay out as a full-width row so overflow entries stack one per line.
+.overflow-list-cell__overflow-link {
+  display: flex;
+  width: 100%;
+}

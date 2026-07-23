@@ -1,0 +1,17 @@
+{
+  "all": true,
+  "check-coverage": false,
+  "reporter": ["text", "json-summary"],
+  "include": [
+    "*.ts",
+    "providers/**/*.ts",
+    "services/**/*.ts",
+    "routes/**/*.ts",
+    "validators/**/*.ts",
+    "models/**/*.ts",
+    "utils/**/*.ts",
+    "db/**/*.ts",
+    "catalog/**/*.ts"
+  ],
+  "exclude": ["tests/**", "dist/**", "node_modules/**"]
+}

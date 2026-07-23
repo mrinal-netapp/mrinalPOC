@@ -1,0 +1,212 @@
+{{- if .Values.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "temporal.fullname" . }}
+  labels:
+    {{- include "temporal.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.server.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "temporal.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "temporal.selectorLabels" . | nindent 8 }}
+        {{- if .Values.workloadIdentity.enabled }}
+        azure.workload.identity/use: "true"
+        {{- end }}
+      annotations:
+        # Native Istio sidecar (k8s 1.28+, Istio 1.20+): istio-proxy is
+        # injected as an initContainer with restartPolicy=Always, so it's
+        # already serving mTLS when the `wait-for-postgres` initContainer
+        # dials shared-postgresql in the STRICT-mTLS database namespace.
+        # Without this, wait-for-postgres runs before istio-init has set
+        # up iptables interception, postgres's sidecar rejects the
+        # plain-TCP probe, and temporal stays at Init:0/N indefinitely.
+        sidecar.istio.io/nativeSidecar: "true"
+    spec:
+      serviceAccountName: {{ include "temporal.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- if .Values.initContainer.enabled }}
+      initContainers:
+        - name: wait-for-postgres
+          image: {{ .Values.initContainer.image.repository | default (printf "%s/init-tools" .Values.global.imageRepository) }}:{{ .Values.initContainer.image.tag | default "latest" }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy | default .Values.initContainer.image.pullPolicy | default "IfNotPresent" }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              echo "Initializing Temporal databases..."
+              
+              # Extract connection details from environment
+              POSTGRES_HOST="{{ .Values.database.host }}"
+              POSTGRES_PORT="{{ .Values.database.port }}"
+              POSTGRES_USER="{{ .Values.database.user }}"
+              POSTGRES_PASSWORD="${POSTGRES_PASSWORD}"
+              TEMPORAL_DB="{{ .Values.database.name }}"
+              TEMPORAL_VISIBILITY_DB="temporal_visibility"
+              
+              # Wait for PostgreSQL to be ready
+              echo "Waiting for PostgreSQL at $POSTGRES_HOST:$POSTGRES_PORT to be ready..."
+              until pg_isready -h "$POSTGRES_HOST" -p "$POSTGRES_PORT" -U "$POSTGRES_USER"; do
+                echo "PostgreSQL is not ready yet, waiting..."
+                sleep 2
+              done
+              echo "PostgreSQL is ready!"
+              
+              # Create temporal database if it doesn't exist
+              echo "Checking if database '$TEMPORAL_DB' exists..."
+              DB_EXISTS=$(PGPASSWORD="$POSTGRES_PASSWORD" psql -h "$POSTGRES_HOST" -p "$POSTGRES_PORT" -U "$POSTGRES_USER" -d postgres -tc "SELECT 1 FROM pg_database WHERE datname = '$TEMPORAL_DB'" | grep -q 1 && echo "yes" || echo "no")
+              
+              if [ "$DB_EXISTS" = "yes" ]; then
+                echo "Database '$TEMPORAL_DB' already exists. Skipping creation."
+              else
+                echo "Database '$TEMPORAL_DB' does not exist. Creating..."
+                PGPASSWORD="$POSTGRES_PASSWORD" psql -h "$POSTGRES_HOST" -p "$POSTGRES_PORT" -U "$POSTGRES_USER" -d postgres -c "CREATE DATABASE \"$TEMPORAL_DB\";"
+                if [ $? -eq 0 ]; then
+                  echo "Database '$TEMPORAL_DB' created successfully!"
+                else
+                  echo "Error: Failed to create database '$TEMPORAL_DB'"
+                  exit 1
+                fi
+              fi
+              
+              # Create temporal_visibility database if it doesn't exist
+              echo "Checking if database '$TEMPORAL_VISIBILITY_DB' exists..."
+              VISIBILITY_DB_EXISTS=$(PGPASSWORD="$POSTGRES_PASSWORD" psql -h "$POSTGRES_HOST" -p "$POSTGRES_PORT" -U "$POSTGRES_USER" -d postgres -tc "SELECT 1 FROM pg_database WHERE datname = '$TEMPORAL_VISIBILITY_DB'" | grep -q 1 && echo "yes" || echo "no")
+              
+              if [ "$VISIBILITY_DB_EXISTS" = "yes" ]; then
+                echo "Database '$TEMPORAL_VISIBILITY_DB' already exists. Skipping creation."
+              else
+                echo "Database '$TEMPORAL_VISIBILITY_DB' does not exist. Creating..."
+                PGPASSWORD="$POSTGRES_PASSWORD" psql -h "$POSTGRES_HOST" -p "$POSTGRES_PORT" -U "$POSTGRES_USER" -d postgres -c "CREATE DATABASE \"$TEMPORAL_VISIBILITY_DB\";"
+                if [ $? -eq 0 ]; then
+                  echo "Database '$TEMPORAL_VISIBILITY_DB' created successfully!"
+                else
+                  echo "Error: Failed to create database '$TEMPORAL_VISIBILITY_DB'"
+                  exit 1
+                fi
+              fi
+              
+              echo "Temporal database initialization completed successfully!"
+          env:
+            - name: POSTGRES_HOST
+              value: {{ .Values.database.host | quote }}
+            - name: POSTGRES_PORT
+              value: {{ .Values.database.port | quote }}
+            - name: POSTGRES_USER
+              value: {{ .Values.database.user | quote }}
+            - name: POSTGRES_DB
+              value: {{ .Values.database.name | quote }}
+            - name: POSTGRES_PASSWORD
+              {{- if .Values.database.existingSecret }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.database.existingSecret }}
+                  key: {{ .Values.database.existingSecretKey | default "postgres-password" }}
+              {{- else }}
+              value: {{ .Values.database.password | quote }}
+              {{- end }}
+          resources:
+            {{- if .Values.initContainer.resources }}
+            {{- toYaml .Values.initContainer.resources | nindent 12 }}
+            {{- else }}
+            limits:
+              cpu: 100m
+              memory: 64Mi
+            requests:
+              cpu: 50m
+              memory: 32Mi
+            {{- end }}
+      {{- end }}
+      containers:
+        - name: temporal-server
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.global.imageRegistry }}{{ .Values.server.image.repository }}:{{ .Values.server.image.tag }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy | default .Values.server.image.pullPolicy }}
+          ports:
+            - name: grpc
+              containerPort: 7233
+              protocol: TCP
+            - name: membership
+              containerPort: 6933
+              protocol: TCP
+            - name: metrics
+              containerPort: 9090
+              protocol: TCP
+          env:
+            - name: DB
+              value: "postgresql"
+            - name: DB_PORT
+              value: {{ .Values.database.port | quote }}
+            - name: POSTGRES_USER
+              value: {{ .Values.database.user | quote }}
+            - name: POSTGRES_PWD
+              {{- if .Values.database.existingSecret }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.database.existingSecret }}
+                  key: {{ .Values.database.existingSecretKey | default "postgres-password" }}
+              {{- else }}
+              value: {{ .Values.database.password | quote }}
+              {{- end }}
+            - name: POSTGRES_SEEDS
+              value: {{ .Values.database.host | quote }}
+            - name: POSTGRES_DATABASE
+              value: {{ .Values.database.name | quote }}
+            - name: SKIP_DB_CREATE
+              value: "true"
+            - name: SKIP_DB_SETUP
+              value: "false"
+            - name: SKIP_DEFAULT_NAMESPACE_CREATION
+              value: "false"
+            - name: PROMETHEUS_ENDPOINT
+              value: "0.0.0.0:9090"
+          livenessProbe:
+            {{- toYaml .Values.server.livenessProbe | nindent 12 }}
+          readinessProbe:
+            {{- toYaml .Values.server.readinessProbe | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/temporal/config/config.yaml
+              subPath: config.yaml
+            - name: config
+              mountPath: /etc/temporal/config/overrides-dynamicconfig.yaml
+              subPath: overrides-dynamicconfig.yaml
+          resources:
+            {{- toYaml .Values.server.resources | nindent 12 }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "temporal.fullname" . }}-config
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- range . }}
+        {{- if kindIs "string" . }}
+        - name: {{ . | quote }}
+        {{- else if kindIs "map" . }}
+        - {{- toYaml . | nindent 10 }}
+        {{- else }}
+        - name: {{ . | quote }}
+        {{- end }}
+        {{- end }}
+      {{- end }}
+{{- end }}
+

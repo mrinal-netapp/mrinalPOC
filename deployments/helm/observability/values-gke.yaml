@@ -1,0 +1,106 @@
+# ---------------------------------------------------------------------------
+# GKE overlay for the observability stack.
+# Applied automatically by: make helm-observability-upgrade-gke
+# (or manually: make deploy-observability HELM_EXTRA_ARGS="-f deployments/helm/observability/values-gke.yaml")
+#
+# Key differences from the base values.yaml (mirrors values-aks.yaml intent):
+#   - Phoenix uses PostgreSQL (shared-postgresql in the database namespace) instead
+#     of SQLite on a PVC. PostgreSQL is a durable backend better suited to GKE;
+#     it also avoids ReadWriteOnce PVC contention during rolling updates.
+#   - database.create: true adds an init container that creates the 'phoenix'
+#     database in PostgreSQL if it does not already exist.
+#   - Prometheus, Loki, and Tempo use the GCNV SAN RWO storage class
+#     (gcnv-san-rwo) provisioned by gke-ensure-storage-ready — same Trident
+#     backend as shared-postgresql (deployments/helm/database/values-gke.yaml).
+#   - Workloads with gcnv-san-rwo PVCs must schedule on SAN-tainted nodes
+#     (nodeSelector + tolerations), matching database/values-gke.yaml — otherwise
+#     pods stay Pending/Init while RWO volumes cannot attach.
+#   - Loki and Tempo PVC sizes match observability-service Helm production
+#     defaults (30 Gi each).
+# ---------------------------------------------------------------------------
+
+# SAN node scheduling — required for any pod mounting gcnv-san-rwo (parity with
+# deployments/helm/database/values-gke.yaml postgresql.primary).
+_gkeSanNodeSelector: &gkeSanNodeSelector
+  agentstudio.netapp.io/san: "true"
+_gkeSanTolerations: &gkeSanTolerations
+  - key: "agentstudio.netapp.io/san"
+    operator: "Equal"
+    value: "true"
+    effect: "NoSchedule"
+
+phoenix:
+  image:
+    tag: "version-15.12.0"
+
+  database:
+    backend: postgresql
+    create: true
+    host: shared-postgresql.database.svc.cluster.local
+    port: 5432
+    name: phoenix
+    user: postgres
+    password: agentstudio-postgres-password
+
+  env:
+    - name: PHOENIX_SQL_DATABASE_URL
+      value: ""
+    - name: PHOENIX_WORKING_DIR
+      value: "/data"
+    - name: PHOENIX_TELEMETRY_ENABLED
+      value: "false"
+    - name: PHOENIX_DEFAULT_RETENTION_POLICY_DAYS
+      value: "30"
+
+  persistence:
+    enabled: true
+    size: 10Gi
+    storageClass: "gcnv-san-rwo"
+
+  nodeSelector: *gkeSanNodeSelector
+  tolerations: *gkeSanTolerations
+
+kube-prometheus-stack:
+  prometheus:
+    prometheusSpec:
+      nodeSelector: *gkeSanNodeSelector
+      tolerations: *gkeSanTolerations
+      storageSpec:
+        volumeClaimTemplate:
+          spec:
+            accessModes: ["ReadWriteOnce"]
+            storageClassName: "gcnv-san-rwo"
+            resources:
+              requests:
+                storage: 10Gi
+
+loki:
+  fullnameOverride: "loki"
+  persistence:
+    enabled: true
+    size: 30Gi
+    storageClass: "gcnv-san-rwo"
+  nodeSelector: *gkeSanNodeSelector
+  tolerations: *gkeSanTolerations
+
+tempo:
+  fullnameOverride: "tempo"
+  persistence:
+    enabled: true
+    size: 30Gi
+    storageClass: "gcnv-san-rwo"
+  nodeSelector: *gkeSanNodeSelector
+  tolerations: *gkeSanTolerations
+
+# Grafana-proxy session and internal-token secrets.
+# Pre-created by `make gke-keycloak-grafana-proxy-secrets` (random values,
+# stable across pod restarts). Secrets live in the monitoring namespace.
+grafana-proxy:
+  session:
+    existingSecret: "grafana-proxy-session-secret"
+  internalToken:
+    existingSecret: "grafana-proxy-internal-token"
+
+prometheus-proxy:
+  internalToken:
+    existingSecret: "grafana-proxy-internal-token"

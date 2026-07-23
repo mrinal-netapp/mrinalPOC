@@ -1,0 +1,16 @@
+{{- if and .Values.enabled (default false .Values.metrics.serviceMonitor.enabled) }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "bifrost.fullname" . }}
+  labels:
+    {{- include "bifrost.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "bifrost.selectorLabels" . | nindent 6 }}
+  endpoints:
+    - port: http
+      path: {{ default "/metrics" .Values.metrics.path }}
+      interval: {{ default "30s" .Values.metrics.serviceMonitor.interval }}
+{{- end }}

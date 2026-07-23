@@ -1,0 +1,95 @@
+@use '@/styles/mixins' as *;
+
+.administration-members-form-shell {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin: 0 -32px -24px;
+  background: var(--background-main);
+  overflow-y: auto;
+
+  @include tablet {
+    margin-right: -20px;
+    margin-left: -20px;
+  }
+
+  @include mobile {
+    margin-right: -16px;
+    margin-left: -16px;
+    margin-bottom: -16px;
+  }
+}
+
+.member-form {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  width: 100%;
+  max-width: 1336px;
+  margin: 0 auto;
+  padding: 40px 24px 48px;
+  gap: 24px;
+
+  @include tablet {
+    padding: 32px 20px 40px;
+  }
+
+  @include mobile {
+    padding: 24px 16px 32px;
+    gap: 20px;
+  }
+}
+
+.member-form__header {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+
+  p {
+    margin: 0;
+  }
+}
+
+.member-form__content {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 616px;
+  max-width: 100%;
+}
+
+.member-form__card {
+  width: 100%;
+}
+
+.member-form__card-content {
+  gap: 16px;
+  padding: 24px 40px;
+
+  @include tablet {
+    padding: 24px;
+  }
+
+  @include mobile {
+    padding: 20px 16px;
+  }
+}
+
+.member-form__role-heading {
+  margin: 8px 0 0;
+}
+
+.member-form__actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 12px;
+  width: 616px;
+  max-width: 100%;
+  padding-top: 8px;
+}

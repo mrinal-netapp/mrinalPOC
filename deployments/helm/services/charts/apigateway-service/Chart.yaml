@@ -1,0 +1,7 @@
+apiVersion: v2
+name: apigateway-service
+description: AgentStudio API Gateway Service (Go). Post-Istio-migration scope is S3 SigV4 + workspace dynamic backend + Swagger UI; the Istio gateway handles every other route directly.
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+

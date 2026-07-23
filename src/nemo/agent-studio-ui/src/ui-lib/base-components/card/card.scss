@@ -1,0 +1,432 @@
+// ---- Card root ----
+
+.card {
+  display: flex;
+  flex-direction: column;
+  background-color: var(--background-content);
+  border-radius: 4px;
+  box-shadow: 0 2px 2px var(--border-drop-shadow);
+  overflow: hidden;
+}
+
+.card--clickable {
+  cursor: pointer;
+  transition: background-color 150ms ease, box-shadow 150ms ease;
+
+  &:hover:not(.card--disabled) {
+    box-shadow: 0 2px 8px var(--border-drop-shadow);
+  }
+
+  &:focus-visible {
+    box-shadow: 0 0 0 3px color-mix(in oklch, var(--border-focus-outline) 50%, transparent);
+  }
+}
+
+.card--disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+// ---- Card header ----
+
+.card-header {
+  display: flex;
+  flex-direction: row;
+  height: 72px;
+  padding-block: 12px;
+  padding-inline: 40px;
+  gap: 40px;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.card-header__left {
+  display: flex;
+  flex-direction: row;
+  gap: 12px;
+  align-items: center;
+  flex: 1;
+  min-inline-size: 0;
+}
+
+.card-header__left--vertical {
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.card-header__icon {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+
+  & svg {
+    width: 24px;
+    height: 24px;
+    color: var(--icon-primary);
+  }
+}
+
+.card-header__text {
+  display: flex;
+  flex-direction: column;
+  min-inline-size: 0;
+}
+
+.card-header__title {
+  color: var(--text-title);
+}
+
+.card-header__subtitle {
+  color: var(--text-secondary);
+}
+
+.card-header__actions {
+  display: flex;
+  flex-direction: row;
+  gap: 24px;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.card-header--separator {
+  border-bottom: 1px solid var(--border-drop-shadow);
+}
+
+// ---- Card footer ----
+
+.card-footer {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+}
+
+.card-footer--has-separator {
+  position: relative;
+
+  &::before {
+    content: "";
+    position: absolute;
+    inset-block-start: 0;
+    inset-inline-start: 40px;
+    inset-inline-end: 40px;
+    height: 1px;
+    background-color: var(--border-main);
+  }
+}
+
+// -- Default variant: white bg, padded, wrappable actions --
+
+.card-footer--default {
+  flex-wrap: wrap;
+  padding-block: 12px;
+  padding-inline: 40px;
+  gap: 8px;
+  background-color: var(--background-content);
+}
+
+.card-footer-alignment-start {
+  justify-content: flex-start;
+}
+
+.card-footer-alignment-center {
+  justify-content: center;
+}
+
+.card-footer-alignment-end {
+  justify-content: flex-end;
+}
+
+.card-footer--has-cancel {
+  justify-content: flex-start;
+}
+
+.card-footer__cancel {
+  flex-shrink: 1;
+  min-width: 0;
+}
+
+.card-footer__actions {
+  display: flex;
+  flex-direction: row;
+  gap: 8px;
+  flex-wrap: wrap;
+
+}
+
+.card-footer--has-cancel .card-footer__actions {
+  margin-inline-start: auto;
+}
+
+// -- Fill variant: actions expand 50/50, Figma card-footer blue bg --
+
+.card-footer--fill {
+  padding: 0;
+  background-color: var(--button-card-footer);
+}
+
+.card-footer__fill-action {
+  position: relative;
+  display: flex;
+  flex: 1 0 0;
+  align-items: stretch;
+
+  > [data-slot="button"] {
+    flex: 1;
+    border-radius: 0;
+    padding-block: 20px;
+    padding-inline: 16px;
+    font-size: 14px;
+    font-weight: 590;
+    color: var(--text-button-light);
+    background: transparent;
+    transition: background-color 150ms ease;
+
+    &:hover {
+      background-color: var(--button-card-footer-hover);
+    }
+  }
+}
+
+.card-footer__fill-separator {
+  position: absolute;
+  inset-inline-start: 0;
+  inset-block-start: 0;
+  width: 1px;
+  height: 100%;
+  background-color: var(--border-main);
+}
+
+// ---- Card content ----
+
+.card-content {
+  display: flex;
+  flex-direction: column;
+}
+
+// ---- Card content layout ----
+
+.card-content-layout {
+  display: grid;
+}
+
+// ---- Card block ----
+
+.card-block {
+  position: relative;
+  padding-block: 24px;
+  padding-inline: 40px;
+}
+
+// Bottom separator: inset to content area (respects inline padding)
+.card-block--separator::before {
+  content: "";
+  position: absolute;
+  inset-block-end: 0;
+  inset-inline-start: 40px;
+  inset-inline-end: 40px;
+  height: 1px;
+  background-color: var(--border-main);
+}
+
+// Side separator: vertically centered, height matches content area
+.card-block--side-separator::after {
+  content: "";
+  position: absolute;
+  inset-inline-end: 0;
+  inset-block-start: 24px;
+  inset-block-end: 24px;
+  width: 1px;
+  background-color: var(--border-main);
+}
+
+.card-block--clickable {
+  cursor: pointer;
+  transition: background-color 150ms ease;
+  border-radius: 4px;
+
+  &:hover:not(.card-block--disabled) {
+    background-color: var(--background-hover);
+  }
+
+  &:focus-visible {
+    box-shadow: 0 0 0 3px color-mix(in oklch, var(--border-focus-outline) 50%, transparent);
+  }
+}
+
+.card-block--disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+// Block type variants
+
+.card-block-type-key-value {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 16px;
+
+  > .card-block__label {
+    width: 200px;
+    flex-shrink: 0;
+  }
+
+  > .card-block__value {
+    flex: 1;
+    min-width: 0;
+  }
+}
+
+.card-block-type-metric {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.card-block-type-description {
+  // default block flow — no special layout needed
+}
+
+.card-block-type-status {
+  display: flex;
+  flex-direction: row;
+  gap: 8px;
+  align-items: center;
+}
+
+.card-block-type-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.card-block-type-info-row {
+  display: flex;
+  flex-direction: row;
+  gap: 16px;
+  align-items: center;
+}
+
+.card-block-type-link-row {
+  display: flex;
+  flex-direction: row;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.card-block--clickable.card-block-type-link-row {
+  cursor: pointer;
+}
+
+.card-block-type-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+// ---- Block helper sub-components ----
+
+.card-block__label {
+  color: var(--text-secondary);
+}
+
+.card-block__value {
+  color: var(--text-primary);
+}
+
+// ---- CardBlockMetric compound component ----
+
+.card-block-metric {
+  display: flex;
+  gap: 16px;
+}
+
+.card-block-metric--horizontal {
+  flex-direction: row;
+  align-items: center;
+}
+
+.card-block-metric--vertical {
+  flex-direction: column;
+  gap: 8px;
+}
+
+.card-block-metric__icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  background-color: var(--chart-background);
+  border-radius: 4px;
+  flex-shrink: 0;
+
+  & svg {
+    width: 24px;
+    height: 24px;
+    color: var(--icon-primary);
+  }
+}
+
+.card-block-metric__content {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.card-block-metric__value-line {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+}
+
+.card-block-metric__value {
+  color: var(--text-primary);
+}
+
+.card-block-metric__units {
+  color: var(--text-primary);
+}
+
+.card-block-metric__subtitle {
+  color: var(--text-secondary);
+}
+
+.card-block__status {
+  display: flex;
+  flex-direction: row;
+  gap: 8px;
+  align-items: center;
+}
+
+.card-block__status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.card-block__status-dot--success {
+  background-color: var(--notification-success);
+}
+
+.card-block__status-dot--error {
+  background-color: var(--notification-error);
+}
+
+.card-block__status-dot--warning {
+  background-color: var(--notification-warning);
+}
+
+.card-block__status-dot--info {
+  background-color: var(--notification-information);
+}
+
+.card-block__status-dot--neutral {
+  background-color: var(--text-disabled);
+}
+

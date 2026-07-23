@@ -1,0 +1,116 @@
+# AKS dev deployment caller.
+#
+# Renamed from deploy.yml. Thin caller for the cloud-agnostic
+# .github/workflows/deploy-reusable.yml; this file pins the AKS-specific
+# inputs (cloud=aks, cloud_environment=dev) and delegates the actual auth
+# + helm flow to the reusable workflow.
+#
+# All cluster + namespace + Keycloak configuration is read from the `dev`
+# GitHub Environment by the reusable workflow; this file only forwards the
+# image_tag input.
+#
+# ─── Migration note ──────────────────────────────────────────────────────
+# Operators previously triggered this via `gh workflow run deploy.yml ...`.
+# Use `gh workflow run deploy-aks.yml ...` from now on. The auto-trigger
+# from build-common.yml has been re-pointed to this file.
+#
+# ─── One-time setup (cloud admin) ─────────────────────────────────────────
+# Azure:
+#   1. Create a user-assigned Managed Identity (e.g. id-gha-agentstudio-dev).
+#   2. Add a Federated Identity Credential on that MI:
+#        issuer   : https://token.actions.githubusercontent.com
+#        subject  : repo:NetApp-Nemo/AgentStudio:environment:dev
+#        audience : api://AzureADTokenExchange
+#   3. Grant the MI:
+#        - 'Azure Kubernetes Service Cluster User Role' at cluster scope
+#          (lets `aks-set-context` pull a kubeconfig).
+#        - In-cluster permissions via ONE of:
+#            a) Azure RBAC for Kubernetes (if enabled on the cluster) --
+#               'Azure Kubernetes Service RBAC Cluster Admin' at cluster
+#               scope, or a narrower Writer role scoped to the namespaces.
+#            b) A ClusterRoleBinding mapping the MI's principalId to the
+#               desired ClusterRole (AAD-integrated cluster without Azure
+#               RBAC).
+#   4. Grant the AKS kubelet identity 'AcrPull' on the ACR registry so
+#      pods can pull images from agentstudioregistry.azurecr.io without
+#      a docker-registry secret.
+#
+# ─── One-time setup (repo admin) ──────────────────────────────────────────
+# 1. GitHub -> Settings -> Environments -> New environment -> name: `dev`
+#    (add required reviewers / deployment protection rules as needed).
+# 2. Under the `dev` environment, add the following variables:
+#      AZURE_CLIENT_ID         Managed Identity client ID (not secret)
+#      AZURE_TENANT_ID         Entra ID tenant ID
+#      AZURE_SUBSCRIPTION_ID   Target Azure subscription ID
+#      AKS_RESOURCE_GROUP      Resource group containing the AKS cluster
+#      AKS_CLUSTER_NAME        AKS cluster name
+#      ACR_REGISTRY            ACR hostname; passed as CONTAINER_IMAGE_REPO
+#                              to the Makefile (e.g. agentstudioregistry.azurecr.io)
+#                              (You may also use vars.CONTAINER_IMAGE_REPO instead.)
+#      AGENTSTUDIO_ENDPOINT    Public DNS for the Gateway (drives TLS SAN
+#                              + auth/s3/catalog/workflows/ws subdomains)
+#      KEYCLOAK_KV_NAME, KEYCLOAK_UAMI_CLIENT_ID,
+#      KEYCLOAK_ENTRA_APP_CLIENT_ID,
+#      KEYCLOAK_ENTRA_GROUP_ADMINS_OBJECTID,
+#      KEYCLOAK_ENTRA_GROUP_MEMBERS_OBJECTID
+#                              AKS Keycloak install requirements (provisioned
+#                              once per cluster via `make aks-keycloak-provision`
+#                              + `make aks-keycloak-entra-register`).
+#    Optional variables (sane defaults; see deploy-reusable.yml):
+#      OBSERVABILITY=1, CERT_MANAGER_GATEWAY_TLS, CERT_MANAGER_ISSUER_NAME,
+#      GATEWAY_LB_IP, GATEWAY_MATCH_ALL_HOSTS, DEPLOYMENT_NAME,
+#      HELM_NS_*, HELM_EXTRA_ARGS
+# 3. The `dev` environment does NOT require any secrets for v1. ACR pull
+#    is handled by the AKS kubelet MI; all chart credentials live in the
+#    Helm values.
+#
+# Prerequisites:
+#   - A self-hosted GitHub Actions runner is registered with the labels
+#     `self-hosted` + `netapp` (same runner pool as Main CI Pipeline) and
+#     has outbound reach to login.microsoftonline.com / the AKS API server
+#     / the ACR registry / lakekeeper.github.io / charts.bitnami.com.
+#   - The AKS cluster MUST have Gateway API CRDs installable; the deploy
+#     runs `make install-gateway-api` indirectly via `make deploy-foundation`,
+#     using NGINX Gateway Fabric (NGF).
+#
+# Usage:
+#   Manual:    gh workflow run deploy-aks.yml -f image_tag=1.0.0-dev.1
+#              Actions -> "Deploy to AKS Dev" -> Run workflow -> enter image tag
+#   Automatic: invoked by build-common.yml after build-and-publish succeeds.
+
+name: Deploy to AKS Dev
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: >
+          Image tag to deploy across every AgentStudio subchart
+          (e.g. 1.0.0, 1.0.0-dev.1). Must already exist in the registry
+          referenced by CONTAINER_IMAGE_REPO (vars.ACR_REGISTRY).
+        required: true
+        type: string
+  workflow_call:
+    inputs:
+      image_tag:
+        description: >
+          Image tag to deploy across every AgentStudio subchart. Must
+          already be present in the registry referenced by
+          CONTAINER_IMAGE_REPO (vars.ACR_REGISTRY).
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write   # required so the reusable workflow can mint OIDC tokens
+
+jobs:
+  deploy:
+    uses: ./.github/workflows/deploy-reusable.yml
+    permissions:
+      contents: read
+      id-token: write
+    with:
+      cloud: aks
+      cloud_environment: dev
+      image_tag: ${{ inputs.image_tag }}

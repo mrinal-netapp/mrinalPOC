@@ -1,0 +1,9 @@
+apiVersion: v2
+name: prometheus-proxy
+description: >
+  PromQL-aware authorization proxy for Prometheus.  Sits between Grafana and
+  Prometheus, rewrites every PromQL query to enforce project_id ∈ user's
+  allowed projects, and returns only scoped results.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

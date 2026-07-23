@@ -1,0 +1,62 @@
+{{- /*
+RBAC for kb-retrieval-service.
+
+Why this exists
+---------------
+At query time, kb-retrieval-service resolves the per-project Bifrost
+virtual-key bearer by reading the K8s Secret `as-proj-{projectId}-vk`
+in its own namespace (see `src/nemo/kb-retrieval-service/src/project_gateway.rs`).
+Without an explicit Role + RoleBinding, the chart's ServiceAccount has
+zero permissions — the K8s API returns 403 on the `get` call, the Rust
+resolver swallows it as "not found", and the search UI surfaces the
+misleading
+
+    "Project <id> has no Bifrost virtual key configured —
+     has the gateway-setup workflow completed for this project?"
+
+even when the Secret exists. Verified on sks6316:
+  - kubectl get secret as-proj-projyvm9qey7-vk -n agentstudio-services → 42-byte token present
+  - kubectl auth can-i get secrets -n agentstudio-services
+      --as=system:serviceaccount:agentstudio-services:kb-retrieval-service → no
+
+Scoping
+-------
+This grants only `get` on `secrets` (no list/watch/create/update/delete).
+Restricted to the kb-retrieval-service's own namespace via Role
+(not ClusterRole). The resolver only ever calls `secrets.get(as-proj-*-vk)`
+— a tighter `resourceNames` whitelist would have to enumerate every
+project id at chart-install time, which doesn't scale and breaks any
+project created post-install. Namespace-scoped `get` is the right
+balance: minimal blast radius, future-proof against new projects.
+
+Gated on `.Values.serviceAccount.create` to match the ServiceAccount
+template; if the operator supplies their own SA, they're expected to
+bind their own RBAC.
+*/ -}}
+{{- if .Values.serviceAccount.create -}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "kb-retrieval-service.fullname" . }}-vk-reader
+  labels:
+    {{- include "kb-retrieval-service.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "kb-retrieval-service.fullname" . }}-vk-reader
+  labels:
+    {{- include "kb-retrieval-service.labels" . | nindent 4 }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "kb-retrieval-service.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "kb-retrieval-service.fullname" . }}-vk-reader
+{{- end }}

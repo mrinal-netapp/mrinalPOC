@@ -1,0 +1,60 @@
+{{- if .Values.authorizationPolicies.enabled }}
+{{- /*
+  Allow-list AuthorizationPolicy resources.
+  Each entry in .Values.authorizationPolicies.allowList becomes one ALLOW policy.
+*/}}
+{{- range .Values.authorizationPolicies.allowList }}
+---
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: {{ .name }}
+  namespace: {{ .namespace }}
+  labels:
+    {{- include "istio-mesh-policies.labels" $ | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- range $k, $v := .targetLabels }}
+      {{ $k }}: {{ $v }}
+      {{- end }}
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            principals:
+              {{- range .principals }}
+              - {{ . }}
+              {{- end }}
+{{- end }}
+
+{{- /*
+  Default-deny AuthorizationPolicy resources.
+  Only rendered when authorizationPolicies.defaultDeny.enabled is true.
+  Enable after the allow-list has been validated in PERMISSIVE mode.
+
+  An empty `spec: {}` is the canonical Istio deny-all idiom, NOT an
+  allow-all: with no `action` (defaults to ALLOW) and no `rules`, zero
+  requests can match the (empty) allow set, so every request to the
+  namespace is denied unless a separate ALLOW policy matches it. See
+  https://istio.io/latest/docs/reference/config/security/authorization-policy/
+  ("If there are no ALLOW policies ... " / empty-spec deny-all example).
+  Do not replace this with an explicit `action: DENY` + wildcard rule —
+  that would deny even traffic the allow-list policies permit, because
+  DENY takes precedence over ALLOW.
+*/}}
+{{- if .Values.authorizationPolicies.defaultDeny.enabled }}
+{{- range .Values.authorizationPolicies.defaultDeny.namespaces }}
+---
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: default-deny
+  namespace: {{ . }}
+  labels:
+    {{- include "istio-mesh-policies.labels" $ | nindent 4 }}
+spec: {}
+{{- end }}
+{{- end }}
+
+{{- end }}

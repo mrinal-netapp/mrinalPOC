@@ -1,0 +1,17 @@
+# AWS EKS overlay for the console tier (FSx Trident / fsxn-nas).
+global:
+  storageClass: "fsxn-nas"
+
+# Dedicated ServiceAccounts (mirrors the AKS overlay, minus Azure WI/clientId).
+# The base chart defaults serviceAccount.create=false, so without these the
+# gui / agent-studio-ui pods run as the namespace `default` SA — tripping the
+# mesh's `admissionPolicies.denyDefaultServiceAccount` guardrail. AKS gets named
+# SAs for free via Azure Workload Identity; on EKS we create them explicitly
+# (only the SPIFFE identity matters here).
+gui:
+  serviceAccount:
+    create: true
+
+agent-studio-ui:
+  serviceAccount:
+    create: true

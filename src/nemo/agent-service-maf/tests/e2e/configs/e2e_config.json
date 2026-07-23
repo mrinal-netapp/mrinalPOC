@@ -1,0 +1,91 @@
+{
+  "agent": {
+    "framework": "echo",
+    "model": "mock-model",
+    "temperature": 0.7,
+    "max_tokens": 4096,
+    "timeout_seconds": 30
+  },
+  "interface": {
+    "host": "0.0.0.0",
+    "port": 8000,
+    "cors_origins": [],
+    "auth": {
+      "enabled": true,
+      "scheme": "api_key",
+      "api_key_header": "X-API-Key",
+      "api_keys": []
+    },
+    "streaming": {
+      "max_duration_seconds": 30,
+      "max_events": 1000,
+      "idle_timeout_seconds": 10
+    }
+  },
+  "gateway": {
+    "api_key": "",
+    "default_model": "mock-model",
+    "request_timeout_seconds": 30
+  },
+  "guardrails": {
+    "enabled": true,
+    "fail_open": false,
+    "log_blocked_requests": true,
+    "input_guardrails": [
+      {
+        "name": "input_validator",
+        "enabled": true,
+        "action_on_trigger": "block",
+        "config": { "max_length": 10000, "min_length": 1 }
+      },
+      {
+        "name": "prompt_injection",
+        "enabled": true,
+        "action_on_trigger": "block",
+        "config": {
+          "patterns": ["ignore previous instructions", "system prompt"]
+        }
+      },
+      {
+        "name": "pii_masker",
+        "enabled": true,
+        "action_on_trigger": "modify",
+        "config": {
+          "mask_email": true,
+          "mask_phone": true,
+          "mask_ssn": true,
+          "mask_cc": true
+        }
+      }
+    ],
+    "output_guardrails": [
+      {
+        "name": "content_filter",
+        "enabled": true,
+        "action_on_trigger": "block",
+        "config": {}
+      },
+      {
+        "name": "pii_masker",
+        "enabled": true,
+        "action_on_trigger": "modify",
+        "config": {
+          "mask_email": true,
+          "mask_phone": true,
+          "mask_ssn": true,
+          "mask_cc": true
+        }
+      }
+    ],
+    "tool_guardrails": {
+      "mode": "denylist",
+      "tools": [],
+      "max_calls_per_request": 20
+    }
+  },
+  "mcp": {
+    "connection_timeout_seconds": 10,
+    "lazy_connect": true,
+    "tool_call_timeout_seconds": 10
+  }
+}

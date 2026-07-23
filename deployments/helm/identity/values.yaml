@@ -1,0 +1,552 @@
+## Keycloak chart values -- defaults.
+##
+## Two overlays ship alongside this file:
+##   - values-local.yaml -- local dev (chart-rendered Secrets, single
+##     replica, no Workload Identity, no SecretProviderClass)
+##   - values-aks.yaml   -- AKS production (KV-backed Secrets via SPC,
+##     2-replica Infinispan cluster, Workload Identity federated to the
+##     keycloak SA)
+##
+## See deployments/helm/identity/README.md for the lifecycle, and
+## `make help` for the install / upgrade Makefile targets.
+
+global:
+  ## Azure Container Registry. Defaults to ACR to match every other
+  ## chart that runs on AKS in this repo. The repo convention is:
+  ##   - `image.repository` holds only the upstream path (e.g.
+  ##     keycloak/keycloak)
+  ##   - `global.imageRegistry` is prepended at render time
+  ## values-local.yaml overrides this to "" for off-AKS development.
+  imageRegistry: "agentstudioregistry.azurecr.io"
+  ## Optional umbrella-chart override for the Keycloak image tag.
+  imageTag: ""
+  imagePullSecrets: []
+
+## Pin nameOverride to "keycloak" so app.kubernetes.io/name labels stay
+## stable after the chart directory was renamed from keycloak/ to identity/.
+## This preserves the immutable StatefulSet selector label.
+nameOverride: "keycloak"
+## Pinning fullnameOverride keeps in-cluster Service DNS predictable
+## regardless of release name. Other services and the API Gateway proxy
+## resolve Keycloak as `keycloak.<release-namespace>.svc.cluster.local`.
+fullnameOverride: "keycloak"
+
+## Keycloak image. The upstream image is mirrored into ACR via the
+## standard two-stage pipeline used for every other dependency image
+## (pgvector, temporal, bifrost, ...):
+##   quay.io  ->  docker.repo.eng.netapp.com (JFrog)  ->  agentstudioregistry.azurecr.io
+##
+## `tag` MUST stay in sync with the KEYCLOAK_TAG variable in the repo-root
+## Makefile, otherwise CI mirrors a tag the chart never references (or
+## vice versa). Use a fully-qualified patch version; never use floating
+## tags like `26.0` or `latest`.
+image:
+  repository: keycloak/keycloak
+  tag: "26.6.0"
+  pullPolicy: IfNotPresent
+
+## StatefulSet replica count.
+##   - 2 on AKS (Infinispan / JGroups cluster, real HA).
+##   - 1 in local dev (values-local.yaml overrides this) -- a 2-replica
+##     install on a single-node kind / OrbStack cluster works but pegs
+##     the dev laptop, and the second replica adds no value when there's
+##     only one Postgres backend and one node.
+replicaCount: 2
+
+## Keycloak runtime configuration.
+## See https://www.keycloak.org/server/all-config for the full list of KC_* envs.
+keycloak:
+  ## Public hostname Keycloak issues tokens for. REQUIRED when
+  ## productionMode=true (`start`); the chart fails fast at render time
+  ## if missing in that mode. Empty in defaults so `start-dev` works
+  ## locally without a stable hostname; values-aks.yaml supplies the
+  ## AKS hostname.
+  hostname: ""
+  hostnameStrict: false
+
+  ## Return request-derived backchannel URLs (token/JWKS/userinfo) in
+  ## the OIDC discovery doc instead of always echoing KC_HOSTNAME. This
+  ## is what lets in-cluster pods call `keycloak.<ns>.svc.cluster.local`
+  ## and get back URLs on THAT host (no public-DNS hairpin, no TLS
+  ## trust issues). Recommended `true` for any k8s deployment with a
+  ## public ingress hostname AND in-cluster service-to-service calls.
+  ## Token `iss` claim is unaffected — still anchored to KC_HOSTNAME.
+  backchannelDynamic: true
+
+  ## Defaults to `start-dev` so a plain `helm install keycloak` works
+  ## end-to-end on a local cluster without operator-supplied hostname /
+  ## HTTPS config (otherwise Keycloak crashloops with "Hostname not
+  ## configured"). Production overlay (values-aks.yaml) flips this on
+  ## and supplies the matching `keycloak.hostname`.
+  productionMode: false
+  ## HTTP listener port inside the pod. The API Gateway service in this
+  ## repo terminates the `auth.*` host and reverse-proxies to this port.
+  httpPort: 8080
+  ## Health/metrics on a separate management port (9000 in KC 26 with
+  ## the Quarkus management interface -- `kc.sh start --management-port=...`).
+  managementPort: 9000
+  ## proxyHeaders=xforwarded so Keycloak honors X-Forwarded-* headers
+  ## from the upstream API Gateway proxy.
+  proxyHeaders: xforwarded
+  ## Cluster cache provider -- Infinispan with the kubernetes JGroups
+  ## stack so both replicas cluster automatically via the headless
+  ## Service.
+  cache: ispn
+  cacheStack: kubernetes
+  ## Appended to JAVA_OPTS_APPEND (JGroups DNS is added automatically when cache=ispn).
+  javaOptsAppend: ""
+  ## Bootstrap admin credentials. Used ONLY for first-boot realm import.
+  ## Resolution order at render time:
+  ##   1. existingSecret set      -> templates/bootstrap-admin-secret.yaml
+  ##                                 is skipped; Keycloak reads
+  ##                                 KC_BOOTSTRAP_ADMIN_USERNAME / _PASSWORD
+  ##                                 from the operator-supplied Secret.
+  ##                                 AKS path: existingSecret =
+  ##                                 "keycloak-bootstrap-admin-from-kv",
+  ##                                 materialised by the SPC from KV.
+  ##   2. existingSecret empty
+  ##      AND password non-empty  -> chart RENDERS a Secret of the same name,
+  ##                                 populated from values.
+  ##   3. existingSecret empty
+  ##      AND password empty      -> chart RENDERS NOTHING. Keycloak's
+  ##                                 first boot will still succeed via
+  ##                                 the upstream-default admin/admin
+  ##                                 credentials and Keycloak prompts the
+  ##                                 operator to rotate on first login.
+  ##                                 Operators who want a chart-managed
+  ##                                 bootstrap admin must opt in via
+  ##                                 `-f values-local.yaml` (dev) or
+  ##                                 `--set keycloak.bootstrapAdmin.password=...`.
+  ##
+  ## NO well-known default password (e.g. "admin") is shipped here.
+  bootstrapAdmin:
+    username: admin
+    ## `password` key intentionally OMITTED here (not set to "").
+    ## CodeQL's js/empty-password-in-configuration-file rule
+    ## pattern-matches `password: ""` literally and would flag this file
+    ## even though the templates correctly skip Secret rendering when
+    ## the key is empty / missing. A missing key behaves identically to
+    ## `password: ""` under Sprig's `default`, so this is a pure
+    ## CodeQL-noise mitigation.
+    existingSecret: ""
+    secretKeys:
+      usernameKey: username
+      passwordKey: password
+
+## PostgreSQL backing store.
+##
+## This chart ALWAYS connects to an external Postgres -- it does NOT
+## ship a bundled Postgres StatefulSet. By default Keycloak targets the
+## shared PostgreSQL StatefulSet that lives in the `database` namespace
+## (deployments/helm/database), which already pre-creates the `keycloak`
+## database via its initdb script. Override `postgres.host` to point at
+## a different server (e.g. Azure Database for PostgreSQL Flexible
+## Server) without changing the chart.
+postgres:
+  ## FQDN of the Postgres server. The shared-postgresql StatefulSet
+  ## resolves via Kubernetes DNS at:
+  ##   shared-postgresql.database.svc.cluster.local
+  host: "shared-postgresql.database.svc.cluster.local"
+  port: 5432
+  database: "keycloak"
+  auth:
+    ## Username Keycloak will connect as. Defaults to `postgres` because
+    ## the shared-postgresql chart only seeds the superuser; the
+    ## `keycloak` database is owned by `postgres`. Override to a less
+    ## privileged role once one exists (out of scope for phase 1).
+    username: "postgres"
+    ## Resolution order at render time:
+    ##   1. existingSecret set      -> templates/postgres-auth-secret.yaml
+    ##                                 is skipped; KC_DB_USERNAME /
+    ##                                 KC_DB_PASSWORD reference the
+    ##                                 operator-supplied Secret (AKS:
+    ##                                 SPC materialises
+    ##                                 keycloak-postgres-auth-from-kv).
+    ##   2. existingSecret empty
+    ##      AND password non-empty  -> chart RENDERS a Secret with the
+    ##                                 operator-supplied creds (used by
+    ##                                 values-local.yaml).
+    ##   3. existingSecret empty
+    ##      AND password empty      -> chart FAILS at render time (see
+    ##                                 templates/statefulset.yaml). Plain
+    ##                                 `helm install keycloak` never
+    ##                                 silently ships a well-known DB
+    ##                                 password.
+    existingSecret: ""
+    ## `password` deliberately omitted here -- same CodeQL mitigation
+    ## as keycloak.bootstrapAdmin.password.
+    secretKeys:
+      usernameKey: username
+      passwordKey: password
+
+## Service exposing Keycloak inside the cluster (HTTP on 8080).
+service:
+  type: ClusterIP
+  port: 8080
+  managementPort: 9000
+
+## HTTPRoute (Gateway API) exposing Keycloak via an external hostname.
+##
+## DEFAULT: disabled. Phase-1 ships the new KC isolated -- no ingress, no
+## hostname routing, only in-cluster service DNS. Phase-2 (cutover) flips
+## httpRoute.enabled=true so the apps in the legacy `agentstudio` namespace
+## can reach the new KC at `auth.<endpoint>` (or whatever hostname the
+## operator picks) for browser/redirect flows.
+##
+## CROSS-NAMESPACE GATEWAY:
+## The route's `parentRef` points at the `nemo-gateway` Gateway in the
+## `agentstudio` namespace. That Gateway's HTTPS listener defaults to
+## `allowedRoutes.namespaces.from: SameNamespace`, which would silently
+## reject this HTTPRoute. The phase-2 cutover overlay (in the nemo
+## chart's values-cutover.yaml) flips it to `from: All` for single-tenant
+## dev; production should use a Selector.
+##
+## TLS:
+## The Gateway listener already terminates TLS with a wildcard
+## `*.<endpoint>` cert (verified at smoke time). `auth.<endpoint>`
+## is one DNS label, so the wildcard covers it -- no cert change.
+httpRoute:
+  enabled: false
+  ## Hostnames the route binds (Gateway API list). Leave empty to skip
+  ## hostname matching (route catches whatever its parent listener
+  ## allows). Most operators want exactly one entry like
+  ## `auth.agentstudio.local` (local dev) or
+  ## `auth.agentstudio.dev.openeng.netapp.com` (AKS dev).
+  hostnames: []
+  ## Parent gateway. parentRef.namespace MUST match the gateway's namespace
+  ## (the `agentstudio` namespace by default for the existing nemo-gateway).
+  parentRef:
+    name: nemo-gateway
+    namespace: agentstudio
+    ## Restrict to a specific listener; leave unset to attach to any
+    ## compatible listener on the parent. Set to `https` to bind only the
+    ## TLS-terminating port.
+    sectionName: ""
+  ## Backend service rendered as the only rule. Defaults to the chart's
+  ## own keycloak Service on port 8080 (HTTP -- TLS termination happens
+  ## at the Gateway).
+  backend:
+    serviceName: ""    # default: include "keycloak.fullname" (chart-rendered)
+    port: 8080
+
+## Headless Service used by JGroups for peer discovery between replicas.
+serviceHeadless:
+  port: 7800
+
+## ServiceAccount for Keycloak pods. Annotated with
+## azure.workload.identity/client-id in the AKS overlay so pods can pull
+## the Keycloak DB password / admin password / Entra broker secret /
+## svc-* client secrets from Key Vault.
+##
+## `workloadIdentityEnabled` is the single source of truth for whether
+## the Azure Workload Identity webhook should attach a federated AAD
+## token to these pods. When true, the chart adds:
+##   - `azure.workload.identity/use: "true"` label on the pod template
+##     (the webhook keys off the POD label, not the SA label);
+##   - the same label on the SA itself, so kubectl introspection makes
+##     the SA's role obvious to operators.
+## Set true in values-aks.yaml; keep false for off-AKS dev clusters.
+serviceAccount:
+  create: true
+  name: ""
+  workloadIdentityEnabled: false
+  annotations: {}
+
+## SecretProviderClass that mounts Key Vault objects into the Keycloak
+## pod. Disabled in dev; enabled and populated in values-aks.yaml.
+##
+## Invariant enforced at render time:
+##   secretProviderClass.enabled = true
+##   ==> serviceAccount.workloadIdentityEnabled = true
+## (the CSI driver needs a federated AAD token, which only flows when
+## the pod template carries `azure.workload.identity/use=true`).
+secretProviderClass:
+  enabled: false
+  keyvaultName: ""
+  tenantId: ""
+  ## Workload Identity UAMI client ID federated to the Keycloak SA.
+  clientID: ""
+  objects: []
+  secretObjects: []
+
+## Realm-bootstrap Job.
+##
+## Renders realms/agent-studio-realm.json through Helm's `tpl` in
+## templates/realm-bootstrap-configmap.yaml, then a post-install +
+## post-upgrade Helm hook Job (templates/realm-bootstrap-job.yaml)
+## imports the realm via kcadm.sh against the in-cluster Keycloak
+## Service. The Job is idempotent -- `kcadm.sh create realms` on first
+## run, `update realms/<r>` on subsequent runs -- so re-running the
+## chart is safe.
+##
+## Disabled by default so the chart still installs cleanly without a
+## realm (e.g. `helm template` smoke tests). Both values-local.yaml and
+## values-aks.yaml flip `enabled: true`.
+realmBootstrap:
+  enabled: false
+
+  ## Realm name. Used by the IdP redirect URI on Entra, the audience
+  ## claim on the agent-studio-api client, and every token-issuer URL
+  ## the SPA + backend trust. Changing this is breaking; treat as
+  ## immutable post-install.
+  ##
+  ## Kept as `nemo` (matching legacy Keycloak) so the cutover does not
+  ## change the OIDC issuer URL, redirect URIs, client audiences, or
+  ## any downstream env vars / secrets keyed by realm name. Every
+  ## deployment overlay (values-local, values-aks) also sets this to
+  ## `nemo`; the default lives here just to keep `helm template` runs
+  ## self-consistent.
+  realm: nemo
+
+  tokens:
+    accessTokenLifespanSeconds: 300        # 5 minutes
+    ssoSessionIdleTimeoutSeconds: 1800     # 30 minutes
+    ssoSessionMaxLifespanSeconds: 36000    # 10 hours
+
+  ## Brute-force protection. Permanent lockout off in lower envs so
+  ## support doesn't have to unlock test users; AKS overlay turns it on.
+  bruteForce:
+    enabled: true
+    permanentLockout: false
+    failureFactor: 5
+    waitIncrementSeconds: 60
+
+  ## Only enforced on local Keycloak users -- Entra-federated users are
+  ## governed by Entra's own policies.
+  passwordPolicy: "length(12) and upperCase(1) and lowerCase(1) and digits(1) and specialChars(1) and notUsername and passwordHistory(5)"
+
+  ## OAuth clients. Two core clients ship:
+  ##   - agent-studio-api  (resource-server, bearer-only, UMA)
+  ##   - agent-studio-ui   (public SPA, PKCE S256)
+  ##
+  ## All other service clients (workflow-engine, config-service, gateway,
+  ## lakekeeper, etc.) are rendered via realmBootstrap.additionalClients.
+  ##
+  ## agent-studio-ui's redirect URIs / web origins are overlay-driven so
+  ## AKS can pin the production hostname without baking it into the
+  ## chart's defaults. Defaults keep Vite's local dev server reachable;
+  ## values-aks.yaml extends with the production URL.
+  uiRedirectUris:
+    - "http://localhost:5173/*"
+  uiWebOrigins:
+    - "http://localhost:5173"
+
+  ## Identity Provider broker (Microsoft Entra ID via OIDC+PKCE).
+  ##
+  ## When enabled, the realm-bootstrap Job:
+  ##   1. resolves four PUBLIC identifiers (clientId, tenantId, two
+  ##      security-group objectIds the IdP mappers key off of) from
+  ##      values -- these are non-secret and flow through `--set` at
+  ##      install time.
+  ##   2. resolves ONE secret (clientSecret) via secretKeyRef on a K8s
+  ##      Secret. AKS path: existingSecret references the SPC-materialised
+  ##      `keycloak-entra-broker-from-kv`. Dev path: `clientSecret` set
+  ##      inline renders a small chart-managed Secret.
+  ##   3. substitutes the KC_ENTRA_* placeholders into realm.json BEFORE
+  ##      handing the file to kcadm. Public identifiers use sed; secrets
+  ##      use bash parameter expansion to avoid sed metacharacter
+  ##      issues. Secrets never land in the rendered realm ConfigMap.
+  ##   4. kcadm imports / updates the realm with a fully-populated
+  ##      identityProviders[] block + 2 group->realm-role mappers.
+  ##
+  ## Disabled by default so dev installs without an Entra tenant still
+  ## work (the realm renders with empty identityProviders[]).
+  ## values-aks.yaml flips this on; for local dev against a real
+  ## tenant, layer a separate values overlay on top of values-local.yaml.
+  broker:
+    enabled: false
+
+    ## Entra App Registration's appId. Output of
+    ## `make aks-keycloak-entra-register` (ENTRA_APP_CLIENT_ID line).
+    clientId: ""
+
+    ## Entra tenant ID. `az account show --query tenantId -o tsv`.
+    tenantId: ""
+
+    ## Entra security-group objectIds the IdP mappers key off of.
+    ## Output of `make aks-keycloak-entra-register`. objectIds (not
+    ## displayNames) because Entra emits objectIds in the `groups`
+    ## claim by default and objectIds are immutable across group
+    ## renames.
+    groupAdminsObjectId: ""
+    groupMembersObjectId: ""
+
+    ## Operator-supplied client secret (resolution case 2). Leave empty
+    ## in any environment with a real Entra tenant; rotate via
+    ## `make aks-keycloak-entra-register` and let the SPC re-fetch.
+    clientSecret: ""
+
+    ## Pre-existing K8s Secret holding ONLY the Entra client secret
+    ## (resolution case 1). On AKS this is materialised from KV by the
+    ## SPC. The Job reads `clientSecretKey` (default: clientSecret) off
+    ## this Secret as env var KC_ENTRA_CLIENT_SECRET.
+    existingSecret: ""
+
+    secretKeys:
+      clientSecretKey: clientSecret
+
+  ## Clients whose service-account users need the Authorization Services
+  ## admin roles — `manage-authorization` on `realm-management` (to call
+  ## the Keycloak Admin Authz REST API for project resources, user
+  ## policies, scope permissions) and `uma_protection` on
+  ## `agent-studio-api` (to enrich tokens with `authorization.permissions`
+  ## via the Protection API path).
+  ## Consumed by the role-grant block in templates/realm-bootstrap-job.yaml.
+  authzAdminClients:
+    - agentstudio-workflow-engine
+    - agentstudio-config-service
+
+  ## ClientId of the resource-server client whose UUID downstream services
+  ## need at runtime (KEYCLOAK_RESOURCE_SERVER_UUID env var on
+  ## workflow-engine / config-service). Resolved by the post-realm-bootstrap
+  ## Job and patched into the keycloak-oidc-secrets.resource-server-uuid key.
+  resourceServerClientId: agent-studio-api
+
+  ## Additional drop-in-compat clients (T-107 — coexistence with the
+  ## legacy `nemo` realm running on AKS today).
+  ##
+  ## The phase-1 chart was originally designed to ship a 4-client realm
+  ## (T-106): agent-studio-api, agent-studio-ui, and the two svc-* clients
+  ## above. While that's the *target* per-project authorization design,
+  ## the AKS dev cluster already runs an 11-client `nemo` realm
+  ## (agentstudio-gateway, agentstudio-gui, agentstudio-lakekeeper, ...)
+  ## that the existing services authenticate against via client_credentials
+  ## or auth-code flows. Cutting straight to the 4-client realm would
+  ## break every running service.
+  ##
+  ## This block lets the chart render BOTH sets in the same realm:
+  ##   - the T-106 phase-1 clients (agent-studio-* — future per-project authz)
+  ##   - the legacy clients listed below (drop-in superset of the live realm)
+  ##
+  ## Each entry maps to one client. `kind` chooses one of three shapes the
+  ## realm template knows how to render:
+  ##   - confidential-svc  -- service_account + client_credentials (no UI)
+  ##   - public-spa        -- public auth-code + PKCE (browser SPA)
+  ##   - confidential-spa  -- confidential auth-code (server-side web app)
+  ##
+  ## Per-client secrets follow the same resolution rules as the svc-*
+  ## clients above:
+  ##   - existingSecret set       -> chart references it as-is (AKS path)
+  ##   - existingSecret empty
+  ##     AND clientSecret nonzero -> chart renders a Secret (dev path)
+  ##   - both empty               -> chart fails at render time (kind=confidential-*)
+  ## Public clients (kind=public-spa) have no secret.
+  ##
+  ## `secretEnvVar` is the env name the realm-bootstrap Job will export
+  ## the secret as, AND the placeholder string the realm.json carries.
+  ## It MUST match `^KC_ADDL_[A-Z0-9_]+_SECRET$` (validated at render
+  ## time) so the Job's substitution loop can find it.
+  ##
+  ## Disabled by default so the existing T-106 4-client install path
+  ## stays unaffected. values-aks.yaml flips this on.
+  additionalClients:
+    enabled: false
+
+    ## List of legacy clients. Each entry is byte-compatible with the
+    ## live `nemo` realm on AKS (audited from
+    ## /admin/realms/nemo/clients on aks-agentstudio-dev-eus2-001).
+    ##
+    ## Note: `redirectUris` / `webOrigins` are overlay-driven for browser
+    ## clients so dev / AKS hostnames don't bake into the chart defaults.
+    ## values-local.yaml ships a localhost-only set; values-aks.yaml
+    ## extends with the production hostname.
+    clients: []
+
+    ## Additional redirectUris / webOrigins UNIONED with the per-client
+    ## entries above at render time. Use this to add hostnames in an
+    ## overlay (e.g. cutover-time `auth.<endpoint>` URLs) without
+    ## redeclaring the entire clients[] list -- Helm has replace
+    ## semantics on lists, so an overlay of additionalClients.clients
+    ## clobbers the AKS hostname set.
+    ##
+    ## Shape: a map keyed by clientId (matching `name` in clients[]
+    ## above). Values are lists; entries are merged via `concat | uniq`,
+    ## so re-listing a hostname is a safe no-op. Empty map by default.
+    ##
+    ## Example overlay:
+    ##   additionalRedirectUris:
+    ##     agentstudio-gui:
+    ##       - "https://app.agentstudio.local:8443/*"
+    ##     agentstudio-swagger:
+    ##       - "https://app.agentstudio.local:8443/api-docs/*"
+    additionalRedirectUris: {}
+    additionalWebOrigins: {}
+
+resources:
+  requests:
+    cpu: 500m
+    memory: 1Gi
+  limits:
+    cpu: 2000m
+    memory: 2Gi
+
+## Pod- and container-level securityContext. The upstream Keycloak image
+## runs as a non-root user with UID/GID 1000 by default.
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  fsGroup: 1000
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+
+nodeSelector: {}
+tolerations: []
+podAnnotations: {}
+
+## Pod-level anti-affinity / topology spread.
+##
+## Defaults give us "real" HA on any multi-node cluster (AKS) while
+## still letting kind / minikube / single-node dev clusters install the
+## chart at all (preferredDuringScheduling, not required).
+## Selectors below match only on `app.kubernetes.io/name: keycloak`
+## (not `instance`) so the spread/anti-affinity rules still apply when
+## the release is installed under a different name (e.g. as a subchart
+## under an umbrella). Per-release isolation isn't needed — there's
+## only one Keycloak release in any namespace.
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: keycloak
+          topologyKey: kubernetes.io/hostname
+
+topologySpreadConstraints:
+  - maxSkew: 1
+    topologyKey: kubernetes.io/hostname
+    whenUnsatisfiable: ScheduleAnyway
+    labelSelector:
+      matchLabels:
+        app.kubernetes.io/name: keycloak
+
+## Keep at least 1 replica available across rolling updates so logins
+## don't 502 during helm upgrade.
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+## Post-realm-bootstrap UUID resolver Job (templates/post-realm-bootstrap-job.yaml).
+## Resolves the runtime `agent-studio-api` client UUID via the Keycloak Admin
+## API and patches it into `keycloak-oidc-secrets.resource-server-uuid`. Runs
+## on the `init-tools` image (built from src/images/init-tools/).
+##
+## Image resolution:
+##   1. .image.repository — accepts either a path ("ghcr.io/foo/init-tools" —
+##      .image.tag appended) OR a fully-pinned ref ("…/init-tools:v1.2.3" or
+##      "…@sha256:abc…" — used verbatim, .image.tag ignored).
+##   2. otherwise: ${global.imageRepository}/init-tools:${.image.tag}.
+##   3. otherwise: render fails with an actionable error.
+## Every helm-identity-install-<cloud> Make target injects
+## `--set global.imageRepository=$(CONTAINER_IMAGE_REPO)` so (2) works out of
+## the box; (1) is for operator-pinned digests / off-default registries.
+postRealmBootstrap:
+  image:
+    repository: ""        # path-only or full ref (:tag / @digest); empty -> use global.imageRepository
+    tag: "latest"         # ignored when .repository already contains :tag or @digest
+    pullPolicy: IfNotPresent

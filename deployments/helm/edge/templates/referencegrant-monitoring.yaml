@@ -1,0 +1,21 @@
+{{- /*
+ReferenceGrant in monitoring that allows HTTPRoutes in agentstudio-edge
+to reference `phoenix` and `prometheus-prometheus`.
+*/ -}}
+{{- if and .Values.gateway.enabled (eq (.Values.gateway.provider | default "nginx") "istio") (.Values.observability).enabled -}}
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: ReferenceGrant
+metadata:
+  name: edge-to-monitoring
+  namespace: {{ include "nemo.monitoringNamespace" . }}
+  labels:
+    {{- include "edge.labels" . | nindent 4 }}
+spec:
+  from:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      namespace: {{ include "nemo.namespace" . }}
+  to:
+    - group: ""
+      kind: Service
+{{- end }}

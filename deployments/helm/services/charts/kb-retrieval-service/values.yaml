@@ -1,0 +1,102 @@
+# Default values for kb-retrieval-service sub-chart
+enabled: true  # Default KB query backend
+replicaCount: 1
+terminationGracePeriodSeconds: 120
+
+image:
+  repository: nemo/kb-retrieval-service
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 5000
+  metricsPort: 9090  # Dedicated Prometheus port served by the observability client's standalone /metrics server (set via AGENT_STUDIO_OBSERVABILITY_PROMETHEUS_METRICS_PORT). Keeps the app port (5000) free of metrics so it can stay STRICT mTLS.
+
+resources:
+  limits:
+    cpu: 1000m
+    memory: 2Gi
+  requests:
+    cpu: 500m
+    memory: 1Gi
+
+env:
+  - name: PORT
+    value: "5000"
+  - name: DEBUG
+    value: "false"
+  - name: RUST_LOG
+    value: "info"
+  - name: LLM_GATEWAY_URL
+    value: ""
+  - name: K8S_NAMESPACE
+    value: ""
+
+# Default app-scoped PVC mount path (must match volumeMounts.mountPath). Passed as NEMO_DEFAULT_STORE_ROOT
+# so LanceDB opens tables from POSIX under the same path kb-processor uses.
+nemoDataMount: "/mnt/pvcs/default-nemo"
+
+# S3 credentials (from secrets)
+s3:
+  enabled: true
+  secretName: ""  # If empty, derived from deploymentName via nemo.s3gatewayCredentialsName helper
+  endpoint: "http://s3gateway:7070"
+  region: "us-east-1"
+  defaultBucketName: ""  # If empty, derived from deploymentName via nemo.defaultBucketName helper
+
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 5000
+  initialDelaySeconds: 10
+  periodSeconds: 30
+  timeoutSeconds: 5
+  failureThreshold: 3
+
+readinessProbe:
+  httpGet:
+    path: /ready
+    port: 5000
+  initialDelaySeconds: 15
+  periodSeconds: 10
+  timeoutSeconds: 3
+  failureThreshold: 3
+
+autoscaling:
+  enabled: true
+  minReplicas: 1
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+
+# Observability
+metrics:
+  path: /metrics
+  port: metrics  # Service/container port name scraped by the ServiceMonitor (dedicated metrics port, not the app port)
+  serviceMonitor:
+    enabled: true
+    interval: 30s
+tracing:
+  otlpEndpoint: ""  # Set to "otel-collector:4318" to enable OTel tracing
+
+# These will be passed from parent chart
+namespace: ""
+serviceAccountName: ""
+podSecurityContext: {}
+securityContext: {}
+nodeSelector: {}
+affinity: {}
+tolerations: {}
+
+serviceAccount:
+  create: false
+  name: ""
+  azureClientId: ""
+
+workloadIdentity:
+  enabled: false
+
+# Global defaults for nil-safe sub-chart rendering; overridden by parent chart global.
+global:
+  observability:
+    otlpEndpoint: ""

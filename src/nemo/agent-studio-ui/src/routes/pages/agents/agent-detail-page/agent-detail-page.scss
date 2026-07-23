@@ -1,0 +1,197 @@
+@use '@/styles/mixins' as *;
+
+// One scss per detail page, mirroring `model-detail-page.scss` (PR #298).
+// Panels under `./panels/...` reference these classes by name; they no
+// longer ship their own .scss to keep the cascade source-able from a
+// single location.
+
+.agent-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+
+  @include mobile {
+    gap: 12px;
+  }
+}
+
+.agent-detail__loading,
+.agent-detail__not-found {
+  align-items: center;
+  justify-content: center;
+  min-height: 240px;
+  gap: 16px;
+}
+
+// ── Status badge (used inside SummaryDetailsTemplate value slot) ────────────
+
+.agent-detail__status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+
+  &--healthy svg { color: var(--notification-success); }
+  &--error   svg { color: var(--notification-error); }
+  &--draft   svg { color: var(--text-secondary); }
+}
+
+// ── Overview panel ─────────────────────────────────────────────────────────
+
+.agent-overview {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding-top: 4px;
+  min-width: 0;
+
+  @include mobile {
+    gap: 12px;
+  }
+}
+
+// Filter bar
+//
+// On tablet/mobile breakpoints the left section (filter label + chips) and
+// the collapse toggle are allowed to wrap so the bar doesn't overflow the
+// page. Below ~480px the chip row itself wraps so individual chips don't
+// get clipped.
+.agent-overview__filter-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--border-main);
+  border-radius: 4px;
+  background: var(--background-content);
+}
+
+.agent-overview__filter-bar-left {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+.agent-overview__filter-icon {
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+.agent-overview__filter-chip-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.agent-overview__filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid var(--border-main);
+  border-radius: 16px;
+  font-size: 13px;
+  color: var(--text-primary);
+  background: transparent;
+  cursor: pointer;
+  max-width: 100%;
+
+  &:hover {
+    background: var(--background-hover);
+  }
+}
+
+// ── Panel deferred-state banner ────────────────────────────────────────────
+
+// Used by Toolsets + Assigned KB tabs while their upstream endpoint
+// isn't wired yet. Replaces the BaseTable "No Data" cell so the user
+// understands the difference between "API returned 0 rows" and "API
+// not available yet". Once the endpoints land, the panels stop
+// rendering this banner and we can delete the block.
+
+.panel-deferred-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 48px 24px;
+  border: 1px dashed var(--border-main);
+  border-radius: 8px;
+  background: var(--background-content);
+  text-align: center;
+
+  @include tablet {
+    padding: 36px 20px;
+  }
+
+  @include mobile {
+    padding: 24px 16px;
+  }
+}
+
+.panel-deferred-state__icon {
+  color: var(--text-secondary);
+  margin-bottom: 4px;
+}
+
+// ── Toolsets panel ─────────────────────────────────────────────────────────
+
+.toolsets-panel {
+  display: flex;
+  flex-direction: column;
+  padding-top: 4px;
+  min-height: 0;
+  min-width: 0;
+}
+
+// ── Assigned-KB panel ──────────────────────────────────────────────────────
+
+.assigned-kb-panel {
+  display: flex;
+  flex-direction: column;
+  padding-top: 4px;
+  min-height: 0;
+  min-width: 0;
+}
+
+// Job details column: segmented progress bar + state label
+
+.kb-job-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.kb-job-cell__bar {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.kb-job-cell__segment {
+  display: inline-block;
+  width: 18px;
+  height: 6px;
+  border-radius: 2px;
+  background: var(--background-disabled, #e6e8ec);
+
+  // Filled-state colours — driven by the row's job state.
+  // "Ready"      → success green
+  // "Processing" → information blue
+  &--ready {
+    background: var(--notification-success);
+  }
+
+  &--processing {
+    background: var(--notification-information);
+  }
+}

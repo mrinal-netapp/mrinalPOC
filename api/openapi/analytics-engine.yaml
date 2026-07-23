@@ -1,0 +1,377 @@
+openapi: 3.0.3
+info:
+  title: AgentStudio Analytics Engine API
+  description: API for managing analytics sessions and executing SQL queries via Arrow Flight SQL
+  version: 1.0.0
+servers:
+  - url: http://analytics-engine:5000
+    description: Kubernetes service
+  - url: http://localhost:5000
+    description: Local development server
+
+paths:
+  /health:
+    get:
+      summary: Health check
+      description: Returns health status of the service
+      operationId: healthCheck
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: OK
+
+  /ready:
+    get:
+      summary: Readiness check
+      description: Returns readiness status of the service
+      operationId: readinessCheck
+      responses:
+        '200':
+          description: Service is ready
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: OK
+
+  /api/v1/internal/sessions:
+    post:
+      summary: Create analytics session
+      description: Creates a new analytics session and deploys GizmoSQL pod (internal API)
+      operationId: createSession
+      tags:
+        - Internal
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateSessionRequest'
+      responses:
+        '200':
+          description: Session created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateSessionResponse'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/internal/sessions/{sessionId}/status:
+    get:
+      summary: Get session status
+      description: Gets the current status of an analytics session (internal API)
+      operationId: getSessionStatus
+      tags:
+        - Internal
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Analytics session ID
+      responses:
+        '200':
+          description: Session status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionStatusResponse'
+        '404':
+          description: Session not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/internal/sessions/{sessionId}:
+    delete:
+      summary: Delete session
+      description: Deletes an analytics session and stops the GizmoSQL pod (internal API)
+      operationId: deleteSession
+      tags:
+        - Internal
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Analytics session ID
+      responses:
+        '200':
+          description: Session deleted successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+        '404':
+          description: Session not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/sessions/{sessionId}/query:
+    post:
+      summary: Execute SQL query
+      description: Executes a SQL query against the analytics session's dataset
+      operationId: executeQuery
+      tags:
+        - Query
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Analytics session ID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QueryRequest'
+      responses:
+        '200':
+          description: Query results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QueryResult'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Session not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Query execution error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/sessions/{sessionId}/schema/{tableName}:
+    get:
+      summary: Get table schema
+      description: Gets the schema for a table in the analytics session's dataset
+      operationId: getSchema
+      tags:
+        - Query
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Analytics session ID
+        - name: tableName
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Table name (typically "dataset")
+      responses:
+        '200':
+          description: Table schema
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SchemaResponse'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Session or table not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+components:
+  schemas:
+    CreateSessionRequest:
+      type: object
+      required:
+        - sessionId
+        - namespaceId
+        - datasetId
+        - datasetInfo
+        - podSize
+      properties:
+        sessionId:
+          type: string
+          description: Unique session identifier
+        namespaceId:
+          type: string
+          description: Namespace ID
+        datasetId:
+          type: string
+          description: Dataset ID
+        datasetInfo:
+          type: object
+          required:
+            - bucketName
+            - datasetPrefix
+          properties:
+            bucketName:
+              type: string
+            datasetPrefix:
+              type: string
+            fileTypes:
+              type: array
+              items:
+                type: string
+        podSize:
+          type: object
+          properties:
+            memory:
+              type: string
+              example: "2Gi"
+            cpu:
+              type: string
+              example: "1000m"
+        callbackUrl:
+          type: string
+          description: Optional callback URL for status updates
+
+    CreateSessionResponse:
+      type: object
+      properties:
+        sessionId:
+          type: string
+        podId:
+          type: string
+        status:
+          type: string
+          enum: [processing, ready, error]
+        gizmosqlEndpoint:
+          type: string
+          description: GizmoSQL Flight SQL endpoint
+        gizmosqlUsername:
+          type: string
+          description: GizmoSQL username
+        gizmosqlPassword:
+          type: string
+          description: GizmoSQL password
+        errorMessage:
+          type: string
+
+    SessionStatusResponse:
+      type: object
+      properties:
+        sessionId:
+          type: string
+        podStatus:
+          type: string
+          enum: [processing, ready, error, stopped]
+        gizmosqlEndpoint:
+          type: string
+        podId:
+          type: string
+        errorMessage:
+          type: string
+        lastUpdated:
+          type: string
+          format: date-time
+
+    QueryRequest:
+      type: object
+      required:
+        - sql
+      properties:
+        sql:
+          type: string
+          description: SQL query to execute
+          example: "SELECT * FROM dataset LIMIT 10"
+
+    QueryResult:
+      type: object
+      properties:
+        columns:
+          type: array
+          items:
+            type: string
+        rows:
+          type: array
+          items:
+            type: array
+            items:
+              type: string
+              description: Cell value (can be string, number, null)
+        rowCount:
+          type: integer
+        executionTime:
+          type: integer
+          description: Query execution time in milliseconds
+
+    SchemaResponse:
+      type: object
+      properties:
+        tableName:
+          type: string
+        columns:
+          type: array
+          items:
+            $ref: '#/components/schemas/ColumnInfo'
+
+    ColumnInfo:
+      type: object
+      properties:
+        name:
+          type: string
+        type:
+          type: string
+          description: Arrow data type
+        nullable:
+          type: boolean
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+

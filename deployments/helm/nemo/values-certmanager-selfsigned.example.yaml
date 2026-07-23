@@ -1,0 +1,29 @@
+# Example overlay: issue gateway TLS via cert-manager (self-signed ClusterIssuer) so
+# Secret nemo-gateway-tls exists and the Gateway HTTPS (8443) listener programs.
+# Usage:
+#   helm upgrade nemo ./deployments/helm/nemo -n nemo -f values.yaml -f values-certmanager-selfsigned.example.yaml
+#
+# For IP-based browser access without /etc/hosts, also set:
+#   httproute.matchAllHosts: true
+# and consider adding the VIP to the Certificate (cert-manager ipAddresses) or use /etc/hosts
+# for agentstudio.local -> VIP to avoid certificate name warnings.
+
+certManager:
+  enabled: true
+  issuer:
+    create: true
+    kind: ClusterIssuer
+    name: nemo-gateway-selfsigned
+    type: selfSigned
+  issuerRef:
+    name: nemo-gateway-selfsigned
+    kind: ClusterIssuer
+  certificate:
+    enabled: true
+    # Uncomment and set your Gateway address (kubectl get gateway -n nemo -o jsonpath='{.status.addresses[0].value}')
+    # so browsers trust https://<IP>:8443 for self-signed certs:
+    # ipAddresses:
+    #   - 10.192.238.205
+
+httproute:
+  matchAllHosts: true

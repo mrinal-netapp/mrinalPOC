@@ -1,0 +1,23 @@
+.administration-overview-card {
+  &__body {
+    display: grid;
+    grid-template-columns: 25% 50% 25%;
+    align-items: center;
+    column-gap: 40px;
+    padding: 16px 24px;
+    width: 100%;
+    box-sizing: border-box;
+  }
+
+  &__name-column {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-width: 0;
+  }
+
+  &__description {
+    min-width: 0;
+    padding-left: 8px;
+  }
+}

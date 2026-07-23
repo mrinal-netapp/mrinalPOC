@@ -1,0 +1,20 @@
+{{- if and .Values.enabled .Values.ui.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: temporal-ui
+  labels:
+    {{- include "temporal.labels" . | nindent 4 }}
+    component: temporal-ui
+spec:
+  type: {{ .Values.ui.service.type }}
+  ports:
+    - port: {{ .Values.ui.service.port }}
+      targetPort: http
+      protocol: TCP
+      appProtocol: http
+      name: http-web
+  selector:
+    {{- include "temporal.uiSelectorLabels" . | nindent 4 }}
+{{- end }}
+

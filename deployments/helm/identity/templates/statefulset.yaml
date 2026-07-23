@@ -1,0 +1,290 @@
+{{- /*
+Keycloak server StatefulSet.
+
+Phase 1 acceptance:
+  - replicas controlled by .Values.replicaCount (default 2 in
+    values.yaml; values-local.yaml may pin to 1 for fast dev installs).
+  - Infinispan distributed cache with the kubernetes JGroups stack
+    (KC_CACHE=ispn, KC_CACHE_STACK=kubernetes) so the pods cluster
+    via the headless Service for peer discovery.
+  - PostgreSQL backing store -- always external. Connection details
+    resolved via keycloak.postgres.* helpers in _helpers.tpl. By default
+    this targets the shared PostgreSQL StatefulSet in the `database`
+    namespace; the `keycloak` database is pre-created by the
+    shared-postgresql initdb script.
+  - Bootstrap admin from a Secret (dev: chart-rendered;
+    AKS: from KV via SPC).
+  - Workload-Identity SA and CSI volume so pods can read realm-bootstrap
+    secrets from Key Vault on AKS. Mount is conditional on
+    .Values.secretProviderClass.enabled.
+*/}}
+
+{{- /*
+Postgres credentials must come from somewhere -- either an
+operator-supplied existingSecret (AKS path, materialised by SPC) or an
+inline password that this chart converts into a Secret. Without one of
+those, Keycloak would boot with empty KC_DB_USERNAME / KC_DB_PASSWORD and
+fail at the JDBC handshake. Fail at render time with an actionable
+message instead.
+*/}}
+{{- if not (or .Values.postgres.auth.existingSecret .Values.postgres.auth.password) }}
+{{- fail "postgres.auth requires either .existingSecret (AKS path: materialised by SecretProviderClass from Azure Key Vault) OR .password (set by values-local.yaml for dev installs). Both are empty in the rendered values. Install with `-f deployments/helm/identity/values-local.yaml` locally, or pass `--set postgres.auth.existingSecret=keycloak-postgres-auth-from-kv` on AKS." }}
+{{- end }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "keycloak.fullname" . }}
+  labels:
+    {{- include "keycloak.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  serviceName: {{ include "keycloak.fullname" . }}-headless
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels:
+      {{- include "keycloak.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "keycloak.selectorLabels" . | nindent 8 }}
+        {{- if .Values.serviceAccount.workloadIdentityEnabled }}
+        ## Required by the Azure Workload Identity webhook on the POD
+        ## (not the SA) -- without this, the webhook never injects an
+        ## AAD token into the pod, so the CSI driver can't fetch Key
+        ## Vault secrets even if the SA has the right client-id
+        ## annotation.
+        azure.workload.identity/use: "true"
+        {{- end }}
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "keycloak.serviceAccountName" . }}
+      {{- include "keycloak.imagePullSecrets" . | nindent 6 }}
+      {{- with .Values.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: keycloak
+          image: {{ include "keycloak.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- with .Values.containerSecurityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- if .Values.keycloak.productionMode }}
+          ## `start` (no --optimized) so Keycloak runs an implicit build
+          ## phase on every container start, which compiles the
+          ## build-time settings below (KC_DB, KC_HEALTH_ENABLED,
+          ## KC_METRICS_ENABLED) into the running server. Using
+          ## `--optimized` here would require a custom-built Keycloak
+          ## image that already has those settings baked in; we ship
+          ## the stock upstream image, so optimized mode would silently
+          ## start a server without the Postgres driver / health /
+          ## metrics endpoints that this chart's probes depend on. The
+          ## trade-off is ~5-10s of extra startup time per pod, which
+          ## is fine because rolling updates are bounded by the PDB
+          ## anyway.
+          args:
+            - "start"
+          {{- else }}
+          args:
+            - "start-dev"
+          {{- end }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.keycloak.httpPort }}
+              protocol: TCP
+            - name: management
+              containerPort: {{ .Values.keycloak.managementPort }}
+              protocol: TCP
+            - name: jgroups
+              containerPort: {{ .Values.serviceHeadless.port }}
+              protocol: TCP
+          env:
+            ## ---------------- Bootstrap admin ----------------
+            ## Only wire KC_BOOTSTRAP_ADMIN_* when a Secret will actually
+            ## exist for this release. Two paths produce a Secret:
+            ##   - operator-supplied: keycloak.bootstrapAdmin.existingSecret
+            ##   - chart-rendered:    keycloak.bootstrapAdmin.password set
+            ##                        (templates/bootstrap-admin-secret.yaml
+            ##                         renders only in this case)
+            ## When NEITHER is set the env vars are omitted, and Keycloak
+            ## falls back to its built-in admin/admin first-login
+            ## defaults. Operators opt in via `-f values-local.yaml`
+            ## (dev) or a KV-backed Secret (prod).
+            {{- if or .Values.keycloak.bootstrapAdmin.existingSecret .Values.keycloak.bootstrapAdmin.password }}
+            - name: KC_BOOTSTRAP_ADMIN_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "keycloak.bootstrapAdminSecretName" . }}
+                  key: {{ .Values.keycloak.bootstrapAdmin.secretKeys.usernameKey }}
+            - name: KC_BOOTSTRAP_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "keycloak.bootstrapAdminSecretName" . }}
+                  key: {{ .Values.keycloak.bootstrapAdmin.secretKeys.passwordKey }}
+            {{- end }}
+
+            ## ---------------- Database -----------------------
+            ## Always external -- the shared PostgreSQL StatefulSet in
+            ## the `database` namespace. See keycloak.postgres.* helpers
+            ## in templates/_helpers.tpl. The `keycloak` database is
+            ## pre-created by the shared-postgresql initdb script
+            ## (deployments/helm/database/values.yaml).
+            - name: KC_DB
+              value: postgres
+            - name: KC_DB_URL
+              value: jdbc:postgresql://{{ include "keycloak.postgres.host" . }}:{{ include "keycloak.postgres.port" . }}/{{ include "keycloak.postgres.database" . }}
+            ## Username is a plain literal (the Postgres role name), NOT read
+            ## from the Secret. This lets the password Secret be the DB tier's
+            ## own shared-postgresql-secret (which only carries a password key,
+            ## no username), so Keycloak consumes the DB password from a single
+            ## source of truth with no transformed duplicate. Only the password
+            ## comes from the Secret (keyed by postgres.auth.secretKeys.passwordKey).
+            - name: KC_DB_USERNAME
+              value: {{ .Values.postgres.auth.username | quote }}
+            - name: KC_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "keycloak.postgres.secretName" . }}
+                  key: {{ .Values.postgres.auth.secretKeys.passwordKey }}
+
+            ## ---------------- HTTP / proxy --------------------
+            - name: KC_HTTP_ENABLED
+              value: "true"
+            - name: KC_HTTP_PORT
+              value: {{ .Values.keycloak.httpPort | quote }}
+            - name: KC_HTTP_MANAGEMENT_PORT
+              value: {{ .Values.keycloak.managementPort | quote }}
+            - name: KC_PROXY_HEADERS
+              value: {{ .Values.keycloak.proxyHeaders | quote }}
+            - name: KC_HOSTNAME_STRICT
+              value: {{ .Values.keycloak.hostnameStrict | quote }}
+            ## KC_HOSTNAME is mandatory when Keycloak runs in production
+            ## mode (`start`, productionMode=true). Without it the
+            ## server refuses to boot and the pod crashloops with the
+            ## opaque error: "Hostname not configured. Please configure
+            ## KC_HOSTNAME or HTTPS-related options". Fail fast at
+            ## render time when the operator has set productionMode=true
+            ## but left hostname empty.
+            {{- if .Values.keycloak.productionMode }}
+            {{- $kcHost := include "keycloak.publicKcHostname" . }}
+            {{- if not $kcHost }}{{- fail ".Values.keycloak.hostname is required when keycloak.productionMode=true (e.g. https://auth.agent-studio.example.com). Set productionMode=false for local dev installs that don't have a stable hostname, or pass --set global.endpoint=<host> so the literal agentstudio.local in values-local.yaml is substituted to your real endpoint." }}{{- end }}
+            - name: KC_HOSTNAME
+              value: {{ $kcHost | quote }}
+            {{- else if .Values.keycloak.hostname }}
+            - name: KC_HOSTNAME
+              value: {{ include "keycloak.publicKcHostname" . | quote }}
+            {{- end }}
+            {{- if .Values.keycloak.hostnamePort }}
+            - name: KC_HOSTNAME_PORT
+              value: {{ .Values.keycloak.hostnamePort | quote }}
+            {{- end }}
+            ## Multi-network topology: Keycloak is reached by browsers
+            ## via the public HTTPS hostname (KC_HOSTNAME above) AND by
+            ## in-cluster pods via the bare Service DNS name
+            ## `keycloak.<ns>.svc.cluster.local:8080`. With BACKCHANNEL_DYNAMIC
+            ## off (the default), the OIDC discovery doc returns the
+            ## public HTTPS URLs to ALL callers — forcing in-cluster
+            ## services (lakekeeper, nemo apps) to hairpin through the
+            ## gateway, requires DNS hacks (hostAliases) for the public
+            ## name, and breaks TLS trust because the JDK truststore in
+            ## those pods doesn't trust the wildcard CA.
+            ##
+            ## With BACKCHANNEL_DYNAMIC=true, KC builds discovery URLs
+            ## from the request's Host header — so in-cluster callers
+            ## that hit the Service DNS get back URLs on that same
+            ## in-cluster DNS, and browsers still get back the public
+            ## URLs. Token-issuer claim (`iss`) is still anchored to
+            ## the public hostname for sign-verification consistency.
+            ##
+            ## This is the recommended setting for ~every k8s deployment
+            ## of Keycloak; toggle is exposed in case a single-network
+            ## topology ever ships.
+            {{- if .Values.keycloak.backchannelDynamic }}
+            - name: KC_HOSTNAME_BACKCHANNEL_DYNAMIC
+              value: "true"
+            {{- end }}
+            - name: KC_HEALTH_ENABLED
+              value: "true"
+            - name: KC_METRICS_ENABLED
+              value: "true"
+
+            ## ---------------- Cluster cache -------------------
+            ## Infinispan with the Kubernetes JGroups stack uses the
+            ## headless Service for peer discovery. The DNS_PING
+            ## discovery protocol is the default in the kubernetes
+            ## stack and will resolve A records of the headless Service.
+            - name: KC_CACHE
+              value: {{ .Values.keycloak.cache | quote }}
+            {{- if ne .Values.keycloak.cache "local" }}
+            - name: KC_CACHE_STACK
+              value: {{ .Values.keycloak.cacheStack | quote }}
+            {{- end }}
+            {{- $javaOpts := include "keycloak.javaOptsAppend" . | trim -}}
+            {{- if $javaOpts }}
+            - name: JAVA_OPTS_APPEND
+              value: {{ $javaOpts | quote }}
+            {{- end }}
+
+          {{- if .Values.secretProviderClass.enabled }}
+          volumeMounts:
+            - name: kv-secrets
+              mountPath: /mnt/secrets-store
+              readOnly: true
+          {{- end }}
+          startupProbe:
+            httpGet:
+              path: /health/started
+              port: management
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 60
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: management
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 5
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: management
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          {{- with .Values.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      {{- if .Values.secretProviderClass.enabled }}
+      volumes:
+        - name: kv-secrets
+          csi:
+            driver: secrets-store.csi.k8s.io
+            readOnly: true
+            volumeAttributes:
+              secretProviderClass: {{ include "keycloak.fullname" . }}-secrets
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

@@ -1,0 +1,107 @@
+#cloud-config
+# Azure cloud-init for the shared Allure VM (public IP, IP-only, self-signed TLS).
+#
+# Design: the VM has a PUBLIC IP and no DNS name. caddy serves a catch-all
+# HTTPS listener on :443 with a self-signed cert whose SAN is the public IP, so
+# clients address it as https://<public-ip> with ALLURE_VERIFY_TLS=0 (curl -k).
+# Behind caddy: allure-docker-service (the upload API + per-project reports) and
+# allure-docker-service-ui (a single-page dashboard listing all projects).
+#
+# TEMPLATE: ${ALLURE_ADMIN_PASSWORD} and ${ALLURE_PUBLIC_IP} are substituted by
+# azure-provision.sh (via envsubst) at VM-create time from caller-supplied
+# inputs, so no value is committed. The rendered file is passed to
+# `az vm create --custom-data`.
+#
+# On first boot it: mounts the data disk at /opt/allure, generates the
+# self-signed cert, installs Docker, writes the compose + Caddyfile, and starts
+# the stack. See README.md.
+write_files:
+  - path: /opt/allure-stack/docker-compose.yml
+    content: |
+      services:
+        allure:
+          image: frankescobar/allure-docker-service:2.27.0
+          restart: always
+          environment:
+            CHECK_RESULTS_EVERY_SECONDS: "NONE"
+            KEEP_HISTORY: "1"
+            KEEP_HISTORY_LATEST: "25"
+            OPTIMIZE_STORAGE: "1"
+            SECURITY_ENABLED: "1"
+            MAKE_VIEWER_ENDPOINTS_PUBLIC: "1"
+            SECURITY_USER: "admin"
+            SECURITY_PASS: "${ALLURE_ADMIN_PASSWORD}"
+          volumes:
+            - /opt/allure/projects:/app/projects
+          expose:
+            - "5050"
+        allure-ui:
+          image: frankescobar/allure-docker-service-ui:7.0.3
+          restart: always
+          environment:
+            # UI appends /allure-docker-service itself; do NOT also set
+            # ALLURE_DOCKER_PUBLIC_API_URL_PREFIX or the path doubles.
+            ALLURE_DOCKER_PUBLIC_API_URL: "https://${ALLURE_PUBLIC_IP}"
+          expose:
+            - "5252"
+          depends_on:
+            - allure
+        caddy:
+          image: caddy:2
+          restart: always
+          ports:
+            - "443:443"
+          volumes:
+            - /opt/allure-stack/Caddyfile:/etc/caddy/Caddyfile:ro
+            - /opt/allure/certs:/certs:ro
+            - /opt/allure/caddy_data:/data
+            - /opt/allure/caddy_config:/config
+          depends_on:
+            - allure
+            - allure-ui
+  - path: /opt/allure-stack/Caddyfile
+    content: |
+      # Catch-all :443 (matches any Host, including the raw IP). Explicit
+      # self-signed cert (SAN = public IP) rather than `tls internal`, which
+      # does not mint a leaf cert for a bare-IP SNI and aborts the handshake.
+      {
+        servers {
+          protocols h1 h2
+        }
+      }
+
+      :443 {
+        tls /certs/allure.crt /certs/allure.key
+
+        # API + per-project reports (what publish_allure.py talks to).
+        handle /allure-docker-service* {
+          reverse_proxy allure:5050 {
+            header_up X-Forwarded-Proto https
+            header_up X-Forwarded-Host {host}
+          }
+        }
+
+        # Everything else -> the dashboard SPA (served at root).
+        handle {
+          reverse_proxy allure-ui:5252
+        }
+      }
+disk_setup:
+  /dev/disk/azure/scsi1/lun0:
+    table_type: gpt
+    layout: true
+    overwrite: false
+fs_setup:
+  - device: /dev/disk/azure/scsi1/lun0
+    partition: 1
+    filesystem: ext4
+mounts:
+  - [ "/dev/disk/azure/scsi1/lun0-part1", "/opt/allure", "ext4", "defaults,nofail", "0", "2" ]
+runcmd:
+  - mkdir -p /opt/allure/projects /opt/allure/caddy_data /opt/allure/caddy_config /opt/allure/certs
+  - openssl req -x509 -newkey rsa:4096 -sha256 -days 825 -nodes -keyout /opt/allure/certs/allure.key -out /opt/allure/certs/allure.crt -subj "/CN=${ALLURE_PUBLIC_IP}" -addext "subjectAltName=IP:${ALLURE_PUBLIC_IP},IP:127.0.0.1,DNS:localhost"
+  - chmod 644 /opt/allure/certs/allure.crt
+  - chmod 600 /opt/allure/certs/allure.key
+  - curl -fsSL https://get.docker.com | sh
+  - systemctl enable --now docker
+  - cd /opt/allure-stack && docker compose up -d

@@ -1,0 +1,160 @@
+# Default values for config-service sub-chart
+enabled: true
+replicaCount: 1
+
+image:
+  repository: nemo/config-service
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
+
+service:
+  type: ClusterIP
+  port: 3000
+  metricsPort: 9090  # Dedicated Prometheus port served by the Node.js observability client lib (must match AGENT_STUDIO_OBSERVABILITY_PROMETHEUS_METRICS_PORT)
+
+resources:
+  limits:
+    cpu: 2000m
+    memory: 4Gi
+  requests:
+    cpu: 1000m
+    memory: 2Gi
+
+env:
+  - name: PORT
+    value: "3000"
+  # Max JSON body for Express (large manual-upload manifest payloads). Gateway often allows more.
+  - name: EXPRESS_JSON_BODY_LIMIT
+    value: "64mb"
+  - name: DEBUG
+    value: "false"
+  - name: LAKEKEEPER_URL
+    # Service URL will be constructed dynamically in deployment template
+    # Default in deployment template: http://lakekeeper:8181 (same namespace as Lakekeeper; matches LAKEKEEPER__BASE_URI)
+    value: ""  # Placeholder - will be overridden by template
+  - name: WORKFLOW_ENGINE_URL
+    value: "http://workflow-engine:8080"
+  - name: ANALYTICS_ENGINE_URL
+    value: "http://analytics-engine:5000"
+  - name: WEB_SEARCH_MCP_ENABLED
+    value: "false"
+  - name: SEARXNG_WEB_SEARCH_MCP_ENABLED
+    value: "true"
+  - name: SEARXNG_BASE_URL
+    value: "http://searxng:8080"
+
+# Cloud-specific env entries (values-aks/gke append Keycloak admin creds here).
+extraEnv: []
+
+# Database configuration (points to shared database in database namespace)
+database:
+  host: "shared-postgresql.database.svc.cluster.local"
+  port: "5432"
+  name: "nemo"
+  user: "postgres"
+  password: "agentstudio-postgres-password"  # Must match database namespace secret password
+  existingSecret: ""      # Name of an existing Secret containing the DB password
+  existingSecretKey: ""   # Key within that Secret (e.g. "postgres-password")
+  poolSize: 20
+  poolIdleTimeout: 30000
+  connectionTimeout: 5000
+  statementTimeout: 30000
+
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 3000
+  initialDelaySeconds: 30
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 3
+
+readinessProbe:
+  httpGet:
+    path: /ready
+    port: 3000
+  initialDelaySeconds: 5
+  periodSeconds: 5
+  timeoutSeconds: 3
+  failureThreshold: 3
+
+# Init container configuration (waits for PostgreSQL and optionally keycloak-setup)
+initContainer:
+  enabled: true
+  waitForKeycloakSetup: true  # Wait for keycloak-setup job to complete before starting
+  image:
+    repository: ""  # If empty, uses global.imageRepository/init-tools
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  resources:
+    limits:
+      cpu: 100m
+      memory: 64Mi
+    requests:
+      cpu: 50m
+      memory: 32Mi
+
+# Observability — RED metrics served by the observability client lib on metricsPort
+metrics:
+  path: /metrics
+  port: metrics
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+tracing:
+  otlpEndpoint: ""  # Legacy; AGENT_STUDIO_OBSERVABILITY_OTLP_TRACES_ENDPOINT is used instead
+
+# Custom CA certificates for TLS to internal endpoints (e.g. OpenAI-compatible providers)
+certs:
+  enabled: true
+  customCACertsSecret: netapp-ca-certs-secret
+  certsMountPath: /etc/ssl/certs/custom
+  certFileName: netapp-ca-cert.pem
+
+# Default workspace template settings
+workspace:
+  jupyterlabImage: ""  # Auto-constructed from global.imageRepository as {repo}/workspace-jupyterlab:{tag}; override to use a different image entirely
+
+# MCP Runtime settings for managed MCP server pods
+mcpRuntime:
+  clusterRBAC:
+    enabled: true
+  imageRepository: ""  # Override registry prefix for MCP runner images (e.g. myregistry.io/nemo); defaults to global.imageRepository
+  imageTag: ""          # Override image tag for MCP runner images; defaults to global.imageTag, then catalog defaultTag
+  imagePullSecrets: ""  # Comma-separated pull secret names for MCP runner pods (e.g. "ghcr-secret,registry-creds")
+
+# DuckDB MCP catalog defaults (used by defaultEnvFn at provisioning time)
+duckdbMcp:
+  defaultWarehouse: "nemo"
+  lakekeeperCatalogUrl: ""
+  keycloakTokenUrl: ""
+  s3Endpoint: "http://s3gateway:7070"
+
+# Prometheus MCP catalog defaults (used by defaultEnvFn at provisioning time)
+prometheusMcp:
+  defaultUrl: ""  # Defaults to http://prometheus-prometheus.monitoring.svc.cluster.local:9090
+
+# These will be passed from parent chart
+namespace: ""
+serviceAccountName: ""
+podSecurityContext: {}
+securityContext: {}
+nodeSelector: {}
+affinity: {}
+tolerations: {}
+# Note: global values (imageRegistry, imagePullSecrets) are automatically inherited from parent chart's root-level global
+
+
+serviceAccount:
+  create: false
+  name: ""
+  azureClientId: ""
+
+workloadIdentity:
+  enabled: false
+
+# Global defaults for nil-safe sub-chart rendering; overridden by parent chart global.
+global:
+  observability:
+    otlpEndpoint: ""

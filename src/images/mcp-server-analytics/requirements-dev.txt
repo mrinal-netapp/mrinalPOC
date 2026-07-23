@@ -1,0 +1,5 @@
+# Dev/test dependencies for the analytics MCP server unit tests.
+# Runtime deps (fastmcp, httpx, uvicorn, starlette, observability-client-runtime)
+# are installed via the Dockerfile / local venv; see test_server.py.
+pytest>=8.0.0
+pytest-asyncio>=0.23.0

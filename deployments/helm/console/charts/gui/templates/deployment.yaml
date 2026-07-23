@@ -1,0 +1,97 @@
+{{- if .Values.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "gui.fullname" . }}
+  labels:
+    {{- include "gui.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "gui.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "gui.selectorLabels" . | nindent 8 }}
+        {{- if .Values.workloadIdentity.enabled }}
+        azure.workload.identity/use: "true"
+        {{- end }}
+    spec:
+      {{- $root := . }}
+      serviceAccountName: {{ include "gui.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: gui
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.global.imageRepository }}/{{ .Values.image.repository }}:{{ .Values.global.imageTag | default .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy | default .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 9000
+              protocol: TCP
+          env:
+            - name: API_SERVICE_NAME
+              value: {{ .Values.apiService.name | quote }}
+            - name: API_SERVICE_PORT
+              value: {{ .Values.apiService.port | quote }}
+            - name: WORKFLOW_SERVICE_NAME
+              value: {{ .Values.workflowService.name | default "workflow-engine" | quote }}
+            - name: WORKFLOW_SERVICE_PORT
+              value: {{ .Values.workflowService.port | default "8080" | quote }}
+            - name: NAMESPACE
+              value: {{ .Release.Namespace | quote }}
+            # Note: VITE_* environment variables must be set at build time, not runtime
+            # VITE_BASE_PATH and VITE_CONFIG_SERVICE_BASE_PATH are set during Docker build
+            # Observability tool URLs (runtime-injected via entrypoint inline script)
+            - name: GRAFANA_URL
+              value: {{ .Values.observability.grafanaUrl | quote }}
+            - name: JAEGER_URL
+              value: {{ .Values.observability.jaegerUrl | quote }}
+            # Runtime-injected Keycloak issuer (overrides build-time VITE_KEYCLOAK_ISSUER baked into the JS bundle).
+            # Same image can be deployed against different ENDPOINTs without rebuild; AuthContext.tsx prefers __RUNTIME_CONFIG__.keycloakIssuer.
+            - name: KEYCLOAK_ISSUER
+              value: {{ include "nemo.keycloakIssuer" $root | quote }}
+            # Workspace links: align with deployment endpoint + gateway port (same image, any ENDPOINT).
+            - name: WORKSPACE_SUBDOMAIN_BASE
+              value: {{ include "nemo.endpoint" $root | quote }}
+            - name: WORKSPACE_SUBDOMAIN_PROTOCOL
+              value: {{ .Values.workspaceSubdomainProtocol | default "https" | quote }}
+            - name: WORKSPACE_LABEL_PREFIX
+              value: {{ include "nemo.workspaceLabelPrefix" $root | quote }}
+            - name: WORKSPACE_PUBLIC_PORT
+              value: {{ include "gui.workspacePublicPort" . | quote }}
+          livenessProbe:
+            {{- toYaml .Values.livenessProbe | nindent 12 }}
+          readinessProbe:
+            {{- toYaml .Values.readinessProbe | nindent 12 }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- range . }}
+        {{- if kindIs "string" . }}
+        - name: {{ . | quote }}
+        {{- else if kindIs "map" . }}
+        - {{- toYaml . | nindent 10 }}
+        {{- else }}
+        - name: {{ . | quote }}
+        {{- end }}
+        {{- end }}
+      {{- end }}
+{{- end }}
+

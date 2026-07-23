@@ -1,0 +1,176 @@
+# Auto-requests review tiers on every PR:
+#   L1 + L2 — always (baseline).
+#   L3      — only on Conventional-Commit `feat:` or breaking changes
+#             (`!:` in the type or `BREAKING CHANGE:` footer).
+# Bot PRs (`bot` / `dependencies` labels) skip L2/L3 only — L1 is still
+# requested, mirroring the gate which always requires L1 approval.
+#
+# Request-only — enforcement lives in review-level-gate.yml, which is the
+# source of truth if this workflow misfires. The `review-level-gate`
+# commit status posted by that workflow (via repos.createCommitStatus) is
+# the binding gate; configure branch protection to require the status
+# named `review-level-gate`.
+#
+# Supports re-run via workflow_dispatch (input: pr_number) so
+# pr-comment-commands.yml can nudge this workflow when `requires-l3` is
+# added by comment after the PR was opened.
+
+name: Auto-assign reviewers
+
+on:
+  pull_request:
+    # labeled/unlabeled covers manual UI flips of requires-l3, skip-l3,
+    # bot, and dependencies — all of which change the tier decision.
+    # (Labels applied via GITHUB_TOKEN by pr-comment-commands.yml don't
+    # fire pull_request events; that path nudges this workflow via
+    # workflow_dispatch instead.)
+    types: [opened, ready_for_review, edited, labeled, unlabeled]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "PR number to (re-)assign reviewers for"
+        required: true
+        type: string
+
+permissions:
+  pull-requests: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.event.inputs.pr_number }}
+  cancel-in-progress: true
+
+jobs:
+  assign:
+    name: Request reviewers
+    runs-on: ubuntu-latest
+    steps:
+      # Mint a token from the agentstudio-review-gate App (same App as
+      # review-level-gate.yml). The default GITHUB_TOKEN can't always
+      # resolve org-level team objects in requestReviewers (422 "Could
+      # not resolve to a node…"); the App has Members:Read.
+      #
+      # Required repo secrets: REVIEW_GATE_APP_ID, REVIEW_GATE_APP_KEY.
+      # The App needs Pull requests:WRITE here (not Read as elsewhere) —
+      # if requestReviewers 403s, check Org → Apps → permissions.
+      - name: Mint org-read token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.REVIEW_GATE_APP_ID }}
+          private-key: ${{ secrets.REVIEW_GATE_APP_KEY }}
+          owner: ${{ github.repository_owner }}
+
+      - name: Request review tiers
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ steps.app-token.outputs.token }}
+          script: |
+            // Resolve the PR (works for pull_request and workflow_dispatch).
+            let pr = context.payload.pull_request;
+            if (!pr) {
+              const prNumber =
+                context.eventName === "workflow_dispatch"
+                  ? parseInt(context.payload.inputs.pr_number, 10)
+                  : context.issue.number;
+              if (!Number.isFinite(prNumber)) {
+                core.setFailed(`Could not determine PR number from event "${context.eventName}".`);
+                return;
+              }
+              pr = (await github.rest.pulls.get({
+                ...context.repo,
+                pull_number: prNumber,
+              })).data;
+            }
+
+            // Draft check lives here so it applies across all event types.
+            if (pr.draft) {
+              core.info(`PR #${pr.number} is a draft — skipping reviewer assignment.`);
+              return;
+            }
+
+            const title  = pr.title || "";
+            const body   = pr.body  || "";
+            const labels = (pr.labels || []).map(l => l.name);
+
+            // ─── 1. Decide which tiers to request ────────────────
+            // Mirror review-level-gate.yml's tier decision exactly so
+            // assignment never diverges from enforcement. L1 is always
+            // requested (gate always requires L1, including for bot PRs).
+            // L2 is the baseline for non-bots, and L3 is additive on top
+            // of L2.
+            //
+            // Regex MUST stay aligned with review-level-gate.yml — if
+            // this is stricter, we under-request L3 reviewers on titles
+            // the gate still escalates (e.g. `feat:Something` with no
+            // space), and the PR blocks on a missing L3 approval that
+            // was never requested.
+            const isBot = labels.includes("bot") || labels.includes("dependencies");
+
+            const cc = title.match(
+              /^(?<type>\w+)(?:\([^)]+\))?(?<bang>!)?:\s*.+$/
+            );
+            const type    = cc?.groups?.type?.toLowerCase() ?? "";
+            const banged  = !!cc?.groups?.bang;
+            const breakingFooter = /^BREAKING[ -]CHANGE:/m.test(body);
+            const breaking = banged || breakingFooter;
+
+            let needsL2 = !isBot;
+            let needsL3 = !isBot && (breaking || type === "feat");
+
+            if (labels.includes("skip-l3"))     needsL3 = false;
+            if (labels.includes("requires-l3")) needsL3 = true;
+
+            // L3 is additive on top of L2 — requiring L3 implies L2.
+            // Matters when `requires-l3` is applied to a bot PR, which
+            // would otherwise get L1+L3 requested but skip L2.
+            if (needsL3) needsL2 = true;
+
+            const teams = ["eng-l1"];
+            if (needsL2) teams.push("eng-l2");
+            if (needsL3) teams.push("eng-l3");
+
+            // ─── 2. Request all relevant teams in one call ───────
+            // requestReviewers is atomic: already-requested teams are
+            // no-ops, and a 422 means at least one team is bad. One
+            // call keeps the timeline tidy and avoids partial state.
+            const teamRefs = teams.map(s => `@${context.repo.owner}/${s}`).join(", ");
+            try {
+              await github.rest.pulls.requestReviewers({
+                ...context.repo,
+                pull_number: pr.number,
+                team_reviewers: teams,
+              });
+              core.info(`Requested ${teamRefs} for PR #${pr.number}.`);
+            } catch (err) {
+              if (err.status !== 422) throw err;
+
+              // 422 covers multiple cases. Distinguish them so real
+              // misconfig fails loudly and only true no-ops stay silent.
+              // The API doesn't say WHICH team failed, so we surface
+              // the full list with the original message.
+              const msg = err.message || "";
+
+              if (/already requested/i.test(msg) ||
+                  /pull request author/i.test(msg)) {
+                core.info(`Reviewer request was a no-op (already requested or author on team) for ${teamRefs}: ${msg}`);
+                return;
+              }
+              if (/not a collaborator/i.test(msg)) {
+                core.setFailed(
+                  `One or more of ${teamRefs} is not a collaborator on this repository. ` +
+                  `Fix: add the team(s) under Repo Settings → Collaborators and teams, ` +
+                  `or Org Settings → Teams → <team> → Repositories → Add. Original: ${msg}`
+                );
+                return;
+              }
+              if (/Could not resolve to a node/i.test(msg)) {
+                core.setFailed(
+                  `One or more of ${teamRefs} could not be resolved by the calling token. ` +
+                  `Likely the App lacks Pull requests:Write or a team's privacy is set to ` +
+                  `Secret. Check Org Settings → Apps → agentstudio-review-gate → ` +
+                  `Permissions and Org Settings → Teams → <team> → Privacy. Original: ${msg}`
+                );
+                return;
+              }
+              core.setFailed(`Unexpected 422 requesting ${teamRefs}: ${msg}`);
+            }

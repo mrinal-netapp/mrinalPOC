@@ -1,0 +1,28 @@
+.sw-demo {
+  padding: 32px;
+  font-family: var(--font-family);
+  color: var(--text-primary);
+  background-color: var(--background-main);
+  min-height: 100vh;
+}
+
+.sw-demo__title {
+  font-size: 18px;
+  font-weight: 600;
+  margin: 0 0 24px;
+  color: var(--text-primary);
+
+  &:not(:first-child) {
+    margin-top: 40px;
+  }
+}
+
+.sw-demo__section {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  padding: 24px;
+  background-color: var(--background-content);
+  border: 1px solid var(--border-main);
+  border-radius: 4px;
+}

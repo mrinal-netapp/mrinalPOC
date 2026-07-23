@@ -1,0 +1,85 @@
+# Default values for analytics-mcp-server sub-chart
+enabled: true
+replicaCount: 1
+
+image:
+  repository: nemo/mcp-server-analytics
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 8000
+
+resources:
+  limits:
+    cpu: 1000m
+    memory: 1Gi
+  requests:
+    cpu: 200m
+    memory: 256Mi
+
+env:
+  - name: ANALYTICS_ENGINE_URL
+    value: "http://analytics-engine:8080"
+  - name: MAX_ROWS
+    value: "500"
+  - name: MAX_RESPONSE_BYTES
+    value: "5242880"
+  - name: REQUEST_TIMEOUT_S
+    value: "65"
+  # Observability: write logs to stdout so kubectl logs and the OTel DaemonSet
+  # can capture them. /dev/stdout is a character device and safe with
+  # readOnlyRootFilesystem=true.
+  - name: AGENT_STUDIO_OBSERVABILITY_LOG_FILE_PATH
+    value: "/dev/stdout"
+  - name: AGENT_STUDIO_OBSERVABILITY_TRACE_FILE_PATH
+    value: "/tmp/Trace_Logs/mcp-server-analytics.jsonl"
+
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 8000
+  initialDelaySeconds: 10
+  periodSeconds: 10
+
+readinessProbe:
+  httpGet:
+    path: /health
+    port: 8000
+  initialDelaySeconds: 5
+  periodSeconds: 5
+
+# Bootstrap Job registers this MCP server with config-service after install/upgrade
+bootstrap:
+  enabled: true
+  configServiceUrl: "http://config-service:3000"
+  keycloakInternalIssuer: ""
+
+# NetworkPolicy restricts ingress to Bifrost proxy and egress to analytics-engine + DNS
+networkPolicy:
+  enabled: true
+
+# These will be passed from parent chart
+namespace: ""
+serviceAccountName: ""
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+securityContext:
+  capabilities:
+    drop:
+      - ALL
+  readOnlyRootFilesystem: true
+  allowPrivilegeEscalation: false
+nodeSelector: {}
+affinity: {}
+tolerations: []
+
+serviceAccount:
+  create: false
+  name: ""
+  azureClientId: ""
+
+workloadIdentity:
+  enabled: false

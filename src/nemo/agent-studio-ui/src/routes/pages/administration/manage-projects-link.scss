@@ -1,0 +1,43 @@
+.manage-projects-link {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+  padding-right: 8px;
+
+  &__section-label {
+    color: var(--text-secondary);
+    font-weight: 600;
+  }
+
+  &__trigger {
+    display: inline-flex;
+  }
+
+  &__action.btn {
+    min-width: unset;
+    height: auto;
+    padding: 0;
+    color: var(--blue-50, #0860ed);
+    font-weight: 400;
+
+    .btn-label {
+      text-decoration: none;
+    }
+
+    .btn-icon {
+      order: 1;
+    }
+
+    &:hover:not(:disabled) {
+      color: var(--blue-70, #0067c5);
+      background-color: transparent;
+    }
+
+    &:disabled {
+      color: var(--button-secondary-disabled);
+      background-color: transparent;
+    }
+  }
+}

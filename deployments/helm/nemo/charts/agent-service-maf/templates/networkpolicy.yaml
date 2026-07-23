@@ -1,0 +1,83 @@
+{{- if .Values.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "agent-service-maf.fullname" . }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "agent-service-maf.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "agent-service-maf.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              component: apigateway-service
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - port: 8000
+          protocol: TCP
+  egress:
+    # config-service (config + agent + team fetch)
+    - to:
+        - podSelector:
+            matchLabels:
+              component: config-service
+      ports:
+        - port: 3000
+    # Bifrost gateway — MCP traffic + LLM calls go through here
+    - to:
+        - podSelector:
+            matchLabels:
+              component: bifrost
+      ports:
+        - port: 8080
+    # kb-retrieval-service (KB tool calls; identity propagation via X-User-Token)
+    - to:
+        - podSelector:
+            matchLabels:
+              component: kb-retrieval-service
+      ports:
+        - port: 5000
+    # workflow-engine (HITL approval bridge — Temporal signal channel via REST)
+    - to:
+        - podSelector:
+            matchLabels:
+              component: workflow-engine
+      ports:
+        - port: 8080
+    # Phoenix (OTLP HTTP + UI) in monitoring — OBSERVABILITY__METRICS_OTLP_ENDPOINT
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: phoenix
+      ports:
+        - port: 6006
+          protocol: TCP
+    # Redis: 6379 data plane; 26379 Sentinel (required when REDIS_SENTINEL_URL is set)
+    - ports:
+        - port: 6379
+          protocol: TCP
+        - port: 26379
+          protocol: TCP
+    # Keycloak (OIDC token endpoint, service account flow)
+    - ports:
+        - port: 8080
+          protocol: TCP
+    # DNS
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+{{- end }}

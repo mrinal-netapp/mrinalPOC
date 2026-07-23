@@ -1,0 +1,37 @@
+{{/*
+Create the default-bucket PVC in the workers namespace.
+
+PVCs are namespace-scoped; the s3gateway chart creates this PVC in the platform
+namespace (agentstudio-platform) which is not visible here. When deploying on AKS
+with ANF NFS (ReadWriteMany), set defaultBucketPvc.create=true and provide either:
+
+  a) storageClass: <same ANF NFS class> — dynamic provisioning (separate NFS export)
+  b) volumeName: <PV name> — static binding to the same underlying NFS export as
+     the platform-tier PVC (requires a pre-provisioned PersistentVolume)
+
+For full data-sharing across tiers, option (b) is required.
+*/}}
+{{- if .Values.defaultBucketPvc.create }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .Values.global.s3gatewayFullname | default "s3gateway" }}-default-bucket
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/component: default-bucket-pvc
+spec:
+  accessModes:
+    - {{ .Values.global.accessMode | default .Values.defaultBucketPvc.accessMode | default "ReadWriteMany" }}
+  resources:
+    requests:
+      storage: {{ .Values.defaultBucketPvc.size | default "10Gi" | quote }}
+  {{- if .Values.defaultBucketPvc.storageClass }}
+  storageClassName: {{ .Values.defaultBucketPvc.storageClass | quote }}
+  {{- else if .Values.global.storageClass }}
+  storageClassName: {{ .Values.global.storageClass | quote }}
+  {{- end }}
+  {{- if .Values.defaultBucketPvc.volumeName }}
+  volumeName: {{ .Values.defaultBucketPvc.volumeName | quote }}
+  {{- end }}
+{{- end }}

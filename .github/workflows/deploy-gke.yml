@@ -1,0 +1,122 @@
+# GKE dev deployment caller.
+#
+# Thin caller for the cloud-agnostic .github/workflows/deploy-reusable.yml;
+# this file pins the GKE-specific inputs (cloud=gke, cloud_environment=dev-gke)
+# and delegates the actual auth + helm flow to the reusable workflow.
+#
+# All cluster + namespace configuration is read from the `dev-gke` GitHub
+# Environment by the reusable workflow; this file only forwards the
+# image_tag input.
+#
+# This is the CI counterpart to scripts/gcp-deploy.sh. The script handles
+# config-file-driven INFRA provisioning (cluster create, GCNV, ExternalDNS) +
+# DEPLOY; this workflow handles only the deploy half (assumes infra exists).
+# Run the script once per cluster to provision; let CI run this workflow per
+# image-tag rollout. Roadmap: collapse the two paths once gcp-deploy.sh's
+# provisioning side is decomposed into mk/cloud/gke.mk targets following
+# the same convention as aks-* helpers.
+#
+# ─── One-time setup (cloud admin) ─────────────────────────────────────────
+# GCP:
+#   1. Create a service account (e.g. sa-gha-agentstudio-dev@<proj>.iam.gserviceaccount.com).
+#   2. Grant the SA:
+#        - roles/container.developer at the GKE cluster (deploy ServiceAccount)
+#        - roles/container.viewer for kubeconfig fetch
+#        - roles/iam.workloadIdentityUser binding from the WIF pool
+#        - roles/artifactregistry.reader on the GAR registry (kubelet pulls)
+#   3. Create a Workload Identity Federation pool + provider trusting GitHub:
+#        attribute condition:
+#          assertion.repository == 'NetApp-Nemo/AgentStudio'
+#          && assertion.environment == 'dev-gke'
+#        attribute mapping:
+#          google.subject       = assertion.sub
+#          attribute.repository = assertion.repository
+#          attribute.environment = assertion.environment
+#      Bind the service account to the pool with `gcloud iam
+#      service-accounts add-iam-policy-binding ... --role=roles/iam.workloadIdentityUser
+#      --member=principalSet://iam.googleapis.com/.../attribute.environment/dev-gke`.
+#
+# ─── One-time setup (repo admin) ──────────────────────────────────────────
+# 1. GitHub -> Settings -> Environments -> New environment -> name: `dev-gke`
+#    (add required reviewers / deployment protection rules as needed).
+# 2. Under the `dev-gke` environment, add the following variables:
+#      GCP_PROJECT_ID                 e.g. agentstudio-dev-1234
+#      GCP_WORKLOAD_IDENTITY_PROVIDER Full resource path of the WIF provider:
+#                                     projects/<num>/locations/global/workloadIdentityPools/<pool>/providers/<provider>
+#      GCP_SERVICE_ACCOUNT            SA email (e.g. sa-gha-agentstudio-dev@<proj>.iam.gserviceaccount.com)
+#      GKE_CLUSTER_NAME               GKE cluster name
+#      GKE_CLUSTER_LOCATION           Region or zone (e.g. us-central1, us-central1-a)
+#      GAR_REGISTRY                   Artifact Registry hostname; passed as
+#                                     CONTAINER_IMAGE_REPO to the Makefile
+#                                     (e.g. us-central1-docker.pkg.dev/<proj>/agentstudio)
+#                                     (You may also use vars.CONTAINER_IMAGE_REPO instead.)
+#      AGENTSTUDIO_ENDPOINT           Public DNS for the Gateway (drives TLS SAN
+#                                     + auth/s3/catalog/workflows/ws subdomains)
+#                                     (e.g. dev-gke.agentstudio.example.com)
+#      GCNV_LOCATION                  NetApp Volumes location (e.g. us-east4)
+#      GCNV_NETWORK                   VPC network for storage pool create
+#                                     (e.g. name=projects/<proj>/global/networks/<vpc>)
+#      TRIDENT_GSA_EMAIL              GSA used by Trident cloudIdentity
+#    Optional variables (sane defaults; see deploy-reusable.yml):
+#      GCNV_SAN_ZONE (defaults to <GCNV_LOCATION>-b),
+#      GCNV_SAN_REPLICA_ZONE (defaults to <GCNV_LOCATION>-c),
+#      OBSERVABILITY (defaults to 0; set vars.OBSERVABILITY=1 to enable),
+#      CERT_MANAGER_GATEWAY_TLS, CERT_MANAGER_ISSUER_NAME,
+#      GATEWAY_LB_IP, GATEWAY_MATCH_ALL_HOSTS, DEPLOYMENT_NAME,
+#      HELM_NS_*, HELM_EXTRA_ARGS,
+#      KEYCLOAK_HOSTNAME (auto-derived to https://auth.<endpoint> by
+#                         deploy-gke if unset)
+# 3. The `dev-gke` environment does NOT require any secrets for v1. GAR pull
+#    is handled by the GKE node service account (with roles/artifactregistry.reader
+#    on the GAR repo); all chart credentials live in the Helm values.
+#
+# Prerequisites:
+#   - The GKE cluster has been provisioned (cluster + GCNV-native storage + DNS).
+#     Use `scripts/gcp-deploy.sh --provision-infra -c deploy-config.yaml`
+#     for the one-time setup.
+#   - The AgentStudio dual GCNV-native Trident classes/backends are ready.
+#     The reusable workflow's `make deploy CLOUD=gke` invocation handles this
+#     idempotently via `make gke-ensure-storage-ready`.
+#
+# Usage:
+#   Manual:    gh workflow run deploy-gke.yml -f image_tag=1.0.0-dev.1
+#              Actions -> "Deploy to GKE Dev" -> Run workflow -> enter image tag
+#   Automatic: invoked by build-common.yml after build-and-publish succeeds
+#              (when GKE deploys are added to the auto-trigger chain).
+
+name: Deploy to GKE Dev
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: >
+          Image tag to deploy across every AgentStudio subchart
+          (e.g. 1.0.0, 1.0.0-dev.1). Must already exist in the registry
+          referenced by CONTAINER_IMAGE_REPO (vars.GAR_REGISTRY).
+        required: true
+        type: string
+  workflow_call:
+    inputs:
+      image_tag:
+        description: >
+          Image tag to deploy across every AgentStudio subchart. Must
+          already be present in the registry referenced by
+          CONTAINER_IMAGE_REPO (vars.GAR_REGISTRY).
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write   # required so the reusable workflow can mint OIDC tokens
+
+jobs:
+  deploy:
+    uses: ./.github/workflows/deploy-reusable.yml
+    permissions:
+      contents: read
+      id-token: write
+    with:
+      cloud: gke
+      cloud_environment: dev-gke
+      image_tag: ${{ inputs.image_tag }}

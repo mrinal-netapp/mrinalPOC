@@ -1,0 +1,67 @@
+@use "@/styles/mixins" as *;
+
+.eval-schedule__builder {
+  border: 1px solid var(--border-default);
+  border-radius: 6px;
+  overflow: hidden;
+  background-color: var(--background-content);
+}
+
+.eval-schedule__tabs {
+  width: 100%;
+}
+
+.eval-schedule__builder-body {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding: 16px;
+}
+
+.eval-schedule__cadence-group {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+.eval-schedule__time-inputs {
+  display: flex;
+  gap: 16px;
+  max-width: 300px;
+  width: 100%;
+}
+
+.eval-schedule__time-field {
+  flex: 1;
+}
+
+.eval-schedule__cron-body {
+  padding: 16px;
+}
+
+.eval-schedule__cron-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-width: 340px;
+  width: 100%;
+}
+
+.eval-schedule__cron-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+@include mobile {
+  .eval-schedule__builder-body,
+  .eval-schedule__cron-body {
+    padding: 12px;
+  }
+
+  .eval-schedule__time-inputs {
+    flex-direction: column;
+    max-width: none;
+  }
+}

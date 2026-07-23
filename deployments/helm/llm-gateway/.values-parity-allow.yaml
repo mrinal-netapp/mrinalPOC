@@ -1,0 +1,41 @@
+# .values-parity-allow.yaml — llm-gateway tier
+#
+# Allow-list for lint-values-parity.py.
+# Intentional cross-cloud value differences for the llm-gateway tier
+# (Bifrost / LiteLLM gateway).
+#
+# Note: llm-gateway has no values-gke.yaml; GKE uses base defaults.
+# The linter only compares overlays that exist, so the missing GKE
+# overlay doesn't generate false positives.
+
+allow:
+  # ── Storage class ─────────────────────────────────────────────────────────────
+  # AKS uses anf-nfs (global + per-PVC); EKS uses fsxn-nas.
+  # GKE has no overlay (inherits base default "").
+  - global.storageClass
+  - "bifrost.persistence.storageClass"
+  - "bifrost.persistence.*"
+
+  # ── ANF permissions fix (AKS-only) ───────────────────────────────────────────
+  # ANF NFS ignores Pod fsGroup; a root chown init container is injected only
+  # on AKS to fix ownership on first mount. Not needed on other storage backends.
+  - "bifrost.persistence.fixPermissions"
+  - "bifrost.persistence.accessMode"
+
+  # ── Image pull policy ─────────────────────────────────────────────────────────
+  # EKS forces Always for ECR cache fixes; other clouds use the default.
+  - global.imagePullPolicy
+
+  # ── ORPHAN suppression: local-only keys not declared in base ─────────────────
+  # local disables the bifrost ServiceMonitor (Prometheus CRDs may be absent
+  # without OBSERVABILITY=1) and uses gateway port :8443 (KIND can't bind <1024).
+  # Neither key is declared in the llm-gateway base values.yaml.
+  - "bifrost.metrics.serviceMonitor.enabled"
+  - global.gatewayHttpsPort
+
+  # ── Workload Identity (AKS + local) ──────────────────────────────────────────
+  # bifrost WI is enabled on AKS and local (for KIND federation test parity).
+  # GKE and EKS WI for bifrost is a planned follow-up.
+  - "bifrost.serviceAccount.create"
+  - "bifrost.serviceAccount.azureClientId"
+  - "bifrost.workloadIdentity.enabled"

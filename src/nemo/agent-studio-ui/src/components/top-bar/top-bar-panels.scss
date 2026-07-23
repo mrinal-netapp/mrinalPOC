@@ -1,0 +1,139 @@
+.top-bar-panel-trigger {
+  position: relative;
+}
+
+.top-bar-panel__title {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.top-bar-panel__title-icon {
+  color: var(--icon-secondary);
+}
+
+.top-bar-panel__link-button {
+  border: 0;
+  background: transparent;
+  color: var(--blue-50, #0860ed);
+  font: inherit;
+  font-size: 13px;
+  line-height: 20px;
+  cursor: pointer;
+
+  &:hover {
+    color: var(--blue-70, #0067c5);
+  }
+
+  &:disabled {
+    color: var(--text-disabled);
+    cursor: not-allowed;
+  }
+}
+
+.top-bar-panel__row-link {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 72px;
+  padding: 0;
+  border: 0;
+  border-bottom: 1px solid var(--border-main);
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+
+  &:hover {
+    background-color: var(--shell-main-nav-bg-hover);
+  }
+
+  &:disabled {
+    color: var(--text-disabled);
+    cursor: not-allowed;
+  }
+}
+
+.top-bar-panel__filters {
+  display: flex;
+  gap: 32px;
+  margin-bottom: 16px;
+}
+
+.top-bar-panel__filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 13px;
+  line-height: 20px;
+  cursor: pointer;
+
+  &:disabled {
+    color: var(--text-disabled);
+    cursor: not-allowed;
+  }
+}
+
+.top-bar-panel__empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 280px;
+  padding: 48px 24px;
+  color: var(--text-secondary);
+  text-align: center;
+}
+
+.top-bar-panel__empty-icon {
+  margin-bottom: 16px;
+  color: var(--icon-secondary);
+}
+
+.top-bar-panel__empty-title {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 24px;
+}
+
+.top-bar-panel__empty-description {
+  margin: 4px 0 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.top-bar-panel__detail-row {
+  display: grid;
+  grid-template-columns: 96px 1fr;
+  gap: 16px;
+  padding: 24px 0;
+  border-bottom: 1px solid var(--border-main);
+}
+
+.top-bar-panel__detail-label,
+.top-bar-panel__detail-value,
+.top-bar-panel__detail-meta {
+  margin: 0;
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.top-bar-panel__detail-label,
+.top-bar-panel__detail-meta {
+  color: var(--text-secondary);
+}
+
+.top-bar-panel__detail-value {
+  color: var(--text-primary);
+  font-weight: 600;
+}

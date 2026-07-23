@@ -1,0 +1,61 @@
+@use "@/styles/mixins" as *;
+
+.structured-output-config-dialog {
+  width: 100%;
+
+  // Mirrors Card{Header,Footer}'s `padding-inline: 40px` so the
+  // description, toggle, and textarea line up with the title above and
+  // the action buttons below. UA-margin reset is needed because
+  // `Typography Component="p"|"label"` renders real <p>/<label> elements.
+
+  &__content {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    padding: 24px 40px;
+
+    p, label {
+      margin: 0;
+    }
+  }
+
+  &__toggle-row {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  &__field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    width: 100%;
+  }
+
+  // Monospace + larger min-height than the plain output-response textarea
+  // since JSON schemas span many lines. Reuses the shared input mixin so
+  // border colour, focus ring, and disabled treatment match the rest of
+  // the app.
+  &__textarea {
+    @include fieldStyling();
+
+    min-height: 320px;
+    resize: vertical;
+    font-family: var(--font-family-mono, var(--monospace-font, monospace));
+    font-size: 13px;
+    line-height: 1.5;
+    tab-size: 2;
+    white-space: pre;
+    overflow: auto;
+
+    &--error {
+      border-color: var(--notification-error, var(--red-30));
+    }
+  }
+
+  &__counter-row {
+    display: flex;
+    justify-content: flex-end;
+    width: 100%;
+  }
+}

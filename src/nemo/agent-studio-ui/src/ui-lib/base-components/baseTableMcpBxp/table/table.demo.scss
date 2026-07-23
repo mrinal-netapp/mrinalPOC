@@ -1,0 +1,17 @@
+/* Table demo SCSS mapping from Tailwind utility classes */
+
+.th-invoice {
+  width: 100px; /* w-[100px] */
+}
+
+.th-amount {
+  text-align: right; /* text-right */
+}
+
+.td-invoice {
+  font-weight: 500; /* font-medium */
+}
+
+.td-amount {
+  text-align: right; /* text-right */
+}

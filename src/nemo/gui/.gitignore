@@ -1,0 +1,40 @@
+# Logs (only ignore runtime log dir at gui root; keep src/lib/logs/ for source)
+/logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+
+# Vitest test artefacts (regenerated on every run; consumed by CI)
+src/utils/unit-tests/coverage/
+src/utils/unit-tests/test-results/
+
+# TypeScript build info (incremental build cache)
+*.tsbuildinfo
+
+# Compiled JS shadows of TS config files (artifacts of running `npx tsc`
+# locally; `tsc -b` against `tsconfig.node.json` emits these next to the
+# source). Should never be committed.
+vite.config.js
+vite.config.d.ts
+vitest.config.js
+vitest.config.d.ts
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+

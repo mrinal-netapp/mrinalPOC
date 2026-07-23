@@ -1,0 +1,7 @@
+apiVersion: v2
+appVersion: "1.5"
+description: Hugging Face Text Embeddings Inference — built-in embedding backend fronted
+  by Bifrost
+name: text-embeddings-inference
+type: application
+version: 0.1.0

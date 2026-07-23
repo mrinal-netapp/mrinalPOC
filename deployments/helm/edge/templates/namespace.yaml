@@ -1,0 +1,20 @@
+{{- /*
+Edge namespace. The edge tier owns agentstudio-edge end-to-end:
+- Gateway resource + auto-provisioned ingress pod / Service / HPA / PDB
+- All HTTPRoutes (except the existing Keycloak `auth.*` route)
+- RequestAuthentication / AuthorizationPolicy / EnvoyFilter
+- The TLS Secret nemo-gateway-tls (same-namespace certificateRef resolution)
+
+The Helm release is created with --create-namespace so this template is a
+no-op on first install; it's kept so subsequent labels/annotations stay
+in sync with the rest of the tier-namespace fleet.
+*/ -}}
+{{- if .Values.createNamespace | default true -}}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "edge.labels" . | nindent 4 }}
+    istio-injection: enabled
+{{- end }}

@@ -1,0 +1,143 @@
+{{- if .Values.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "bifrost.fullname" . }}
+  labels:
+    {{- include "bifrost.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "bifrost.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        # Services tier (agent-service, config-service, workflow-engine)
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: agentstudio-services
+          podSelector:
+            matchLabels:
+              component: agent-service
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: agentstudio-services
+          podSelector:
+            matchLabels:
+              component: config-service
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: agentstudio-services
+          podSelector:
+            matchLabels:
+              component: workflow-engine
+        # kb-retrieval-service calls Bifrost to embed the search query before
+        # running the LanceDB vector search. Without this entry every KB
+        # playground / search request hangs at encode_query until the
+        # upstream timeout — verified on sks6316: search handler logged
+        # the request, then never completed because the embedding HTTP
+        # call to bifrost-proxy:8080 was being silently dropped by the
+        # NetworkPolicy. Symmetric reason for kb-worker below.
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: agentstudio-services
+          podSelector:
+            matchLabels:
+              component: kb-retrieval-service
+        # Workers tier (kb-worker)
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: agentstudio-workers
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: kb-worker
+        # Prometheus scraping
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - port: 8080
+          protocol: TCP
+  egress:
+    # PostgreSQL
+    - ports:
+        - port: 5432
+          protocol: TCP
+    # External provider APIs (HTTPS/HTTP)
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - port: 443
+          protocol: TCP
+        - port: 80
+          protocol: TCP
+    # Managed MCP servers spawned by config-service's MCPRuntimeManager.
+    # Every dynamically-launched MCP carries
+    #   component: mcp-stdio-runner
+    #   app.kubernetes.io/managed-by: nemo-config-service
+    # and listens on port 8000. The previous rule omitted namespaceSelector,
+    # which under K8s NetworkPolicy semantics restricts the match to the
+    # policy's OWN namespace (agentstudio-llm-gateway) — so every managed
+    # MCP spawned in agentstudio-services was unreachable from Bifrost.
+    # This block iterates the operator-supplied namespace list so adding a
+    # per-project / per-tenant MCP namespace is a values-only change, not
+    # a chart edit.
+    {{- range .Values.mcp.managedServerNamespaces }}
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ . | quote }}
+          podSelector:
+            matchLabels:
+              component: mcp-stdio-runner
+              app.kubernetes.io/managed-by: nemo-config-service
+      ports:
+        - port: {{ $.Values.mcp.managedServerPort | default 8000 }}
+          protocol: TCP
+    {{- end }}
+    # Static in-cluster MCP-style consumers (statically-chartred, not
+    # MCPRuntimeManager-spawned). Kept as a separate block because the
+    # selectors differ from the managed pattern above.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: agentstudio-services
+          podSelector:
+            matchLabels:
+              app: analytics-mcp-server
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: agentstudio-services
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: artifact-service
+      ports:
+        - port: 8000
+          protocol: TCP
+        - port: 8080
+          protocol: TCP
+    # DNS
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    # Istio control plane: pilot-agent (UID 1337) needs to reach istiod for
+    # workload certificate signing (15012) and xDS (15010/15012).
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: istio-system
+      ports:
+        - port: 15012
+          protocol: TCP
+        - port: 15010
+          protocol: TCP
+        - port: 15014
+          protocol: TCP
+        - port: 15017
+          protocol: TCP
+{{- end }}

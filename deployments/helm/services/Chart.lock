@@ -1,0 +1,33 @@
+dependencies:
+- name: agent-service
+  repository: file://./charts/agent-service
+  version: 1.0.0
+- name: agent-service-maf
+  repository: file://./charts/agent-service-maf
+  version: 1.0.0
+- name: apigateway-service
+  repository: file://./charts/apigateway-service
+  version: 1.0.0
+- name: config-service
+  repository: file://./charts/config-service
+  version: 1.0.0
+- name: workflow-engine
+  repository: file://./charts/workflow-engine
+  version: 1.0.0
+- name: kb-retrieval-service
+  repository: file://./charts/kb-retrieval-service
+  version: 1.0.0
+- name: analytics-engine
+  repository: file://./charts/analytics-engine
+  version: 1.0.0
+- name: analytics-mcp-server
+  repository: file://./charts/analytics-mcp-server
+  version: 1.0.0
+- name: artifact-service
+  repository: file://./charts/artifact-service
+  version: 1.0.0
+- name: text-embeddings-inference
+  repository: file://./charts/text-embeddings-inference
+  version: 0.1.0
+digest: sha256:504518ec03c727c48eb6ccf296a4504b4913b18b966ede5e7e8f8f672fc1a998
+generated: "2026-06-25T14:11:31.273638-06:00"

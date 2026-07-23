@@ -1,0 +1,79 @@
+# .values-parity-allow.yaml — services tier
+#
+# Allow-list for lint-values-parity.py.
+# Each entry suppresses either:
+#   (a) a known-INTENTIONAL difference ACROSS THE HYPERSCALERS (aks/gke/eks), or
+#   (b) an ORPHAN key not declared in the base values.yaml.
+#
+# values-local.yaml is NOT parity-checked — it deliberately strips down the
+# cloud-shaped base (see docs/deployment/values-convergence-strategy.md), so
+# local-only differences no longer need entries here. Document the reason so
+# reviewers can audit intent.
+#
+# Format: prefix.*   matches key itself or any child
+#         *.suffix   matches that suffix at any depth
+#         exact.path exact match only
+#
+# See docs/deployment/values-convergence-strategy.md for the full strategy.
+
+allow:
+  # ── Storage class ────────────────────────────────────────────────────────────
+  # Storage provider is irreducibly per-cloud:
+  #   AKS → anf-nfs (Azure NetApp Files)
+  #   GKE → gcnv-nas-rwx (Google Cloud NetApp Volumes) or cluster default
+  #   EKS → fsxn-nas (Amazon FSx for NetApp ONTAP via Trident)
+  - global.storageClass
+  - defaultBucketPvc.storageClass
+
+  # ── Endpoint / hostname ───────────────────────────────────────────────────────
+  # AKS bakes the endpoint directly into values-aks.yaml (belt-and-suspenders).
+  # GKE and EKS receive it via --set global.endpoint=... at deploy time
+  # (mk/tier-helm.mk *_TIER_SET). The cross-cloud gap is intentional.
+  - global.endpoint
+  - endpoint
+
+  # ── Image pull policy ─────────────────────────────────────────────────────────
+  # EKS sets imagePullPolicy=Always after ECR manifest cache fixes to force
+  # nodes to re-pull corrected multi-arch manifests. Not needed on other clouds.
+  - global.imagePullPolicy
+
+  # ── Azure Workload Identity (AKS-specific) ────────────────────────────────────
+  # WI + managed-identity annotations are AKS-only. GKE and EKS don't yet have
+  # WI implemented (tracked as follow-up work).
+  # Pattern covers every sub-chart: agent-service, config-service, etc.
+  - "*.serviceAccount.create"
+  - "*.serviceAccount.name"
+  - "*.serviceAccount.azureClientId"
+  - "*.workloadIdentity.enabled"
+
+  # ── PostgreSQL secret (AKS-only production secret) ───────────────────────────
+  # AKS provisioning stores the PostgreSQL password in Azure Key Vault and
+  # materialises it as a Kubernetes Secret "shared-postgresql-secret".
+  # config-service and artifact-service reference it via existingSecret.
+  # GKE and EKS currently use the chart-default inline password (acceptable for
+  # dev clusters). TODO: mirror to GCP/AWS secrets managers and add existingSecret
+  # to the GKE/EKS overlays when promoting those envs to production.
+  - config-service.database.existingSecret
+  - config-service.database.existingSecretKey
+  - artifact-service.database.existingSecret
+  - artifact-service.database.existingSecretKey
+
+  # ── defaultBucketPvc size (per-cloud production sizing) ──────────────────────
+  # Cloud overlays set a production size (1Ti ANF/Filestore minimum); size is
+  # per-cloud by nature.
+  - defaultBucketPvc.size
+
+  # ── Cross-namespace bucket sharing mechanism (per-cloud) ─────────────────────
+  # GKE/EKS bind the workers/s3gateway volume via Trident shareFromPVC, so they
+  # set defaultBucketPvc.shareFromPVC.{namespace,name} (paired with the workers
+  # bucket's shareToNamespaces). AKS instead shares via a pre-provisioned static
+  # PV bound by volumeName (SERVICES_PV_DEFAULT_BUCKET, injected at deploy time),
+  # so it leaves shareFromPVC empty. Intentional cross-cloud difference.
+  - defaultBucketPvc.shareFromPVC.namespace
+  - defaultBucketPvc.shareFromPVC.name
+
+  # ── ORPHAN suppression: connector-worker env (not declared in base) ──────────
+  # local hardcodes FQDN env vars for cross-namespace service discovery. The key
+  # is not declared in base values.yaml, so this suppresses the resulting ORPHAN
+  # flag (the subchart consumes env directly). Not a cross-cloud parity rule.
+  - connector-worker.env

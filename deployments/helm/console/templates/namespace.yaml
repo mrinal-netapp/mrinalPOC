@@ -1,0 +1,13 @@
+{{- if .Values.createNamespace }}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: {{ .Chart.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    istio-injection: enabled
+    pod-security.kubernetes.io/enforce: {{ .Values.namespacePodSecurity.enforce | default "privileged" }}
+    pod-security.kubernetes.io/audit: {{ .Values.namespacePodSecurity.audit | default "privileged" }}
+    pod-security.kubernetes.io/warn: {{ .Values.namespacePodSecurity.warn | default "privileged" }}
+{{- end }}

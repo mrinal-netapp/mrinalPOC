@@ -1,0 +1,72 @@
+[
+  {
+    "id": "ins-001",
+    "query": "What is the individual annual deductible for the ShieldCare HMO medical plan?",
+    "expected_answer": "The ShieldCare HMO plan has an individual annual deductible of $500.",
+    "category": "happy_path",
+    "difficulty": "easy"
+  },
+  {
+    "id": "ins-002",
+    "query": "How much company-paid Basic Life insurance does Aegis Shield provide?",
+    "expected_answer": "Aegis Shield provides company-paid Basic Life insurance equal to 2x your annual base salary, up to a maximum of $500,000, at no cost to you, with an equal amount of AD&D coverage included automatically.",
+    "category": "happy_path",
+    "difficulty": "easy"
+  },
+  {
+    "id": "ins-003",
+    "query": "What is the copay for a Tier 1 generic prescription drug under the HMO plan?",
+    "expected_answer": "The Tier 1 generic prescription drug copay under the HMO plan is $10.",
+    "category": "happy_path",
+    "difficulty": "easy"
+  },
+  {
+    "id": "ins-004",
+    "query": "What is the copay for a specialist visit under the ShieldCare HMO plan?",
+    "expected_answer": "The specialist visit copay under the ShieldCare HMO plan is $45.",
+    "category": "happy_path",
+    "difficulty": "easy"
+  },
+  {
+    "id": "ins-005",
+    "query": "What does Short-Term Disability pay and for how long?",
+    "expected_answer": "Short-Term Disability pays 66.7% of your weekly base pay, up to $2,500 per week, for a maximum duration of 26 weeks per disability. It is fully company-paid with a 7-day elimination period for illness and 0 days for accidental injury.",
+    "category": "happy_path",
+    "difficulty": "medium"
+  },
+  {
+    "id": "ins-006",
+    "query": "What is the emergency room copay under the HMO plan?",
+    "expected_answer": "The emergency room copay under the HMO plan is $300.",
+    "category": "happy_path",
+    "difficulty": "easy"
+  },
+  {
+    "id": "ins-007",
+    "query": "How does the 401(k) employer match work at Aegis Shield?",
+    "expected_answer": "After one year of service, Aegis Shield matches 100% of the first 4% of pay you contribute, plus 50% of the next 2%, for a maximum match of 5% of eligible pay. The match vests on a graded schedule and is fully vested after four years of service.",
+    "category": "happy_path",
+    "difficulty": "medium"
+  },
+  {
+    "id": "ins-008",
+    "query": "When is Open Enrollment held and when do elections take effect?",
+    "expected_answer": "Open Enrollment is held each year from November 1 to November 21, with elections effective January 1.",
+    "category": "happy_path",
+    "difficulty": "easy"
+  },
+  {
+    "id": "ins-009",
+    "query": "What is the annual maximum benefit for the ShieldSmile dental plan?",
+    "expected_answer": "The ShieldSmile dental plan has an annual maximum benefit of $2,000 per person.",
+    "category": "happy_path",
+    "difficulty": "easy"
+  },
+  {
+    "id": "ins-010",
+    "query": "How many EAP counseling sessions are available and are they confidential?",
+    "expected_answer": "The Employee Assistance Program provides up to 8 confidential counseling sessions per issue per year, along with legal and financial consultations and 24/7 crisis support. Usage is confidential and not shared with management.",
+    "category": "happy_path",
+    "difficulty": "medium"
+  }
+]

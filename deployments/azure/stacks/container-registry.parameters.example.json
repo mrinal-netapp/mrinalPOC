@@ -1,0 +1,18 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "registryName": {
+      "value": "REPLACE_WITH_registry_name"
+    },
+    "sku": {
+      "value": "REPLACE_WITH_sku_Basic_Standard_or_Premium"
+    },
+    "adminUserEnabled": {
+      "value": false
+    },
+    "zoneRedundancyEnabled": {
+      "value": false
+    }
+  }
+}

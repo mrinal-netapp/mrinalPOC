@@ -1,0 +1,846 @@
+# ============================================================================
+# Agent Framework — Complete Configuration Reference
+# ============================================================================
+#
+# This file documents EVERY configurable parameter in the agent framework.
+# It serves as both documentation and a starting template.
+#
+# ARCHITECTURE:
+#   This config has two layers:
+#
+#   1. AGENT (top-level) — The HTTP-facing agent exposed via
+#      POST /agents/{agent_id}/invoke. Defines which framework adapter to use,
+#      global guardrails, streaming, error handling, and gateway defaults.
+#
+#   2. FRAMEWORK AGENTS (inner) — The actual LLM-powered agents that live
+#      INSIDE the framework adapter. Each inner agent has its own instructions,
+#      model, tools, and MCP server access. The Microsoft Agent Framework adapter
+#      might run 3 inner agents (researcher → analyst → synthesizer) orchestrated
+#      sequentially, or a group chat of 5 agents.
+#      The top-level agent config tells the framework HOW to run them;
+#      the framework-specific section defines WHO they are.
+#
+# CONFIGURATION PRIORITY (highest wins):
+#   1. Per-request overrides  (config_overrides in request payload)
+#   2. JSON config file       (configs/agent_config.json)
+#   3. Environment variables  (AGENT_ prefix, double-underscore nesting)
+#   4. Defaults               (hardcoded below)
+#
+# MERGE RULES:
+#   - Dicts:  recursive merge (nested keys merged independently)
+#   - Lists:  override replaces base (no append)
+#   - None:   skip (don't overwrite existing value)
+#
+# ENVIRONMENT VARIABLE CONVENTION:
+#   Prefix:  AGENT_
+#   Nesting: double underscore (__) maps to dot-separated path
+#   Example: AGENT_GATEWAY__URL → gateway.url
+#   Types:   booleans as true/false, numbers as digits, lists as JSON arrays
+#
+# ============================================================================
+
+# ╔════════════════════════════════════════════════════════════════════════════╗
+# ║  PROJECT — Required Top-Level Field                                       ║
+# ╚════════════════════════════════════════════════════════════════════════════╝
+#
+# UUID of the project this team belongs to. Required for any team config
+# loaded from disk: the team_loader marks the team unhealthy if this field
+# is missing or not a valid UUID. Routes are scoped under
+#   /api/v1/projects/{project_id}/teams/{team_id}/...
+# and a request whose URL project_id does not match the team's declared
+# project_id returns 404. Locked field — cannot be overridden per-request.
+
+project_id: 550e8400-e29b-41d4-a716-446655440000
+
+# ╔════════════════════════════════════════════════════════════════════════════╗
+# ║  AGENT — Top-Level Agent Definition                                       ║
+# ╚════════════════════════════════════════════════════════════════════════════╝
+#
+# Defines the primary agent exposed via HTTP. This is what callers interact
+# with at POST /api/v1/projects/{project_id}/agents/{agent_id}/invoke. It
+# selects a framework adapter and provides global defaults that apply to all
+# inner agents unless overridden.
+#
+# Per-request override: Yes (model, temperature, max_tokens, timeout_seconds)
+# Env vars: AGENT_AGENT__FRAMEWORK, AGENT_AGENT__MODEL, etc.
+
+agent:
+  framework: maf # Framework adapter: maf | echo
+  model: anthropic/claude-sonnet-4-20250514 # Default LLM model (inner agents can override)
+  temperature: 0.7 # Default temperature (0.0–2.0)
+  max_tokens: 4096 # Default max output tokens (1–200000)
+  timeout_seconds: 300 # Total execution timeout for the entire request (1–600)
+
+# ╔════════════════════════════════════════════════════════════════════════════╗
+# ║  FRAMEWORK-SPECIFIC CONFIGURATION                                         ║
+# ╚════════════════════════════════════════════════════════════════════════════╝
+#
+# The agent-definition section below is consumed by the framework adapter.
+#
+# This is where multi-agent behaviour is defined: the inner agents,
+# their individual instructions/models/tools, and how they orchestrate.
+
+# ──────────────────────────────────────────────────────────────────────────────
+# AGENT DEFINITIONS
+# ──────────────────────────────────────────────────────────────────────────────
+# The section key is `semantic_kernel` (retained for backward compatibility with
+# stored team configs); the schema is framework-agnostic and is consumed by the
+# Microsoft Agent Framework (`maf`) adapter. Agents are orchestrated via the
+# orchestration section below (sequential, concurrent, handoff, triage,
+# group_chat, magentic, or graph).
+
+semantic_kernel:
+  # ─── Inner Agents ────────────────────────────────────────────────────────
+  # Each agent has its own identity, LLM parameters, system instructions,
+  # tool access, and MCP server assignments. The orchestration section
+  # below determines how these agents collaborate.
+  agents:
+    - name: researcher
+      instructions: |
+        You are a research agent. Search for information using available
+        tools and provide detailed, well-sourced findings. Always cite
+        your sources. Focus on accuracy over speed.
+      description: 'Searches for information using available tools'
+      model: openai/gpt-4o # Override top-level agent.model
+      temperature: 0.9 # Override top-level agent.temperature
+      max_tokens: 8000 # Override top-level agent.max_tokens
+      top_p: 1.0 # Nucleus sampling (0.0–1.0)
+      top_k: 0 # Top-k sampling (0 = disabled)
+      frequency_penalty: 0.0 # Repetition penalty (-2.0–2.0)
+      presence_penalty: 0.0 # Diversity penalty (-2.0–2.0)
+      stop_sequences: [] # Stop tokens
+      tools: [] # Specific tool names (empty = all from assigned MCP servers)
+      mcp_servers: # Which MCP servers this agent can access
+        - web-search
+        - document-store
+      function_choice_behavior: auto # auto | none | required
+      response_format: ~ # null | "text" | "json_object"
+      prompt_template: ~ # Jinja2/Handlebars template for instructions (null = use instructions directly)
+
+    - name: analyst
+      instructions: |
+        You are an analyst. Analyze research findings and identify key
+        patterns, trends, and insights. Use data analysis tools when
+        available. Present findings with supporting evidence.
+      description: 'Analyzes data and identifies patterns'
+      model: anthropic/claude-sonnet-4-20250514
+      temperature: 0.5
+      max_tokens: 4096
+      tools: # Specific tools (not MCP servers)
+        - analyze_data
+        - create_chart
+      mcp_servers: [] # No MCP servers — uses only named tools above
+      function_choice_behavior: auto
+
+    - name: synthesizer
+      instructions: |
+        You synthesize findings into a clear, actionable report.
+        Combine research and analysis into a coherent narrative.
+        Use professional tone and structured formatting.
+      description: 'Creates final reports and summaries'
+      model: anthropic/claude-opus-4-20250514
+      temperature: 0.3
+      max_tokens: 16000
+      tools:
+        - write_report
+      mcp_servers: []
+      function_choice_behavior: auto
+
+  # ─── Orchestration ──────────────────────────────────────────────────────
+  # How the inner agents collaborate to produce a final result.
+  #
+  # ORCHESTRATION TYPES:
+  #
+  #   sequential:  Agents execute one after another in defined order.
+  #                Each agent receives the accumulated conversation.
+  #
+  #   concurrent:  All agents execute simultaneously (fan-out).
+  #                Results are merged into a single response.
+  #
+  #   handoff:     Agents can explicitly transfer control to other agents
+  #                via defined handoff routes. Good for routing/triage.
+  #
+  #   groupchat:   Agents converse in a shared chat with selection logic
+  #                determining who speaks next.
+  #
+  orchestration:
+    type: sequential # single | sequential | concurrent | handoff | group_chat | magentic
+    max_rounds: 20 # Max orchestration rounds across all agents (1–100)
+
+    termination_strategy:
+      type: default # default | approval | keyword | kernel_function | aggregator
+      maximum_iterations: 3 # Max iterations for this strategy (1–100)
+      automatic_reset: false # Auto-reset on completion
+      agents: [] # Which agents can trigger termination (empty = all)
+      # approval:                                       # (for type: approval)
+      #   approver_agent: synthesizer                   # Agent that approves final output
+      # keyword:                                        # (for type: keyword)
+      #   keywords: ["FINAL REPORT", "DONE"]            # Stop when agent outputs keyword
+      # function_prompt: ""                             # (for type: kernel_function) — LLM decides
+      # condition: "all"                                # (for type: aggregator) — "all" | "any"
+      # sub_strategies: []                              # (for type: aggregator) — nested strategies
+
+    # Agent execution order (for sequential type)
+    # If omitted, agents execute in the order they're defined above.
+    # agent_order:
+    #   - researcher
+    #   - analyst
+    #   - synthesizer
+
+    # Selection strategy (for group_chat type)
+    selection_strategy:
+      type: auto # auto | sequential | kernel_function | custom
+      # initial_agent: ""                               # Agent to start with (by name)
+      # function_prompt: ""                             # (for type: kernel_function) — LLM picks next agent
+      # custom_selector: ""                             # (for type: custom) — Python import path
+
+    # Handoff definitions (for handoff type)
+    # Each handoff defines an explicit route between agents.
+    # handoffs:
+    #   - source: triage                                # Agent that initiates the handoff
+    #     target: billing                               # Agent that receives control
+    #     description: "Transfer billing questions to billing agent"
+    #   - source: triage
+    #     target: technical
+    #     description: "Transfer tech issues to technical agent"
+    #   - source: billing
+    #     target: triage
+    #     description: "Transfer back for re-routing"
+    #   - source: technical
+    #     target: triage
+    #     description: "Transfer back for re-routing"
+
+    # Magentic-One settings (for magentic type)
+    # The Magentic-One orchestrator uses a separate manager agent (LLM-driven)
+    # that autonomously decides which agent to invoke next.
+    # magentic_manager_model: ""                        # Model for orchestrator (empty = use agent.model)
+    # magentic_manager_temperature: 0.0                 # Temperature for orchestrator (low = deterministic)
+
+  # ─── SK-Specific Settings ───────────────────────────────────────────────
+  default_function_choice_behavior: auto # Default for agents that don't specify
+  chat_history_max_messages: 100 # Max messages in shared chat history (1–10000)
+  chat_history_reducer: ~ # null | "summarize" — reduce long conversations
+  enable_telemetry: false # Enable SK telemetry/tracing
+  use_kernel_filter: true # Use SK's KernelFilter middleware
+  max_auto_invoke_attempts: 3 # Max auto-invocation retry attempts (1–10)
+  thread_type: chat_history # chat_history | agent_thread
+
+# ──────────────────────────────────────────────────────────────────────────────
+# CREWAI (example — uncomment and configure when using crewai adapter)
+# ──────────────────────────────────────────────────────────────────────────────
+# crewai:
+#   agents:
+#     - name: lead_researcher
+#       role: "Senior Research Analyst"
+#       goal: "Uncover cutting-edge developments in the topic"
+#       backstory: |
+#         You're a seasoned researcher with a knack for finding
+#         the most relevant and impactful information.
+#       model: openai/gpt-4o
+#       temperature: 0.7
+#       max_tokens: 4096
+#       tools:
+#         - web-search.search
+#         - document-store.query
+#       mcp_servers:
+#         - web-search
+#         - document-store
+#       allow_delegation: true
+#       verbose: true
+#
+#     - name: writer
+#       role: "Technical Writer"
+#       goal: "Produce clear, engaging content based on research"
+#       backstory: |
+#         You're a skilled writer who transforms complex research
+#         into accessible, well-structured documents.
+#       model: anthropic/claude-sonnet-4-20250514
+#       temperature: 0.5
+#       max_tokens: 8192
+#       tools:
+#         - write_report
+#       mcp_servers: []
+#       allow_delegation: false
+#       verbose: true
+#
+#   tasks:
+#     - name: research_task
+#       description: "Research the given topic thoroughly"
+#       agent: lead_researcher
+#       expected_output: "Detailed research findings with sources"
+#
+#     - name: writing_task
+#       description: "Write a comprehensive report based on the research"
+#       agent: writer
+#       expected_output: "Well-structured report in markdown"
+#       context:                                        # Tasks whose output feeds into this task
+#         - research_task
+#
+#   orchestration:
+#     process: sequential                               # sequential | hierarchical
+#     verbose: false
+#     max_iterations: 10                                # Max crew iterations (1–100)
+#     memory: true                                      # Enable crew memory
+#     cache: true                                       # Cache tool results
+#     max_rpm: 10                                       # Max requests per minute to LLM
+
+# ──────────────────────────────────────────────────────────────────────────────
+# LANGGRAPH (example — uncomment and configure when using langgraph adapter)
+# ──────────────────────────────────────────────────────────────────────────────
+# langgraph:
+#   agents:
+#     - name: planner
+#       instructions: "You plan the steps needed to answer the user's question."
+#       model: anthropic/claude-sonnet-4-20250514
+#       temperature: 0.3
+#       max_tokens: 2048
+#       tools: []
+#       mcp_servers: []
+#
+#     - name: executor
+#       instructions: "You execute the plan by calling tools and gathering data."
+#       model: openai/gpt-4o
+#       temperature: 0.5
+#       max_tokens: 4096
+#       tools: []
+#       mcp_servers:
+#         - web-search
+#         - filesystem
+#
+#     - name: reviewer
+#       instructions: "You review the results and decide if the answer is complete."
+#       model: anthropic/claude-sonnet-4-20250514
+#       temperature: 0.2
+#       max_tokens: 2048
+#       tools: []
+#       mcp_servers: []
+#
+#   orchestration:
+#     graph_type: state_graph                           # state_graph | message_graph
+#     checkpointer: memory                              # memory | sqlite | postgres
+#     max_iterations: 25                                # Max graph iterations (1–100)
+#     recursion_limit: 50                               # LangGraph recursion limit
+#     interrupt_before: []                              # Nodes to interrupt before (human-in-the-loop)
+#     interrupt_after: []                               # Nodes to interrupt after
+#
+#   # Graph edges define the flow between agents
+#   edges:
+#     - from: planner
+#       to: executor
+#       condition: always
+#     - from: executor
+#       to: reviewer
+#       condition: always
+#     - from: reviewer
+#       to: planner
+#       condition: "needs_revision"                     # Conditional edge: loop back if review fails
+#     - from: reviewer
+#       to: __end__
+#       condition: "approved"                           # Terminal edge
+
+# ╔════════════════════════════════════════════════════════════════════════════╗
+# ║  INTERFACE — HTTP Server Configuration                                    ║
+# ╚════════════════════════════════════════════════════════════════════════════╝
+# Controls the FastAPI application server. NOT overridable per-request.
+# Bind address is driven by uvicorn's --host / --port CLI flags
+# (configured in the Dockerfile CMD or the dev `make` target); the
+# interface section does not carry host/port any more.
+
+interface:
+  cors_origins: # Allowed CORS origins
+    - '*'
+  request_timeout_seconds: 300 # Max request duration in seconds (min 1)
+  max_concurrent_requests: 50 # Concurrent request limit (min 1)
+
+  request_validation:
+    max_input_length: 100000 # Max request body size in characters
+    require_agent_id: false # Require agent_id in every request
+    validate_json_schema: true # Validate request against JSON schema
+
+  rate_limiting:
+    enabled: false # Enable rate limiting
+    requests_per_minute: 60 # RPM limit (0 = unlimited)
+    requests_per_second: 0 # RPS limit (0 = unlimited)
+    burst_size: 5 # Allow burst requests above rate
+    by_agent_id: true # Apply limits per agent separately
+    by_ip: false # Apply limits per client IP
+
+# ╔════════════════════════════════════════════════════════════════════════════╗
+# ║  GATEWAY — LLM Gateway (Bifrost/LiteLLM) Configuration                   ║
+# ╚════════════════════════════════════════════════════════════════════════════╝
+# The framework never calls LLM APIs directly — all calls route through the
+# gateway proxy. Model routing, failover, rate limiting, cost tracking, and
+# provider abstraction are all handled by the gateway (Bifrost/LiteLLM).
+#
+# Per-request override: Yes (all fields)
+# Env vars: AGENT_GATEWAY__URL, AGENT_GATEWAY__API_KEY, etc.
+
+gateway:
+  url: 'http://localhost:4000' # Bifrost/LiteLLM proxy URL
+  api_key: '' # API key for gateway auth (empty if internal)
+  default_model: anthropic/claude-sonnet-4-20250514 # Fallback when neither agent nor inner agent specifies model
+  request_timeout_seconds: 120 # Per-LLM-call timeout (1–600)
+  retry_on_timeout: true # Retry on timeout
+  max_retries: 2 # Max retry attempts (0–5)
+
+  tool_loop:
+    max_tool_rounds: 10 # Max LLM↔tool roundtrips (1–100)
+    tool_choice: auto # auto | required | none
+    allow_parallel_tool_calls: true # Allow LLM to request multiple tools at once
+    parallel_execution: true # Execute multiple tool calls concurrently
+
+  usage_tracking:
+    enabled: true # Enable local usage tracking
+    track_by_model: true # Breakdown usage per model
+    track_by_agent: true # Breakdown usage per inner agent name
+    history_size: 1000 # Max tracking entries to retain (1–10000)
+    cost_calculation_method: passthrough # passthrough (from Bifrost) | local
+
+# ╔════════════════════════════════════════════════════════════════════════════╗
+# ║  GUARDRAILS — Safety Pipeline Configuration                               ║
+# ╚════════════════════════════════════════════════════════════════════════════╝
+# Three-stage pipeline: Input → Output → Tool
+#   Input:  validate/sanitize BEFORE adapter sees the request
+#   Output: filter/validate AFTER adapter returns response
+#   Tool:   authorize BEFORE each MCP tool call
+#
+# Guardrails operate at the TOP level (wrapping the entire framework execution),
+# not per inner agent. If inner agent "researcher" calls a tool, the tool
+# guardrail still applies.
+#
+# Per-request override: Yes (enabled, fail_open)
+# Env vars: AGENT_GUARDRAILS__ENABLED, AGENT_GUARDRAILS__FAIL_OPEN, etc.
+
+guardrails:
+  enabled: true # Master switch for all guardrails
+  fail_open: false # If true, guardrail errors allow request to proceed
+  log_blocked_requests: true # Log requests blocked by guardrails
+
+  input_guardrails:
+    - name: input_validator
+      enabled: true
+      action_on_trigger: block
+      config:
+        max_length: 10000
+        min_length: 1
+
+    - name: prompt_injection
+      enabled: true
+      action_on_trigger: block
+      config:
+        patterns:
+          - 'ignore previous instructions'
+          - 'system prompt'
+
+    - name: pii_masker
+      enabled: true
+      action_on_trigger: modify
+      config:
+        mask_email: true
+        mask_phone: true
+        mask_ssn: true
+        mask_cc: true
+
+  output_guardrails:
+    - name: content_filter
+      enabled: true
+      action_on_trigger: block
+      config: {}
+
+    - name: pii_masker
+      enabled: true
+      action_on_trigger: modify
+      config:
+        mask_email: true
+        mask_phone: true
+        mask_ssn: true
+        mask_cc: true
+
+    - name: output_length
+      enabled: true
+      action_on_trigger: block
+      config:
+        max_chars: 50000
+
+  tool_guardrails:
+    mode: denylist # allowlist | denylist
+    tools: [] # Tool names for the policy
+    max_calls_per_request: 20 # Max tool calls per request (1–100)
+
+  # ─── Per-Agent Guardrail Overrides ──────────────────────────────────────
+  # Override guardrails for a specific top-level agent_id.
+  # Keys match the agent_id in the URL: POST /agents/{agent_id}/invoke
+  # agent_overrides:
+  #   customer-support:
+  #     input_guardrails:
+  #       - name: pii_masker
+  #         enabled: true
+  #         action_on_trigger: modify
+  #         config:
+  #           mask_email: false
+  #           mask_phone: true
+  #           mask_ssn: true
+  #           mask_cc: true
+  #     tool_policy:
+  #       mode: allowlist
+  #       tools: ["knowledge-base.search", "knowledge-base.get_article"]
+  #       max_calls_per_request: 5
+
+# ╔════════════════════════════════════════════════════════════════════════════╗
+# ║  MCP — Model Context Protocol (Global Settings)                           ║
+# ╚════════════════════════════════════════════════════════════════════════════╝
+# Controls how the framework connects to and manages MCP tool servers.
+# Inner agents reference MCP servers by name (e.g., mcp_servers: ["web-search"]).
+# NOT overridable per-request (server-level settings).
+#
+# Env vars: AGENT_MCP__LAZY_CONNECT, AGENT_MCP__TOOL_CALL_TIMEOUT_SECONDS, etc.
+
+mcp:
+  connection_timeout_seconds: 30 # Connection timeout per server (1–300)
+  lazy_connect: true # true = connect on first use; false = at startup
+  tool_call_timeout_seconds: 60 # Per-tool-call execution timeout (1–600)
+  max_tool_retries: 1 # Retry count for failed tool calls (0–3)
+  retry_on_timeout: true # Retry on tool call timeout
+  discovery_on_connect: true # Auto-discover tools when connecting
+  tool_name_format: qualified # qualified = server.tool_name; bare = tool_name
+  max_concurrent_tool_calls: 5 # Max parallel tool executions (1–20)
+
+# ╔════════════════════════════════════════════════════════════════════════════╗
+# ║  MCP SERVERS — Individual Server Definitions                              ║
+# ╚════════════════════════════════════════════════════════════════════════════╝
+# Defined inline under mcp_servers[]. There is no external file option —
+# servers travel with each team's JSON config.
+# Inner agents reference these by name in their mcp_servers list.
+#
+# Transport types:
+#   stdio:            subprocess via stdin/stdout
+#   sse:              HTTP Server-Sent Events
+#   streamable-http:  HTTP with streaming
+#
+# Environment variable interpolation: ${ENV_VAR_NAME}
+
+mcp_servers:
+  # filesystem:
+  #   transport: stdio
+  #   command: npx
+  #   args: ["-y", "@modelcontextprotocol/server-filesystem", "/workspace/data"]
+  #   env: {}
+  #   enabled: true
+  #   description: "File system access"
+  #   tags: ["storage", "filesystem"]
+
+  # web-search:
+  #   transport: sse
+  #   url: "http://mcp-web-search:8080/sse"
+  #   headers:
+  #     Authorization: "Bearer ${WEB_SEARCH_KEY}"
+  #   timeout_seconds: 10
+  #   enabled: true
+  #   description: "Web search"
+  #   tags: ["search", "web"]
+
+  # document-store:
+  #   transport: sse
+  #   url: "http://mcp-docstore:8082/sse"
+  #   timeout_seconds: 15
+  #   enabled: true
+  #   description: "Document storage and retrieval"
+  #   tags: ["storage", "documents"]
+
+  # code-executor:
+  #   transport: streamable-http
+  #   url: "http://mcp-code-exec:9000/mcp"
+  #   timeout_seconds: 60
+  #   sse_read_timeout_seconds: 120
+  #   enabled: true
+  #   description: "Sandboxed code execution"
+  #   tags: ["code", "execution"]
+
+# ╔════════════════════════════════════════════════════════════════════════════╗
+# ║  LOGGING — Structured Logging Configuration                               ║
+# ╚════════════════════════════════════════════════════════════════════════════╝
+# NOT overridable per-request.
+# Env vars: AGENT_LOGGING__LEVEL, AGENT_LOGGING__FORMAT, etc.
+
+logging:
+  level: INFO # DEBUG | INFO | WARNING | ERROR | CRITICAL
+  format: json # json | human
+  include_timestamp: true # Include ISO-8601 timestamp
+
+# ╔════════════════════════════════════════════════════════════════════════════╗
+# ║  STREAMING — Response Streaming Configuration                             ║
+# ╚════════════════════════════════════════════════════════════════════════════╝
+# Controls SSE and WebSocket streaming behaviour.
+# Per-request override: Yes (enabled)
+
+streaming:
+  enabled: true # Allow streaming responses
+  token_chunk_size: 1 # Tokens per SSE/WS chunk (1–100)
+  include_usage_in_stream: false # Include token usage in stream events
+  include_metadata: true # Include metadata in stream events
+
+# ╔════════════════════════════════════════════════════════════════════════════╗
+# ║  MEMORY — Conversation Memory Configuration                               ║
+# ╚════════════════════════════════════════════════════════════════════════════╝
+# Controls how conversation history is maintained across requests.
+# NOT overridable per-request (set at startup).
+
+memory:
+  enabled: false # Enable conversation history tracking
+  type: conversation # conversation | long_term | hybrid
+  max_history_size: 50 # Max conversation turns to retain (1–1000)
+  max_context_tokens: 8192 # Max context window tokens (1–200000)
+  summarize_after_turns: 0 # Summarize after N turns (0 = disabled)
+  persist_to_db: false # Save to persistent storage
+  storage_backend: memory # memory | redis | postgres | mongodb
+  ttl_seconds: 3600 # Memory TTL in seconds (0 = forever)
+
+# ╔════════════════════════════════════════════════════════════════════════════╗
+# ║  ERROR HANDLING — Resilience Configuration                                ║
+# ╚════════════════════════════════════════════════════════════════════════════╝
+# Controls retry and fallback behaviour at the top-level agent.
+
+error_handling:
+  max_retries: 2 # Retries for agent-level failures (0–5)
+  retry_backoff_seconds: 1 # Initial exponential backoff (seconds)
+  max_backoff_seconds: 60 # Maximum backoff cap (seconds)
+  timeout_behavior: fail # fail | retry | degrade
+  fallback_agent: '' # Agent to fall back to on error (empty = none)
+  retry_on_guardrail_block: false # Retry if guardrails block the request
+
+# ╔════════════════════════════════════════════════════════════════════════════╗
+# ║  ORCHESTRATION PATTERN EXAMPLES                                           ║
+# ╚════════════════════════════════════════════════════════════════════════════╝
+#
+# ── Pattern 1: Single Agent ─────────────────────────────────────────────────
+# The simplest pattern — one agent handles the entire request.
+# Uses type: "single" which bypasses orchestration entirely.
+#
+#   semantic_kernel:
+#     agents:
+#       - name: assistant
+#         instructions: "You are a helpful general-purpose assistant."
+#         model: anthropic/claude-sonnet-4-20250514
+#         tools: []
+#         mcp_servers: ["filesystem", "web-search"]
+#     orchestration:
+#       type: single
+#
+# ── Pattern 2: Sequential Pipeline ──────────────────────────────────────────
+# Agents run one after another, each building on the previous output.
+# (This is what the main example above demonstrates.)
+#
+#   semantic_kernel:
+#     agents: [researcher, analyst, synthesizer]
+#     orchestration:
+#       type: sequential
+#       termination_strategy:
+#         type: default
+#         maximum_iterations: 3
+#
+# ── Pattern 3: Concurrent (Fan-Out/Merge) ───────────────────────────────────
+# All agents run simultaneously on the same input. Useful for getting
+# multiple perspectives or parallel processing of different subtasks.
+#
+#   semantic_kernel:
+#     agents:
+#       - name: sentiment_analyzer
+#         instructions: "Analyze the sentiment of the given text."
+#         model: anthropic/claude-sonnet-4-20250514
+#       - name: entity_extractor
+#         instructions: "Extract all named entities from the text."
+#         model: anthropic/claude-sonnet-4-20250514
+#       - name: topic_classifier
+#         instructions: "Classify the text into relevant topics."
+#         model: anthropic/claude-sonnet-4-20250514
+#     orchestration:
+#       type: concurrent
+#       termination_strategy:
+#         type: default
+#         maximum_iterations: 1
+#
+# ── Pattern 4: Handoff (Routing/Triage) ─────────────────────────────────────
+# Agents transfer control to each other based on the conversation.
+# Handoff definitions create explicit routes between agents.
+#
+#   semantic_kernel:
+#     agents:
+#       - name: triage
+#         instructions: "Route customer requests to the right specialist."
+#         description: "Initial triage agent"
+#         model: anthropic/claude-sonnet-4-20250514
+#       - name: billing
+#         instructions: "Handle billing inquiries, refunds, and charges."
+#         description: "Billing specialist"
+#         model: anthropic/claude-sonnet-4-20250514
+#       - name: technical
+#         instructions: "Handle technical issues, bugs, and setup help."
+#         description: "Technical support agent"
+#         model: anthropic/claude-sonnet-4-20250514
+#     orchestration:
+#       type: handoff
+#       handoffs:
+#         - source: triage
+#           target: billing
+#           description: "Transfer billing questions to billing agent"
+#         - source: triage
+#           target: technical
+#           description: "Transfer tech issues to technical agent"
+#         - source: billing
+#           target: triage
+#           description: "Transfer back for re-routing"
+#         - source: technical
+#           target: triage
+#           description: "Transfer back for re-routing"
+#       termination_strategy:
+#         type: default
+#         maximum_iterations: 10
+#
+# ── Pattern 5: GroupChat ────────────────────────────────────────────────────
+# Agents converse in a shared chat, with a selection strategy deciding
+# who speaks next. Good for brainstorming, debate, or multi-perspective tasks.
+#
+#   semantic_kernel:
+#     agents:
+#       - name: pm
+#         instructions: "You are a product manager. Focus on user needs."
+#       - name: engineer
+#         instructions: "You are a senior engineer. Focus on feasibility."
+#       - name: designer
+#         instructions: "You are a UX designer. Focus on usability."
+#     orchestration:
+#       type: group_chat
+#       selection_strategy:
+#         type: kernel_function
+#         function_prompt: "Given the conversation, which agent should speak next? Choose from: {{$_agent_}}."
+#       termination_strategy:
+#         type: keyword
+#         keywords: ["CONSENSUS REACHED"]
+#         maximum_iterations: 15
+#
+# ── Pattern 6: Magentic-One (Autonomous Orchestrator) ───────────────────────
+# A manager agent (LLM-driven) autonomously decides which specialist to
+# invoke next. The manager plans, delegates, and verifies results.
+#
+#   semantic_kernel:
+#     agents:
+#       - name: coder
+#         instructions: "Write and execute code to solve tasks."
+#         mcp_servers: ["code-executor"]
+#       - name: researcher
+#         instructions: "Search and gather information from the web."
+#         mcp_servers: ["web-search"]
+#       - name: file-handler
+#         instructions: "Read, write, and manage files."
+#         mcp_servers: ["filesystem"]
+#     orchestration:
+#       type: magentic
+#       magentic_manager_model: anthropic/claude-opus-4-20250514
+#       magentic_manager_temperature: 0.0
+#       max_rounds: 30
+#
+# ============================================================================
+
+# ============================================================================
+# REQUEST PAYLOAD EXAMPLES
+# ============================================================================
+#
+# ── Simple invoke (uses default agent) ─────────────────────────────────────
+#
+#   POST /agents/default/invoke
+#   {
+#     "input": "What's the weather in NYC?"
+#   }
+#
+# ── Invoke with per-request overrides ──────────────────────────────────────
+#
+#   POST /agents/default/invoke
+#   {
+#     "input": "Research the latest AI agent frameworks",
+#     "session_id": "sess_abc123",
+#     "metadata": {"source": "web-chat"},
+#     "config_overrides": {
+#       "agent": {
+#         "model": "openai/gpt-4o",
+#         "temperature": 0.2,
+#         "timeout_seconds": 600
+#       },
+#       "gateway": {
+#         "tool_loop": {
+#           "max_tool_rounds": 20
+#         }
+#       },
+#       "guardrails": {
+#         "enabled": false
+#       }
+#     }
+#   }
+#
+# ── Fields that CANNOT be overridden per-request ───────────────────────────
+#   agent.framework              (set at startup)
+#   semantic_kernel              (inner agent definitions; key retained for back-compat)
+#   interface.*                  (server-level)
+#   mcp.*                        (server-level)
+#   mcp_servers.*                (server-level)
+#   logging.*                    (server-level)
+#   memory.*                     (storage config set at startup)
+#
+# ============================================================================
+
+# ============================================================================
+# ENVIRONMENT VARIABLE REFERENCE
+# ============================================================================
+#
+# Agent:
+#   AGENT_AGENT__FRAMEWORK=maf
+#   AGENT_AGENT__MODEL=anthropic/claude-sonnet-4-20250514
+#   AGENT_AGENT__TEMPERATURE=0.7
+#   AGENT_AGENT__MAX_TOKENS=4096
+#   AGENT_AGENT__TIMEOUT_SECONDS=300
+#
+# Interface (host/port driven by uvicorn CLI flags, not env):
+#   AGENT_INTERFACE__CORS_ORIGINS=["*"]
+#   AGENT_INTERFACE__REQUEST_TIMEOUT_SECONDS=300
+#   AGENT_INTERFACE__MAX_CONCURRENT_REQUESTS=50
+#   AGENT_INTERFACE__RATE_LIMITING__ENABLED=false
+#
+# Gateway:
+#   AGENT_GATEWAY__URL=http://localhost:4000
+#   AGENT_GATEWAY__API_KEY=
+#   AGENT_GATEWAY__DEFAULT_MODEL=anthropic/claude-sonnet-4-20250514
+#   AGENT_GATEWAY__REQUEST_TIMEOUT_SECONDS=120
+#   AGENT_GATEWAY__RETRY_ON_TIMEOUT=true
+#   AGENT_GATEWAY__MAX_RETRIES=2
+#   AGENT_GATEWAY__TOOL_LOOP__MAX_TOOL_ROUNDS=10
+#   AGENT_GATEWAY__USAGE_TRACKING__ENABLED=true
+#
+# Guardrails:
+#   AGENT_GUARDRAILS__ENABLED=true
+#   AGENT_GUARDRAILS__FAIL_OPEN=false
+#   AGENT_GUARDRAILS__LOG_BLOCKED_REQUESTS=true
+#
+# MCP:
+#   AGENT_MCP__CONNECTION_TIMEOUT_SECONDS=30
+#   AGENT_MCP__LAZY_CONNECT=true
+#   AGENT_MCP__TOOL_CALL_TIMEOUT_SECONDS=60
+#   AGENT_MCP__MAX_TOOL_RETRIES=1
+#   AGENT_MCP__RETRY_ON_TIMEOUT=true
+#   AGENT_MCP__DISCOVERY_ON_CONNECT=true
+#   AGENT_MCP__TOOL_NAME_FORMAT=qualified
+#   AGENT_MCP__MAX_CONCURRENT_TOOL_CALLS=5
+#
+# Streaming:
+#   AGENT_STREAMING__ENABLED=true
+#   AGENT_STREAMING__TOKEN_CHUNK_SIZE=1
+#
+# Memory:
+#   AGENT_MEMORY__ENABLED=false
+#   AGENT_MEMORY__TYPE=conversation
+#   AGENT_MEMORY__STORAGE_BACKEND=memory
+#
+# Logging:
+#   AGENT_LOGGING__LEVEL=INFO
+#   AGENT_LOGGING__FORMAT=json
+#   AGENT_LOGGING__INCLUDE_TIMESTAMP=true
+#
+# ============================================================================

@@ -1,0 +1,13 @@
+{{- if .Values.namespacePodSecurity }}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .Values.namespace }}
+  labels:
+    {{- include "database.labels" . | nindent 4 }}
+    istio-injection: enabled
+    pod-security.kubernetes.io/enforce: {{ .Values.namespacePodSecurity.enforce }}
+    pod-security.kubernetes.io/audit: {{ .Values.namespacePodSecurity.audit }}
+    pod-security.kubernetes.io/warn: {{ .Values.namespacePodSecurity.warn }}
+{{- end }}
+

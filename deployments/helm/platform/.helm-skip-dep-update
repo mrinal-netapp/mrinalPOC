@@ -1,0 +1,12 @@
+# Presence of this file tells the Makefile (mk/tier-helm.mk helm_upgrade_tier,
+# helm_template_all_tiers; mk/common.mk helm-deps-update; mk/cloud/*.mk
+# smoke-test targets) to SKIP `helm dependency update` for the platform tier.
+#
+# Why: platform's remote chart deps (redis, lakekeeper) are VENDORED as
+# committed .tgz under charts/. Bitnami's legacy index now redirects the redis
+# blob to Docker Hub OCI (registry-1.docker.io), which rate-limits (HTTP 429)
+# and was failing AKS+GKE deploys. Vendoring + skipping dep-update removes that
+# per-deploy network pull entirely.
+#
+# To refresh after bumping a dependency version in Chart.yaml:
+#   make vendor-platform-deps

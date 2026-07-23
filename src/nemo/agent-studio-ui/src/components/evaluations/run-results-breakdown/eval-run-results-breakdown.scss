@@ -1,0 +1,79 @@
+@use "@/styles/mixins" as *;
+
+.eval-run-results-breakdown {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+// Even-column scorecard strip matching the Overview "Latest run" row: cells
+// share the full width via flex, separated by thin vertical dividers, and wrap
+// (then stack on mobile) as more metrics are added.
+.eval-run-results-breakdown__metrics {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+}
+
+.eval-run-results-breakdown__metric-cell {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+  min-width: 0;
+  flex: 1 1 180px;
+  padding: 16px 24px;
+
+  &:not(:first-child) {
+    border-left: 1px solid var(--border-main);
+  }
+}
+
+@include tablet {
+  .eval-run-results-breakdown__metrics {
+    flex-direction: column;
+  }
+
+  .eval-run-results-breakdown__metric-cell:not(:first-child) {
+    border-left: none;
+    border-top: 1px solid var(--border-main);
+  }
+}
+
+.eval-run-results-breakdown__gates {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.eval-run-results-breakdown__gates-list {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border-default);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.eval-run-results-breakdown__gate-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border-default);
+
+  &:last-child {
+    border-bottom: none;
+  }
+}
+
+.eval-run-results-breakdown__gate-icon {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.eval-run-results-breakdown__gate-label {
+  flex: 1;
+  min-width: 0;
+}

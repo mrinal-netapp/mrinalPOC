@@ -1,0 +1,135 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "description": "Virtual network and subnets for AgentStudio. Creates one VNet with three subnets: AKS nodes (Azure CNI), internal load balancer, and Azure NetApp Files (delegated to Microsoft.Netapp/volumes). Deploy this template before AKS and ANF."
+  },
+  "parameters": {
+    "vnetName": {
+      "type": "string",
+      "metadata": {
+        "description": "Name of the virtual network."
+      }
+    },
+    "location": {
+      "type": "string",
+      "defaultValue": "[resourceGroup().location]",
+      "metadata": {
+        "description": "Azure region; defaults to the resource group location."
+      }
+    },
+    "vnetAddressPrefix": {
+      "type": "string",
+      "metadata": {
+        "description": "Address space for the VNet (e.g. 10.0.0.0/16)."
+      }
+    },
+    "aksSubnetName": {
+      "type": "string",
+      "metadata": {
+        "description": "Name for the AKS node subnet."
+      }
+    },
+    "aksSubnetPrefix": {
+      "type": "string",
+      "metadata": {
+        "description": "CIDR for the AKS node subnet (e.g. 10.0.0.0/22). Must be large enough for nodes and Azure CNI pod IPs."
+      }
+    },
+    "ilbSubnetName": {
+      "type": "string",
+      "metadata": {
+        "description": "Name for the internal load balancer subnet."
+      }
+    },
+    "ilbSubnetPrefix": {
+      "type": "string",
+      "metadata": {
+        "description": "CIDR for the internal load balancer subnet (e.g. 10.0.4.0/24). Must not overlap other subnets."
+      }
+    },
+    "anfSubnetName": {
+      "type": "string",
+      "metadata": {
+        "description": "Name for the Azure NetApp Files delegated subnet."
+      }
+    },
+    "anfSubnetPrefix": {
+      "type": "string",
+      "metadata": {
+        "description": "CIDR for the ANF delegated subnet (e.g. 10.0.8.0/24). Must not overlap other subnets."
+      }
+    }
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Network/virtualNetworks",
+      "apiVersion": "2023-11-01",
+      "name": "[parameters('vnetName')]",
+      "location": "[parameters('location')]",
+      "properties": {
+        "addressSpace": {
+          "addressPrefixes": [
+            "[parameters('vnetAddressPrefix')]"
+          ]
+        },
+        "subnets": [
+          {
+            "name": "[parameters('aksSubnetName')]",
+            "properties": {
+              "addressPrefix": "[parameters('aksSubnetPrefix')]",
+              "privateEndpointNetworkPolicies": "Disabled",
+              "privateLinkServiceNetworkPolicies": "Enabled"
+            }
+          },
+          {
+            "name": "[parameters('ilbSubnetName')]",
+            "properties": {
+              "addressPrefix": "[parameters('ilbSubnetPrefix')]",
+              "privateEndpointNetworkPolicies": "Disabled",
+              "privateLinkServiceNetworkPolicies": "Enabled"
+            }
+          },
+          {
+            "name": "[parameters('anfSubnetName')]",
+            "properties": {
+              "addressPrefix": "[parameters('anfSubnetPrefix')]",
+              "delegations": [
+                {
+                  "name": "netAppDelegation",
+                  "properties": {
+                    "serviceName": "Microsoft.Netapp/volumes"
+                  }
+                }
+              ],
+              "privateEndpointNetworkPolicies": "Disabled",
+              "privateLinkServiceNetworkPolicies": "Enabled"
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "outputs": {
+    "vnetId": {
+      "type": "string",
+      "value": "[resourceId('Microsoft.Network/virtualNetworks', parameters('vnetName'))]"
+    },
+    "vnetName": {
+      "type": "string",
+      "value": "[parameters('vnetName')]"
+    },
+    "aksSubnetId": {
+      "type": "string",
+      "value": "[resourceId('Microsoft.Network/virtualNetworks/subnets', parameters('vnetName'), parameters('aksSubnetName'))]"
+    },
+    "ilbSubnetId": {
+      "type": "string",
+      "value": "[resourceId('Microsoft.Network/virtualNetworks/subnets', parameters('vnetName'), parameters('ilbSubnetName'))]"
+    },
+    "anfSubnetId": {
+      "type": "string",
+      "value": "[resourceId('Microsoft.Network/virtualNetworks/subnets', parameters('vnetName'), parameters('anfSubnetName'))]"
+    }
+  }
+}

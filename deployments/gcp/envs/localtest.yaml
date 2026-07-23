@@ -1,0 +1,109 @@
+# localtest.yaml -- throwaway GCNV + GKE bringup test environment.
+#
+# Prerequisites (one-time per project):
+#   gcloud auth login && gcloud config set project agent-studio-netapp
+#   gcloud services enable config.googleapis.com container.googleapis.com compute.googleapis.com \
+#     servicenetworking.googleapis.com netapp.googleapis.com dns.googleapis.com artifactregistry.googleapis.com \
+#     cloudquotas.googleapis.com
+#   IM runner SA (export GCP_SERVICE_ACCOUNT — same as GitHub Environment var) needs:
+#     roles/config.admin roles/compute.networkAdmin roles/container.admin roles/iam.serviceAccountUser
+#     roles/resourcemanager.projectIamAdmin  # bind roles/netapp.admin to Trident GSA (see docs below)
+#   GCNV NetApp PSA peering (netapp.servicenetworking.goog) is provisioned by Terraform modules/psa.
+#   Cloud Ops ticket (IAM only): docs/deployment/gcp-im-runner-cloud-ops-request.md
+#   Billing + NetApp Volumes (GCNV) API quota for the target region.
+#
+# Bringup (three layers):
+#   make infra CLOUD=gcp ENV=localtest ACTION=plan
+#   make infra CLOUD=gcp ENV=localtest ACTION=apply
+#   make storage CLOUD=gcp ENV=localtest
+#   export SKIP_CLUSTER_CREATE=1
+#   make deploy-gke ENDPOINT=... CONTAINER_IMAGE_REPO=... IMAGE_TAG=...
+#
+# Tear down:
+#   make infra CLOUD=gcp ENV=localtest ACTION=destroy CONFIRM=localtest
+#
+# Node sizing: general pool = 2x e2-standard-8 (8 vCPU, 32 GiB each — meets 8 vCPU / 16 GiB min).
+# SAN pool = 1x e2-standard-4 (Ubuntu + iSCSI for GCNV SAN RWO DB volumes; required for dual GCNV path).
+# Region us-east4 aligns with agentstudio-dev GAR + GCNV; separate VPC/cluster from dev (no CIDR overlap).
+
+env: localtest
+projectId: agent-studio-netapp
+location: us-east4
+deploymentId: agentstudio-localtest
+
+application:
+  endpoint: auth.agentstudio.local
+
+tags:
+  creator: ng-agent-studio
+
+# Shared GAR (same repo as agentstudio-dev); infra only grants node SA reader — does not create a repo.
+# Deploy: CONTAINER_IMAGE_REPO=us-east4-docker.pkg.dev/agent-studio-netapp/agentstudio
+containerRegistry:
+  mode: shared
+  repositoryId: agentstudio
+
+networking:
+  vpcName: vpc-agentstudio-localtest
+  subnetName: snet-gke-localtest
+  subnetCidr: 10.252.0.0/20
+  podsSecondaryCidr: 10.252.16.0/20
+  servicesSecondaryCidr: 10.252.32.0/24
+  psaRangeName: agentstudio-localtest-psa
+  psaPrefixLength: 20
+
+gke:
+  clusterName: gke-agentstudio-localtest
+  releaseChannel: REGULAR
+  deletionProtection: false
+  nodePools:
+    - name: general
+      machineType: e2-standard-8
+      minCount: 2
+      maxCount: 4
+      diskSizeGiB: 100
+      imageType: COS_CONTAINERD
+      labels:
+        workload-arch: amd64
+    - name: san-ubuntu-pool
+      machineType: e2-standard-4
+      minCount: 1
+      maxCount: 1
+      diskSizeGiB: 100
+      imageType: UBUNTU_CONTAINERD
+      labels:
+        agentstudio.netapp.io/san: "true"
+      taints:
+        - key: agentstudio.netapp.io/san
+          value: "true"
+          effect: NO_SCHEDULE
+
+storage:
+  nasPoolName: sp-agentstudio-localtest-gcnv-nas
+  sanPoolName: sp-agentstudio-localtest-gcnv-san
+  # localtest uses flex NAS: provisions in minutes (vs standard's slow hardware
+  # tier) with the same 16 KiB/s per-GiB throughput. Flex creation speed is
+  # independent of capacity, so we keep 4 TiB to fit the 1 TiB defaultBucketPvc
+  # (gcnv-nas-rwx) plus service/smoke volumes. dev/preprod omit nasServiceLevel
+  # and default to standard.
+  nasServiceLevel: flex
+  nasCapacityGiB: 4096
+  sanCapacityGiB: 4096
+  trident:
+    helmVersion: "100.2410.0"
+    namespace: trident
+    gsaName: trident-controller-localtest
+    serviceAccount: trident-controller
+  gcnv:
+    nasBackendName: gcnv-native-nas-backend
+    sanBackendName: gcnv-native-san-backend
+    nasStorageClass: gcnv-nas-rwx
+    sanStorageClass: gcnv-san-rwo
+
+edge:
+  gatewayAddressName: agentstudio-localtest-gw-ip
+
+dns:
+  createZone: false
+
+

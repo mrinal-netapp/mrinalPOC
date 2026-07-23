@@ -1,0 +1,77 @@
+# localtest.yaml -- full AgentStudio EKS bringup (infra + storage + deploy).
+#
+#   make infra CLOUD=aws ENV=localtest ACTION=plan
+#   make infra CLOUD=aws ENV=localtest ACTION=apply
+#   make storage CLOUD=aws ENV=localtest
+#   export SKIP_CLUSTER_CREATE=1
+#   make deploy-eks ENDPOINT=... CONTAINER_IMAGE_REPO=... IMAGE_TAG=...
+#
+# Sizing: 2x m6i.2xlarge (8 vCPU, 32 GiB RAM each), 4 TiB FSx ONTAP (NAS/RWX).
+# WARNING: ACTION=apply is costly (EKS + NAT + FSx). Plan first.
+#
+# Uses VPC CIDR 10.252.x to coexist with dev/preprod in one account.
+
+env: localtest
+region: us-east-2
+stackName: agentstudio-localtest
+
+application:
+  endpoint: agentstudio-localtest.example.com
+  projectName: agentstudio
+  # CF template allows dev|test|prod only; env file name stays localtest.
+  environment: test
+
+tags:
+  creator: agentstudio
+
+networking:
+  vpcCidr: 10.252.0.0/16
+  publicSubnet1Cidr: 10.252.0.0/20
+  publicSubnet2Cidr: 10.252.16.0/20
+  privateSubnet1Cidr: 10.252.32.0/20
+  privateSubnet2Cidr: 10.252.48.0/20
+
+eks:
+  kubernetesVersion: "1.32"
+  endpointPublicAccess: true
+  endpointPrivateAccess: true
+  nodeGroups:
+    - name: general
+      instanceTypes: [m6i.2xlarge]
+      amiType: AL2_x86_64
+      capacityType: ON_DEMAND
+      scaling:
+        desiredSize: 3
+        minSize: 2
+        maxSize: 3
+      diskSizeGiB: 100
+      labels:
+        workload: general
+
+fsx:
+  storageCapacityGiB: 4096
+  throughputCapacity: 768
+  deploymentType: SINGLE_AZ_2
+  # svmName defaults to <stackName>-svm (agentstudio-localtest-svm) when omitted
+
+installer:
+  enableInstance: false
+  instanceType: t3.large
+  volumeSizeGiB: 100
+  tridentHelmVersion: "100.2410.0"
+
+storage:
+  trident:
+    helmVersion: "100.2410.0"
+    namespace: trident
+    serviceAccount: trident-controller
+  fsxn:
+    backendName: fsxn-nas-backend
+    storageClassName: fsxn-nas
+    markAsDefault: true
+    credentialsFrom: stackOutput
+
+# Shared ECR for all envs (images built/pushed by CI — not created per stack).
+containerRegistry:
+  mode: shared
+  loginServer: 721140971281.dkr.ecr.us-east-2.amazonaws.com

@@ -1,0 +1,42 @@
+.ds-status-error-tooltip-trigger {
+  all: unset;
+  cursor: pointer;
+  display: inline-flex;
+
+  &:focus-visible {
+    outline: 2px solid var(--border-focus-outline);
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+}
+
+.ds-status-error-tooltip-popup {
+  pointer-events: auto;
+  max-width: min(520px, 90vw);
+  padding: 10px 12px;
+}
+
+.ds-status-error-tooltip {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.ds-status-error-tooltip__header {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.ds-status-error-tooltip__copy-btn {
+  flex-shrink: 0;
+}
+
+.ds-status-error-tooltip__message {
+  margin: 0;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
+}

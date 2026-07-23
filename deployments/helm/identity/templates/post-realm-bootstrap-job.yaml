@@ -1,0 +1,325 @@
+{{- /*
+Post-realm-bootstrap UUID resolver Job.
+
+Runs as a Helm post-install/post-upgrade hook at weight=10 — strictly after
+the realm-bootstrap Job (weight=5). Resolves the runtime UUID of the
+`agent-studio-api` resource-server client and PATCHes it into
+`keycloak-oidc-secrets.resource-server-uuid`. Idempotent on re-runs.
+
+Gated identically to keycloak-oidc-secrets.yaml: only renders when this
+chart owns the Secret. On overlays where the Secret is provisioned
+out-of-band (e.g. AKS Key Vault flow), the operator pipeline owns the
+UUID resolution as part of the same flow.
+
+Separate Job (not a tail step in realm-bootstrap-job) because the
+keycloak image lacks curl/wget/awk — running on init-tools is cleaner
+than calling the K8s API from `bash /dev/tcp`.
+*/ -}}
+{{- if and .Values.realmBootstrap.enabled .Values.keycloak.oidcClients (not .Values.skipKeycloakOidcSecrets) -}}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "keycloak.fullname" . }}-post-realm-bootstrap
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "keycloak.labels" . | nindent 4 }}
+    app.kubernetes.io/component: post-realm-bootstrap
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "8"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+{{- with .Values.global.imagePullSecrets }}
+imagePullSecrets:
+  {{- range . }}
+  {{- if kindIs "string" . }}
+  - name: {{ . | quote }}
+  {{- else if kindIs "map" . }}
+  - {{- toYaml . | nindent 4 }}
+  {{- else }}
+  - name: {{ . | quote }}
+  {{- end }}
+  {{- end }}
+{{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "keycloak.fullname" . }}-post-realm-bootstrap
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "keycloak.labels" . | nindent 4 }}
+    app.kubernetes.io/component: post-realm-bootstrap
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "8"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+rules:
+  ## Scoped to one Secret name, get/patch only — the Job issues an HTTP PATCH
+  ## (RBAC verb `patch`); `get` is kept defensively for debug/inspection paths.
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["keycloak-oidc-secrets"]
+    verbs: ["get", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "keycloak.fullname" . }}-post-realm-bootstrap
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "keycloak.labels" . | nindent 4 }}
+    app.kubernetes.io/component: post-realm-bootstrap
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "8"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "keycloak.fullname" . }}-post-realm-bootstrap
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "keycloak.fullname" . }}-post-realm-bootstrap
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "keycloak.fullname" . }}-post-realm-bootstrap
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "keycloak.labels" . | nindent 4 }}
+    app.kubernetes.io/component: post-realm-bootstrap
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "10"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        {{- include "keycloak.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: post-realm-bootstrap
+      annotations:
+        # Skip Istio sidecar injection on this one-shot Job — sidecars
+        # don't exit when the main container completes and the pod
+        # would never reach Succeeded. Safe here because the Job only
+        # calls Keycloak on port 8080, which the `keycloak-http-permissive`
+        # PeerAuthentication exposes in PERMISSIVE mode.
+        sidecar.istio.io/inject: "false"
+    spec:
+      restartPolicy: OnFailure
+      serviceAccountName: {{ include "keycloak.fullname" . }}-post-realm-bootstrap
+      securityContext:
+        ## init-tools image runs as 65534:65534; don't override.
+        runAsNonRoot: true
+      containers:
+        - name: resolver
+          ## Image: chart-local override > ${global.imageRepository}/init-tools > render-time fail.
+          ## .image.repository accepts either a path (`ghcr.io/foo/init-tools` — `.tag`
+          ## appended) or a fully-pinned ref (`…/init-tools:v1.2.3` or `…@sha256:…` —
+          ## used verbatim, `.tag` ignored). Detection: trailing `:<non-slash>` at end
+          ## of string OR any `@` (digest separator).
+          {{- $repo  := .Values.postRealmBootstrap.image.repository | default "" -}}
+          {{- $tag   := .Values.postRealmBootstrap.image.tag | default "latest" -}}
+          {{- $image := "" -}}
+          {{- if $repo -}}
+            {{- if or (regexMatch ".+:[^/]+$" $repo) (contains "@" $repo) -}}
+              {{- $image = $repo -}}
+            {{- else -}}
+              {{- $image = printf "%s:%s" $repo $tag -}}
+            {{- end -}}
+          {{- else -}}
+            {{- $gir := .Values.global.imageRepository | default "" -}}
+            {{- if not $gir -}}
+              {{- fail "post-realm-bootstrap: set postRealmBootstrap.image.repository or global.imageRepository (e.g. docker.repo.eng.netapp.com/user/<USER>). All helm-identity-install-<cloud> targets pass --set global.imageRepository=$(CONTAINER_IMAGE_REPO) automatically." -}}
+            {{- end -}}
+            {{- $image = printf "%s/init-tools:%s" $gir $tag -}}
+          {{- end }}
+          image: "{{ $image }}"
+          imagePullPolicy: {{ .Values.postRealmBootstrap.image.pullPolicy | default "IfNotPresent" }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
+          env:
+            - name: KC_SERVER_URL
+              value: "http://{{ include "keycloak.fullname" . }}:{{ .Values.service.port }}"
+            - name: KC_REALM
+              value: {{ .Values.realmBootstrap.realm | quote }}
+            - name: KC_RESOURCE_SERVER_CLIENT_ID
+              value: {{ .Values.realmBootstrap.resourceServerClientId | default "agent-studio-api" | quote }}
+            - name: KC_ADMIN_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "keycloak.bootstrapAdminSecretName" . }}
+                  key: {{ .Values.keycloak.bootstrapAdmin.secretKeys.usernameKey }}
+            - name: KC_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "keycloak.bootstrapAdminSecretName" . }}
+                  key: {{ .Values.keycloak.bootstrapAdmin.secretKeys.passwordKey }}
+            - name: NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: SECRET_NAME
+              value: keycloak-oidc-secrets
+          command: ["/bin/sh", "-eu", "-c"]
+          args:
+            - |
+              echo "=== post-realm-bootstrap: resolving ${KC_RESOURCE_SERVER_CLIENT_ID} UUID + client secrets ==="
+
+              ## Step 1: master-realm admin token via password grant on admin-cli (same flow kcadm uses).
+              TOKEN_JSON=$(curl --silent --show-error --fail \
+                -X POST "${KC_SERVER_URL}/realms/master/protocol/openid-connect/token" \
+                -H "Content-Type: application/x-www-form-urlencoded" \
+                --data-urlencode "client_id=admin-cli" \
+                --data-urlencode "grant_type=password" \
+                --data-urlencode "username=${KC_ADMIN_USERNAME}" \
+                --data-urlencode "password=${KC_ADMIN_PASSWORD}")
+              ## init-tools has no jq. grep -oE for first-match semantics; tr flattens pretty JSON.
+              ADMIN_TOKEN=$(printf '%s' "${TOKEN_JSON}" | tr -d '\n' \
+                | grep -oE '"access_token"[[:space:]]*:[[:space:]]*"[^"]+"' \
+                | head -n 1 \
+                | sed -E 's/.*"access_token"[^"]*"([^"]+)".*/\1/')
+              if [ -z "${ADMIN_TOKEN}" ]; then
+                echo "ERROR: could not parse access_token from token endpoint response:" >&2
+                echo "${TOKEN_JSON}" >&2
+                exit 1
+              fi
+              echo "  acquired admin access token (length=${#ADMIN_TOKEN})"
+
+              ## Step 2: resolve client UUID.
+              ## briefRepresentation=true drops the four nested collections that carry their own
+              ## UUID-shaped ids (protocolMappers, defaultClientScopes, optionalClientScopes,
+              ## authorizationSettings). Parser additionally anchors on the immediately-following
+              ## ,"clientId" — unique to top-level client representations — so a future Keycloak
+              ## field with a UUID-shaped value (e.g. an attribute) can't fool it.
+              CLIENT_JSON=$(curl --silent --show-error --fail \
+                "${KC_SERVER_URL}/admin/realms/${KC_REALM}/clients?clientId=${KC_RESOURCE_SERVER_CLIENT_ID}&briefRepresentation=true" \
+                -H "Authorization: Bearer ${ADMIN_TOKEN}")
+              CLIENT_UUID=$(printf '%s' "${CLIENT_JSON}" | tr -d '\n' \
+                | grep -oE '"id"[[:space:]]*:[[:space:]]*"[a-f0-9-]{36}"[[:space:]]*,[[:space:]]*"clientId"' \
+                | head -n 1 \
+                | sed -E 's/.*"id"[^"]*"([a-f0-9-]{36})".*/\1/')
+              if [ -z "${CLIENT_UUID}" ]; then
+                echo "ERROR: client ${KC_RESOURCE_SERVER_CLIENT_ID} not found in realm ${KC_REALM}" >&2
+                echo "Response was:" >&2
+                echo "${CLIENT_JSON}" >&2
+                exit 1
+              fi
+              echo "  resolved ${KC_RESOURCE_SERVER_CLIENT_ID} UUID = ${CLIENT_UUID}"
+
+              ## Step 3: PATCH the Secret via the K8s API using the pod's SA token.
+              ## Strategic-merge patch on `data` replaces only resource-server-uuid; other keys intact.
+              ENCODED_UUID=$(printf '%s' "${CLIENT_UUID}" | base64 | tr -d '\n')
+              PATCH_BODY=$(printf '{"data":{"resource-server-uuid":"%s"}}' "${ENCODED_UUID}")
+
+              K8S_API="https://kubernetes.default.svc"
+              SA_TOKEN_FILE=/var/run/secrets/kubernetes.io/serviceaccount/token
+              SA_CA_FILE=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+              if [ ! -r "${SA_TOKEN_FILE}" ] || [ ! -r "${SA_CA_FILE}" ]; then
+                echo "ERROR: in-pod ServiceAccount token / CA not mounted" >&2
+                exit 1
+              fi
+              SA_TOKEN=$(cat "${SA_TOKEN_FILE}")
+
+              echo "  patching Secret ${NAMESPACE}/${SECRET_NAME}.resource-server-uuid"
+              HTTP_STATUS=$(curl --silent --show-error \
+                --output /tmp/patch_response.json \
+                --write-out '%{http_code}' \
+                --cacert "${SA_CA_FILE}" \
+                -X PATCH \
+                -H "Authorization: Bearer ${SA_TOKEN}" \
+                -H "Content-Type: application/strategic-merge-patch+json" \
+                -H "Accept: application/json" \
+                --data "${PATCH_BODY}" \
+                "${K8S_API}/api/v1/namespaces/${NAMESPACE}/secrets/${SECRET_NAME}")
+              if [ "${HTTP_STATUS}" != "200" ]; then
+                echo "ERROR: Secret PATCH failed with HTTP ${HTTP_STATUS}" >&2
+                cat /tmp/patch_response.json >&2 || true
+                exit 1
+              fi
+
+              ## Step 4: Read back Keycloak-generated client secrets for every
+              ## non-public-spa additionalClient and PATCH them into keycloak-oidc-secrets.
+              ## Keycloak assigns the secret on first import/create; subsequent helm
+              ## upgrades preserve the existing secret (the lookup guard in
+              ## keycloak-oidc-secrets.yaml keeps any non-placeholder value).
+              echo "  reading back additional-client secrets"
+              {{- if .Values.realmBootstrap.additionalClients.enabled }}
+              {{- range $c := .Values.realmBootstrap.additionalClients.clients }}
+              {{- if ne $c.kind "public-spa" }}
+              {{- $secretKey := printf "%s-client-secret" (trimPrefix "agentstudio-" $c.name) }}
+              CLIENT_JSON=$(curl --silent --show-error --fail \
+                "${KC_SERVER_URL}/admin/realms/${KC_REALM}/clients?clientId={{ $c.name }}&briefRepresentation=true" \
+                -H "Authorization: Bearer ${ADMIN_TOKEN}")
+              CLIENT_UUID=$(printf '%s' "${CLIENT_JSON}" | tr -d '\n' \
+                | grep -oE '"id"[[:space:]]*:[[:space:]]*"[a-f0-9-]{36}"[[:space:]]*,[[:space:]]*"clientId"' \
+                | head -n 1 \
+                | sed -E 's/.*"id"[^"]*"([a-f0-9-]{36})".*/\1/')
+              if [ -z "${CLIENT_UUID}" ]; then
+                echo "  WARN: {{ $c.name }} not found in realm ${KC_REALM} — skipping secret read-back" >&2
+              else
+                SECRET_JSON=$(curl --silent --show-error --fail \
+                  "${KC_SERVER_URL}/admin/realms/${KC_REALM}/clients/${CLIENT_UUID}/client-secret" \
+                  -H "Authorization: Bearer ${ADMIN_TOKEN}")
+                SECRET_VALUE=$(printf '%s' "${SECRET_JSON}" | tr -d '\n' \
+                  | grep -oE '"value"[[:space:]]*:[[:space:]]*"[^"]+"' \
+                  | head -n 1 \
+                  | sed -E 's/.*"value"[^"]*"([^"]+)".*/\1/')
+                if [ -z "${SECRET_VALUE}" ]; then
+                  echo "  WARN: could not read client-secret for {{ $c.name }} — skipping" >&2
+                else
+                  ENCODED_SECRET=$(printf '%s' "${SECRET_VALUE}" | base64 | tr -d '\n')
+                  PATCH_BODY=$(printf '{"data":{"{{ $secretKey }}":"%s"}}' "${ENCODED_SECRET}")
+                  HTTP_STATUS=$(curl --silent --show-error \
+                    --output /tmp/patch_response.json \
+                    --write-out '%{http_code}' \
+                    --cacert "${SA_CA_FILE}" \
+                    -X PATCH \
+                    -H "Authorization: Bearer ${SA_TOKEN}" \
+                    -H "Content-Type: application/strategic-merge-patch+json" \
+                    -H "Accept: application/json" \
+                    --data "${PATCH_BODY}" \
+                    "${K8S_API}/api/v1/namespaces/${NAMESPACE}/secrets/${SECRET_NAME}")
+                  if [ "${HTTP_STATUS}" != "200" ]; then
+                    echo "ERROR: Secret PATCH failed for {{ $secretKey }} with HTTP ${HTTP_STATUS}" >&2
+                    cat /tmp/patch_response.json >&2 || true
+                    exit 1
+                  fi
+                  echo "  patched ${SECRET_NAME}.{{ $secretKey }} (client={{ $c.name }})"
+                fi
+              fi
+              {{- end }}
+              {{- end }}
+              {{- end }}
+
+              echo "=== post-realm-bootstrap: done ==="
+          resources:
+            requests:
+              cpu: 25m
+              memory: 32Mi
+            limits:
+              cpu: 200m
+              memory: 64Mi
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

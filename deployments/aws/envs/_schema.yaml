@@ -1,0 +1,126 @@
+# _schema.yaml -- reference shape for a per-environment AWS infra config.
+#
+# This file is NOT deployed. It documents the shared schema that every
+# envs/<env>.yaml follows. Adding a new environment is purely additive:
+#
+#   make infra CLOUD=aws ENV=<env> ACTION=plan|apply|destroy
+#
+# For local validation use envs/localtest.yaml (minimal sizes). dev/preprod are reference
+# configs for longer-lived stacks — do not treat them as throwaway test targets.
+#
+# The infra runner (deployments/aws/scripts/infra.sh) maps env yaml into
+# CloudFormation parameters for deployments/aws/stacks/agentstudio-foundation.yaml.
+# EKS deploy helpers (LBC install, edge EIP helm sets) live in the same scripts/
+# directory: deployments/aws/scripts/eks-install-lbc.sh, eks-edge-helm-sets.sh.
+#   1. Runner-only keys (consumed by the script, NOT passed to CloudFormation):
+#        env, region, stackName
+#   2. Structured sections -> flattened CloudFormation parameters:
+#        application, networking, eks, fsx, installer, tags
+#
+# Legacy flat `parameters:` maps are still accepted as fallbacks.
+
+# ---- Runner-only keys -------------------------------------------------------
+env: <env-name>                 # logical name; must match the file stem (<env>.yaml)
+region: <aws-region>            # e.g. us-east-2
+stackName: <stack-name>         # CloudFormation stack name (one per env)
+
+# ---- application ------------------------------------------------------------
+application:
+  endpoint: <hostname>          # console at https://app.<endpoint>/console/
+  projectName: agentstudio      # lowercase alphanumeric + hyphens
+  environment: dev              # dev | test | prod (template allowed values)
+
+# ---- tags (stack-level; propagated by aws cloudformation deploy --tags) ------
+tags:
+  creator: agentstudio          # deploy syntax: --tags creator=<value>
+
+# ---- networking -------------------------------------------------------------
+networking:
+  vpcCidr: <cidr>               # e.g. 10.250.0.0/16
+  publicSubnet1Cidr: <cidr>
+  publicSubnet2Cidr: <cidr>
+  privateSubnet1Cidr: <cidr>    # EKS nodes + FSx
+  privateSubnet2Cidr: <cidr>
+
+# ---- eks --------------------------------------------------------------------
+eks:
+  kubernetesVersion: "<x.y>"    # e.g. 1.32
+  endpointPublicAccess: true
+  endpointPrivateAccess: true
+  nodeGroups:                   # >=1 group; first is the primary node group
+    - name: general             # suffix for <stack>-<name>
+      instanceTypes: [m6i.2xlarge]   # list; multiple types = fallback order
+      amiType: AL2_x86_64       # AL2_x86_64 | AL2_ARM_64 | BOTTLEROCKET_* | WINDOWS_*
+      capacityType: ON_DEMAND   # ON_DEMAND | SPOT
+      scaling:
+        desiredSize: <int>      # initial/desired node count
+        minSize: <int>          # cluster autoscaler minimum
+        maxSize: <int>          # cluster autoscaler maximum
+      labels:                   # workload label value (key is fixed as workload= in CFN)
+        workload: general
+      # ---- optional per-group keys ----
+      # diskSizeGiB: 0           # 0 = EKS default (primary group only)
+      # updateMaxUnavailable: 1
+      # taints:                   # first taint only is applied by the template today
+      #   - key: workload
+      #     value: "true"
+      #     effect: NO_SCHEDULE
+    # Optional second node group (only one additional group is provisioned today):
+    # - name: workload
+    #   instanceTypes: [m6i.xlarge]
+    #   amiType: AL2_x86_64
+    #   capacityType: ON_DEMAND
+    #   scaling: { desiredSize: 0, minSize: 0, maxSize: 5 }
+    #   labels: { workload: workload }
+    #   taints:
+    #     - key: workload
+    #       value: "true"
+    #       effect: NO_SCHEDULE
+
+# ---- fsx (FSx for ONTAP capacity pool backing Trident) ----------------------
+fsx:
+  storageCapacityGiB: 1024      # provisioned size, min 1024 GiB (billed on this)
+  throughputCapacity: 384       # MB/s; valid values depend on deploymentType
+  deploymentType: SINGLE_AZ_2     # SINGLE_AZ_1 | SINGLE_AZ_2 | MULTI_AZ_1 | MULTI_AZ_2
+  # svmName: <stackName>-svm      # optional; infra runner default; override for adopted stacks
+
+# ---- installer (bootstrap EC2 host) -----------------------------------------
+installer:
+  enableInstance: false         # recommended for greenfield; true requires installer AMI
+  instanceType: t3.large
+  volumeSizeGiB: 100
+  tridentHelmVersion: "100.2410.0"
+  # amiId: ""                   # required when enableInstance is true
+
+# ---- container registry (shared across envs) --------------------------------
+containerRegistry:
+  mode: shared
+  loginServer: 721140971281.dkr.ecr.us-east-2.amazonaws.com
+
+# ---- operator kubectl access ------------------------------------------------
+operatorAccess:
+  principalArns: []             # IAM role/user ARNs for EKS cluster admin
+  # - arn:aws:iam::ACCOUNT:role/GitHubActions-Preprod
+
+# ---- optional DNS / edge ----------------------------------------------------
+dns:
+  createHostedZone: false
+  hostedZoneName: <fqdn>        # e.g. agentstudio-preprod.example.com
+
+edge:
+  allocateGatewayEips: false    # infra: creates GatewayEip1/2 + CFN outputs for deploy
+  # Optional comma-separated override (skip CFN lookup). Normally omit — deploy reads
+  # GatewayEip1AllocationId + GatewayEip2AllocationId from the stack at helm time.
+  gatewayEipAllocations: eipalloc-xxxxxxxx,eipalloc-yyyyyyyy
+
+# ---- storage (Trident bootstrap — consumed by make storage, not infra) ------
+storage:
+  trident:
+    helmVersion: "100.2410.0"
+    namespace: trident
+    serviceAccount: trident-controller
+  fsxn:
+    backendName: fsxn-nas-backend
+    storageClassName: fsxn-nas
+    markAsDefault: true             # set fsxn-nas as cluster default StorageClass
+    credentialsFrom: stackOutput  # FsxSvmAdminSecretArn from CFN outputs

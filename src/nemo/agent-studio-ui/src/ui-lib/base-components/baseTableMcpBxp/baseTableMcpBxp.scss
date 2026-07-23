@@ -1,0 +1,1092 @@
+// ============================================================
+// Blueprint Table Component Styles
+// Design System: BlueXP Console POC
+// Source: https://www.figma.com/design/jrP73CR3v6NA5ChzpwPXfL/Console-POC
+// ============================================================
+
+@use "@/styles/mixins" as *;
+
+
+// ============================================================
+// 2. TYPOGRAPHY MIXINS
+// ============================================================
+
+@mixin dt-title {
+  font-family: var(--font-family);
+  font-weight: 590;
+  font-size: 16px;
+  line-height: 28px;
+  color: var(--text-primary);
+}
+
+@mixin dt-header {
+  font-family: var(--font-family);
+  font-weight: 590;
+  font-size: 14px;
+  line-height: 24px;
+  color: var(--text-primary);
+}
+
+@mixin dt-body {
+  font-family: var(--font-family);
+  font-weight: 400;
+  font-size: 14px;
+  line-height: 24px;
+  color: var(--text-primary);
+}
+
+@mixin dt-mono {
+  font-family: 'SF Mono', 'Monaco', 'Courier New', monospace;
+  font-weight: 400;
+  font-size: 14px;
+  line-height: 24px;
+  color: var(--text-primary);
+}
+
+// ============================================================
+// 3. BASE TABLE CONTAINER
+// ============================================================
+
+.dt-table {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  padding: 0;
+  gap: 16px;
+  width: 100%;
+
+  // Scroll container — horizontal only; vertical is disabled (sticky variant re-enables it)
+  .dt-table-wrapper.dt-table-wrapper {
+    width: 100%;
+    overflow-x: auto;
+    overflow-y: hidden;
+    border: none;
+    border-radius: 0;
+
+    // Horizontal scrollbar — matches Figma "table_horizontal_scroller"
+    // 16px total height (6px thumb + 5px padding each side)
+    &::-webkit-scrollbar {
+      height: 16px;
+      width: 0; // no vertical scrollbar gutter
+    }
+
+    &::-webkit-scrollbar-track:horizontal {
+      background: var(--background-content);
+      box-shadow: inset 0px 1px 0px 0px var(--border-drop-shadow);
+    }
+
+    &::-webkit-scrollbar-thumb:horizontal {
+      background-color: var(--border-scroller);
+      border-radius: 16px;
+      border-top: 5px solid transparent;
+      border-bottom: 5px solid transparent;
+      background-clip: padding-box;
+    }
+  }
+
+  // Firefox: style the scrollbar to approximate the Figma scroller
+  @supports (-moz-appearance: none) {
+    .dt-table-wrapper.dt-table-wrapper {
+      scrollbar-width: thin;
+      scrollbar-color: var(--border-scroller) var(--background-content);
+    }
+  }
+
+  // Disable inner table-container scrolling — the wrapper owns all scroll
+  .dt-table-wrapper .table-container {
+    overflow: visible;
+  }
+
+  .dt-table-wrapper-sticky.dt-table-wrapper-sticky {
+    border: none;
+    border-radius: 0;
+    overflow-x: auto;
+    overflow-y: auto;
+    max-height: 500px;
+
+    // Hide vertical scrollbar but keep scroll via trackpad/mousewheel
+    &::-webkit-scrollbar {
+      height: 16px; // horizontal stays
+      width: 0; // vertical hidden
+    }
+
+    thead {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+  }
+
+  .table {
+    border-collapse: collapse;
+    table-layout: fixed;
+  }
+
+  .table-header {
+    background: var(--background-table-header);
+
+    &:hover {
+      background: var(--background-table-header);
+    }
+  }
+
+  .table-row {
+    border-bottom: none;
+
+    &:hover {
+      background: var(--background-hover);
+    }
+  }
+
+  .table-head {
+    border-bottom: none;
+  }
+}
+
+// ============================================================
+// 4. TABLE HEADER CELLS
+// ============================================================
+
+.dt-table .dt-header {
+  padding: 8px 8px 8px 24px;
+  height: 56px;
+  background: var(--background-table-header);
+  box-shadow: inset 0px -1px 0px 0px var(--border-main);
+  @include dt-header;
+
+  text-align: left;
+  vertical-align: middle;
+  position: relative;
+  white-space: normal;
+
+  // Static divider line between header cells (per Figma: 1px solid #1C1C1C)
+  &:not(:last-child)::after {
+    content: '';
+    position: absolute;
+    right: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    height: 24px;
+    width: 1px;
+    background: var(--text-primary);
+    pointer-events: none;
+  }
+
+  // to break the button in to the common that is used and change it to use my button in the future
+  button:not(.dt-header-checkbox-arrow):not(.dt-header-checkbox-menu-item) {
+    all: unset;
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+    font-family: var(--font-family);
+    font-weight: 590;
+    font-size: 14px;
+    line-height: 24px;
+    color: var(--text-primary);
+    width: 100%;
+    justify-content: space-between;
+    padding-right: 8px;
+    gap: 8px;
+
+    &:hover {
+
+      .dt-sort-chevron,
+      .dt-sort-arrow {
+        fill: var(--text-secondary);
+      }
+    }
+
+    svg {
+      width: 12px;
+      height: 14px;
+      flex-shrink: 0;
+    }
+  }
+}
+
+// 4.1 Sort icon states (Figma "table header sort & filter")
+// "Sort / none": two chevrons, default #1C1C1C, hover #6F6F6F
+.dt-table .dt-sort-chevron {
+  fill: var(--text-primary);
+  transition: fill 150ms ease;
+}
+
+// "Sort / down (descending)" & "Sort / up (ascending)": arrow-with-stem
+.dt-table .dt-sort-arrow {
+  fill: var(--text-primary);
+  transition: fill 150ms ease;
+}
+
+// Ascending rotates the down-arrow 180°
+.dt-table .dt-sort-icon--asc {
+  transform: rotate(180deg);
+}
+
+.dt-table .dt-sort-icon-wrapper {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+// ============================================================
+// 5. CHECKBOX HEADER COLUMN
+// ============================================================
+
+.dt-table .dt-header:has(.checkbox, input[type="checkbox"]) {
+  width: 72px;
+  min-width: 72px;
+  padding: 8px 24px;
+  text-align: center;
+  overflow: visible; // allow the dropdown menu to render outside this cell
+}
+
+// 5.1 Header checkbox + dropdown wrapper
+//     Figma: checkbox (24×24) + small arrow to the right
+.dt-table .dt-header-checkbox-wrapper {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  position: relative;
+
+  // Prevent the checkbox from being squished by the flex layout
+  .checkbox {
+    flex-shrink: 0;
+    width: 24px;
+    height: 24px;
+  }
+}
+
+// 5.2 Dropdown arrow button (right of checkbox, small caret)
+.dt-table .dt-header-checkbox-arrow {
+  all: unset;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  cursor: pointer;
+  color: var(--text-primary);
+  width: 10px;
+  height: 10px;
+  padding: 0;
+  border-radius: 2px;
+
+  &:hover {
+    color: var(--icon-primary);
+  }
+
+  .checkbox-arrow-svg {
+    width: 9px;
+    height: 6px;
+    transition: transform 150ms ease;
+  }
+}
+
+// Arrow rotated when open
+.dt-table .dt-header-checkbox-arrow-icon--open {
+  transform: rotate(180deg);
+}
+
+// 5.3a Dropdown menu wrapper — handles positioning
+.dt-table .dt-header-checkbox-menu-wrapper {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 9999;
+}
+
+// 5.3b Dropdown menu — visual styling only
+//      Figma: Action menu ❇️ (node 12545:85607)
+.dt-table .dt-header-checkbox-menu {
+  display: flex;
+  width: 182px;
+  min-width: 182px;
+  max-width: 350px;
+  padding: 8px 0;
+  flex-direction: column;
+  justify-content: center;
+  align-items: flex-start;
+  background: var(--background-content);
+  box-shadow: 4px 4px 12px 0 var(--border-main);
+}
+
+// 5.4a Dropdown menu item wrapper — handles padding, positioning & overflow
+.dt-table .dt-header-checkbox-menu-item-wrapper {
+  display: flex;
+  padding: 12px 24px;
+  align-self: stretch;
+  width: 100%;
+  overflow: hidden;
+  color: var(--text-primary);
+  font-family: "SF Pro";
+  font-size: 14px;
+  font-style: normal;
+  font-weight: 400;
+  line-height: 24px;
+
+  &:hover:not(:has(:disabled)) {
+    background: var(--background-hover);
+  }
+}
+
+// 5.4b Dropdown menu item — interactive styling only
+//      Figma: Action menu cell
+.dt-table .dt-header-checkbox-menu-item {
+  // Reset button defaults
+  appearance: none;
+  background: none;
+  border: none;
+  outline: none;
+  margin: 0;
+  padding: 0;
+  text-align: left;
+  text-decoration: none;
+
+  // Layout & inherited styles
+  box-sizing: border-box;
+  display: flex;
+  width: 100%;
+  align-items: center;
+  cursor: pointer;
+  white-space: nowrap;
+  font: inherit;
+  color: inherit;
+
+  &:disabled {
+    color: var(--text-disabled);
+    cursor: default;
+  }
+}
+
+// ============================================================
+// 6. TABLE BODY CELLS
+// ============================================================
+
+// 6.1 Base body cell — applies to all td elements
+.dt-table .table-cell {
+  height: 56px;
+  padding: 8px 16px 8px 24px;
+  background: var(--background-content);
+  box-shadow: inset 0px -1px 0px 0px var(--border-main);
+  @include dt-body;
+  vertical-align: middle;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+// 6.2 Text cell — standard text content (default cell)
+.dt-table .dt-cell-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+// 6.3 ID cell — monospace text
+.dt-table .dt-id-cell {
+  @include dt-mono;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+// 6.4 Badge / Status cell — color dot + text
+.dt-table .dt-cell-badge {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+
+  .dt-cell-badge-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 8px;
+    flex-shrink: 0;
+
+    &--success {
+      background: var(--notification-success);
+    }
+
+    &--error {
+      background: var(--notification-error);
+    }
+
+    &--primary {
+      background: var(--icon-primary);
+    }
+
+    &--muted {
+      background: var(--text-disabled);
+    }
+  }
+
+  .dt-cell-badge-text {
+    @include dt-body;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
+// 6.5 Status cell (simple text with capitalize)
+.dt-table .dt-status-cell {
+  text-transform: capitalize;
+}
+
+// 6.6 Checkbox body cell — override td padding to match header alignment
+.dt-table .table-cell:has(.dt-cell-checkbox) {
+  width: 72px;
+  min-width: 72px;
+  padding: 8px 24px;
+}
+
+.dt-table .dt-cell-checkbox {
+  text-align: center;
+}
+
+// 6.7 Action cell (three-dot menu) — centered, fixed 56px width
+.dt-table .dt-cell-action {
+  width: 56px;
+  min-width: 56px;
+  padding: 8px 24px;
+  text-align: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+// 6.8 Icon + Text cell
+.dt-table .dt-cell-icon-text {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+
+  .dt-cell-icon {
+    width: 24px;
+    height: 24px;
+    flex-shrink: 0;
+  }
+}
+
+// 6.9 Link cell — blue clickable text
+.dt-table .dt-cell-link {
+  color: var(--icon-primary);
+  cursor: pointer;
+  @include dt-body;
+
+  &:hover {
+    text-decoration: underline;
+  }
+}
+
+// 6.10 Truncate helper
+.dt-table .truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+// ============================================================
+// 6.B ROW STATES
+// ============================================================
+
+// Data rows sit above accordion content (z-index stacking)
+.dt-table .dt-row {
+  position: relative;
+  z-index: 2;
+}
+
+// Row hover — #F4FBFF applied to all cells in the row
+.dt-table .dt-row:hover .table-cell {
+  background: var(--background-hover);
+}
+
+// Row selected — subtle blue tint
+.dt-table .dt-row[data-state="selected"] .table-cell {
+  background: var(--background-hover);
+}
+
+// Drag-over row feedback (from DnD)
+.dt-table .dt-row.drag-over .table-cell {
+  background: var(--background-hover);
+}
+
+// ============================================================
+// 7. COLUMN RESIZER
+// ============================================================
+
+.dt-table .dt-col-resizer {
+  position: absolute;
+  right: -2px;
+  top: 0;
+  height: 100%;
+  width: 4px;
+  background: transparent;
+  cursor: col-resize;
+  user-select: none;
+  touch-action: none;
+  z-index: 20;
+
+}
+
+// ============================================================
+// 8. TOP BAR / UPPER ACTIONS
+// ============================================================
+
+// 8.1 Top bar container — flex row, title left, actions right
+.dt-table .dt-top-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+}
+
+// 8.2 Table title — left side
+.dt-table .dt-table-title {
+  @include dt-title;
+}
+
+// 8.3 Search component — collapsible Blueprint-style search
+// Closed: just a 24×24 magnifying glass icon (gray when idle, blue when active)
+// Open:   icon slides left, underlined input expands, X clear button appears
+.dt-table .dt-search {
+  position: relative;
+  display: inline-flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  align-self: center;
+  width: 32px; // collapsed = icon width only
+  height: 32px;
+  overflow: hidden;
+  transition: width 250ms cubic-bezier(0.4, 0, 0.2, 1),
+    height 250ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+// Open modifier — expand to full width, taller to fit underline
+.dt-table .dt-search--open {
+  width: 300px;
+  height: calc(32px + 2px); // room for the 1px underline + 1px gap
+}
+
+// Magnifying glass toggle button
+.dt-table .dt-search__icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 4px;
+  border-radius: 2px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: var(--text-disabled);
+  flex-shrink: 0;
+  transition: color 150ms ease;
+
+  svg {
+    width: 24px;
+    height: 24px;
+  }
+
+  &:hover {
+    color: var(--icon-primary);
+  }
+}
+
+// Active state — icon is blue
+.dt-table .dt-search__icon--active {
+  color: var(--icon-primary);
+}
+
+// Not-enabled state — gray, not-allowed cursor, no hover change
+.dt-table .dt-search__icon--not-enabled {
+  cursor: not-allowed;
+
+  &:hover {
+    color: var(--text-disabled);
+  }
+}
+
+// Disabled state — gray, no pointer
+.dt-table .dt-search--disabled .dt-search__icon {
+  color: var(--text-disabled);
+  cursor: not-allowed;
+  opacity: 0.5;
+
+  &:hover {
+    color: var(--text-disabled);
+  }
+}
+
+// The text input — always in DOM, hidden when closed via opacity/width
+.dt-table .dt-search__input {
+  flex: 1 1 0%;
+  min-width: 0;
+  height: 33px;
+  @include dt-body;
+  background: transparent;
+  border: none;
+  outline: none;
+  padding: 0;
+  color: var(--text-primary);
+  opacity: 0;
+  transition: opacity 200ms ease 50ms; // slight delay so width leads
+
+  &::placeholder {
+    color: var(--text-disabled);
+  }
+}
+
+// When open, reveal input
+.dt-table .dt-search--open .dt-search__input {
+  opacity: 1;
+}
+
+// X clear button — always in DOM, hidden by default
+.dt-table .dt-search__clear {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  color: var(--text-primary);
+  flex-shrink: 0;
+  align-self: center;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 150ms ease;
+
+  svg {
+    width: 10px;
+    height: 10px;
+  }
+
+  &:hover {
+    color: var(--icon-primary);
+  }
+}
+
+// Visible only when open AND text exists (class toggled in TSX)
+.dt-table .dt-search__clear--visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+// Blue underline bar — sits below the row, full width
+.dt-table .dt-search__underline {
+  width: 100%;
+  height: 1px;
+  background: var(--icon-primary);
+  flex-basis: 100%;
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 250ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+// When open, reveal underline
+.dt-table .dt-search--open .dt-search__underline {
+  transform: scaleX(1);
+}
+
+// 8.4 Actions group — right side, gap-32 between icon group and button group
+.dt-table .dt-actions-group {
+  display: flex;
+  align-items: center;
+  gap: 32px;
+}
+
+// 8.5 Icon button — 32×32, centered icon, rounded
+.dt-table .dt-icon-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 4px;
+  border-radius: 2px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: var(--text-primary);
+
+  &:hover {
+    background: var(--background-hover);
+  }
+
+  svg {
+    width: 24px;
+    height: 24px;
+  }
+}
+
+// 8.6 Button group — gap-8 between buttons
+.dt-table .dt-btn-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+// 8.7 Secondary button — white bg, blue border, blue text
+.dt-table .dt-btn-secondary {
+  all: unset;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-width: 152px;
+  padding: 4px 24px;
+  background: var(--background-content);
+  border: 1px solid var(--button-primary-bg);
+  border-radius: 2px;
+  cursor: pointer;
+  @include dt-header;
+  color: var(--button-primary-bg);
+  text-align: center;
+  white-space: nowrap;
+
+  &:hover {
+    background: var(--background-hover);
+  }
+}
+
+// 8.8 Primary button — blue bg, white text
+.dt-table .dt-btn-primary {
+  all: unset;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-width: 152px;
+  padding: 4px 24px;
+  background: var(--button-primary-bg);
+  border: 1px solid var(--button-primary-bg);
+  border-radius: 2px;
+  cursor: pointer;
+  @include dt-header;
+  color: var(--background-content);
+  text-align: center;
+  white-space: nowrap;
+
+  &:hover {
+    opacity: 0.9;
+  }
+}
+
+// 8.9 Batch actions bar — shown when in batch delete mode
+.dt-table .dt-batch-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+
+  .dt-selected-count {
+    @include dt-header;
+    margin-right: 8px;
+  }
+}
+
+// 8.10 Dropdown trigger buttons in topbar — override ui-lib defaults
+.dt-table .dt-top-bar .dt-columns-button,
+.dt-table .dt-top-bar .dt-column-filter-button {
+  all: unset;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 4px 24px;
+  background: var(--background-content);
+  border: 1px solid var(--button-primary-bg);
+  border-radius: 2px;
+  cursor: pointer;
+  @include dt-header;
+  color: var(--button-primary-bg);
+  text-align: center;
+  white-space: nowrap;
+
+  svg {
+    width: 16px;
+    height: 16px;
+    color: var(--icon-primary);
+  }
+
+  &:hover {
+    background: var(--background-hover);
+  }
+}
+
+// 8.11 Eye icon in dropdown items
+.dt-table .dt-column-eye-icon {
+  width: 16px;
+  height: 16px;
+  color: var(--text-disabled);
+  flex-shrink: 0;
+}
+
+// ============================================================
+// 9. PAGINATION
+// ============================================================
+
+// 9.1 Pagination container — right-aligned, top border
+.dt-table .dt-pagination {
+  display: flex;
+  flex-direction: row;
+  justify-content: flex-end;
+  align-items: center;
+  padding: 8px 16px 8px 0;
+  gap: 24px;
+  height: 40px;
+  background: var(--background-content);
+  box-shadow: inset 0px 1px 0px 0px var(--border-main);
+  width: 100%;
+}
+
+// 9.2 Pagination info text — "1 - 50 of 500"
+.dt-table .dt-pagination-info {
+  @include dt-header;
+  text-align: right;
+  white-space: nowrap;
+}
+
+// 9.3 Pagination arrows wrapper — contains [prev-group] [page] [next-group]
+.dt-table .dt-pagination-arrows {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+}
+
+// 9.4 Arrow group — pairs of arrows with gap-8
+.dt-table .dt-pagination-arrow-group {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+// 9.5 Individual arrow button — 24×24, no bg/border
+.dt-table .dt-pagination-arrow {
+  all: unset;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  cursor: pointer;
+  color: var(--text-primary);
+  flex-shrink: 0;
+
+  svg {
+    width: 24px;
+    height: 24px;
+  }
+
+  &:hover:not(:disabled) {
+    color: var(--icon-primary);
+  }
+}
+
+// 9.6 Disabled arrow — gray color, no pointer
+.dt-table .dt-pagination-arrow--disabled {
+  color: var(--text-disabled);
+  cursor: default;
+  pointer-events: none;
+}
+
+// 9.7 Page number — centered, 46px wide
+.dt-table .dt-pagination-page {
+  width: 46px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  @include dt-header;
+  text-align: center;
+  white-space: nowrap;
+}
+
+// ============================================================
+// 10. TABLE WRAPPER & DROP SHADOW
+// ============================================================
+
+// 10.1 Shadow wrapper — wraps table + pagination
+.dt-table .dt-shadow-wrapper {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  width: 100%;
+  box-shadow: 2px 2px 6px 0px var(--border-drop-shadow);
+}
+
+// ============================================================
+// 11. EMPTY STATE
+// ============================================================
+// Figma: node 3832:52116 → "empty table" (11416:81278)
+// Shows header row + centered "No Data" message area + pagination
+
+// 11.1 Empty state container — replaces table body when no rows
+//      Height 302px, white bg, centered content, overflow hidden
+.dt-table .dt-empty-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 302px;
+  background: var(--background-content);
+  overflow: hidden;
+  padding: 8px;
+}
+
+// 11.2 Empty message — inner wrapper with padding
+.dt-table .dt-empty-message {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 8px;
+}
+
+// 11.3 File icon — 24×24
+.dt-table .dt-empty-icon {
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+  color: var(--text-secondary);
+
+  svg {
+    width: 24px;
+    height: 24px;
+  }
+}
+
+// 11.4 "No Data" text — Semibold 14/24, #6F6F6F
+.dt-table .dt-empty-text {
+  @include dt-header;
+  color: var(--text-secondary);
+}
+
+// 11.5 Error icon — uses notification error color
+.dt-table .dt-empty-icon--error {
+  color: var(--notification-error);
+}
+
+// 11.6 Inline empty/loading/error cell (inside <tbody>)
+.dt-table .dt-empty-cell {
+  height: 302px;
+  text-align: center;
+  vertical-align: middle;
+  @include dt-header;
+  color: var(--text-secondary);
+}
+
+// ============================================================
+// 12. ROW EXPANSION (ACCORDION)
+// ============================================================
+// The accordion content slides out from *under* the data row above.
+// Data rows have z-index:2 (section 6.B); accordion rows have z-index:1.
+// The cell clips overflow so the content is hidden while behind the row.
+
+// 12.0 Expand arrow — centred click target with rotating chevron
+.dt-expand-arrow {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  width: 100%;
+  height: 100%;
+  cursor: pointer;
+
+  >svg {
+    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  >svg.dt-expand-arrow--open {
+    transform: rotate(180deg);
+  }
+}
+
+@keyframes dt-accordion-slide-down {
+  from {
+    opacity: 0;
+    transform: translateY(-100%);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes dt-accordion-slide-up {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  to {
+    opacity: 0;
+    transform: translateY(-100%);
+  }
+}
+
+// 12.1 Accordion row — sits below data rows in z-order
+.dt-table .dt-accordion-row {
+  position: relative;
+  z-index: 1;
+  background: transparent;
+  border-bottom: none;
+}
+
+.dt-table .dt-accordion-row:hover {
+  background: transparent;
+}
+
+// 12.2 Accordion cell — clips content so it hides behind the row above
+.dt-table .dt-accordion-cell {
+  padding: 0;
+  height: auto;
+  border: none;
+  box-shadow: none;
+  background: transparent;
+  overflow: hidden;
+}
+
+// 12.3 Accordion content — owns ALL visuals + animated on mount/unmount
+.dt-table .dt-accordion-content {
+  padding: 16px 24px;
+  background: var(--background-content);
+  box-shadow: inset 0px -1px 0px 0px var(--border-main);
+  animation: dt-accordion-slide-down 0.35s cubic-bezier(0.25, 0.1, 0.25, 1) both;
+  @include dt-body;
+}
+
+.dt-table .dt-accordion-content[data-closing] {
+  animation: dt-accordion-slide-up 0.3s cubic-bezier(0.25, 0.1, 0.25, 1) both;
+}
+
+// 12.4 Accordion title
+.dt-table .dt-accordion-title {
+  @include dt-header;
+  margin-bottom: 8px;
+}
+
+// 12.5 Accordion grid — details layout
+.dt-table .dt-accordion-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 16px;
+
+  >div {
+    @include dt-body;
+
+    strong {
+      @include dt-header;
+      margin-right: 8px;
+    }
+  }
+}

@@ -1,0 +1,13 @@
+@use '@/styles/mixins' as *;
+
+.custom-config__form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-width: 616px;
+  width: 100%;
+
+  @include tablet {
+    max-width: 100%;
+  }
+}

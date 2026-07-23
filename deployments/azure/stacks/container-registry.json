@@ -1,0 +1,82 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "description": "Azure Container Registry for AgentStudio. To allow AKS to pull images, grant the AKS kubelet identity the AcrPull role after deployment: az role assignment create --assignee <kubeletIdentityObjectId> --role AcrPull --scope <registryResourceId>."
+  },
+  "parameters": {
+    "registryName": {
+      "type": "string",
+      "minLength": 5,
+      "maxLength": 50,
+      "metadata": {
+        "description": "Globally unique ACR name (5-50 alphanumeric chars, no hyphens). Example: cragentstudiodeveus2001"
+      }
+    },
+    "location": {
+      "type": "string",
+      "defaultValue": "[resourceGroup().location]",
+      "metadata": {
+        "description": "Azure region; defaults to the resource group location."
+      }
+    },
+    "sku": {
+      "type": "string",
+      "allowedValues": [
+        "Basic",
+        "Standard",
+        "Premium"
+      ],
+      "metadata": {
+        "description": "ACR service tier. Standard includes 100 GiB storage. Premium required for geo-replication and private endpoints."
+      }
+    },
+    "adminUserEnabled": {
+      "type": "bool",
+      "metadata": {
+        "description": "Enable the admin user for username/password pull access. Set false for production workloads that use managed identity exclusively."
+      }
+    },
+    "zoneRedundancyEnabled": {
+      "type": "bool",
+      "metadata": {
+        "description": "Enable zone redundancy (requires Premium SKU)."
+      }
+    }
+  },
+  "resources": [
+    {
+      "type": "Microsoft.ContainerRegistry/registries",
+      "apiVersion": "2023-07-01",
+      "name": "[parameters('registryName')]",
+      "location": "[parameters('location')]",
+      "sku": {
+        "name": "[parameters('sku')]"
+      },
+      "properties": {
+        "adminUserEnabled": "[parameters('adminUserEnabled')]",
+        "publicNetworkAccess": "Enabled",
+        "zoneRedundancy": "[if(parameters('zoneRedundancyEnabled'), 'Enabled', 'Disabled')]",
+        "policies": {
+          "retentionPolicy": {
+            "status": "disabled"
+          }
+        }
+      }
+    }
+  ],
+  "outputs": {
+    "registryName": {
+      "type": "string",
+      "value": "[parameters('registryName')]"
+    },
+    "registryResourceId": {
+      "type": "string",
+      "value": "[resourceId('Microsoft.ContainerRegistry/registries', parameters('registryName'))]"
+    },
+    "loginServer": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.ContainerRegistry/registries', parameters('registryName')), '2023-07-01').loginServer]"
+    }
+  }
+}

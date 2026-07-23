@@ -1,0 +1,144 @@
+.tab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  white-space: nowrap;
+  padding: 0;
+  font-family: var(--font-family);
+  transition: color 0.15s ease;
+  box-sizing: border-box;
+
+  &:hover:not([data-disabled]) {
+    color: var(--text-button-primary-hover);
+
+    .tab__label,
+    .tab__count {
+      color: var(--text-button-primary-hover);
+    }
+  }
+
+  &[data-active] {
+    color: var(--text-button-primary);
+
+    .tab__label,
+    .tab__count {
+      color: var(--text-button-primary);
+    }
+  }
+
+  &[data-disabled] {
+    pointer-events: none;
+    cursor: default;
+    color: var(--text-disabled);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--field-border-selected);
+    outline-offset: -2px;
+    border-radius: 2px;
+  }
+}
+
+// inner content wrapper
+.tab__content {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: center;
+}
+
+.tab__icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+}
+
+.tab__label {
+  text-align: center;
+}
+
+.tab__count {
+  flex-shrink: 0;
+}
+
+// ===== General variant =====
+.tab-variant-general {
+  height: 34px;
+  padding: 0 48px;
+  border-bottom: 2px solid transparent;
+
+  &[data-active] {
+    border-bottom-color: var(--text-button-primary);
+  }
+
+  .tab__label,
+  .tab__count {
+    color: var(--text-primary);
+  }
+
+  &[data-active] .tab__label,
+  &[data-active] .tab__count {
+    color: var(--text-button-primary);
+  }
+
+  &[data-disabled] .tab__label,
+  &[data-disabled] .tab__count {
+    color: var(--text-disabled);
+  }
+}
+
+// ===== Card variant =====
+.tab-variant-card {
+  height: 48px;
+  padding: 0 48px;
+  background-color: var(--background-content);
+  border-bottom: 1px solid var(--border-main);
+
+  &[data-active] {
+    border-bottom: 2px solid var(--text-button-primary);
+  }
+
+  .tab__label,
+  .tab__count {
+    color: var(--text-primary);
+  }
+
+  &[data-active] .tab__label,
+  &[data-active] .tab__count {
+    color: var(--text-button-primary);
+  }
+
+  &[data-disabled] .tab__label,
+  &[data-disabled] .tab__count {
+    color: var(--text-disabled);
+  }
+
+  &::after {
+    content: "";
+    position: absolute;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    width: 1px;
+    background-color: var(--border-main);
+  }
+}
+
+// ===== Fitting =====
+.tab-fitting-hug {
+  width: auto;
+  flex-shrink: 0;
+}
+
+.tab-fitting-fill {
+  flex: 1 0 0;
+  min-width: 0;
+  min-height: 1px;
+}

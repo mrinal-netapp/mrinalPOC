@@ -1,0 +1,217 @@
+.model-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+// Centers the spinner while the model is loading.
+.model-detail__loading {
+  align-items: center;
+  justify-content: center;
+  min-height: 240px;
+}
+
+// ── Status badge (used inside SummaryDetailsTemplate value slot) ────────────
+
+.model-detail__status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+
+  &--healthy svg { color: var(--notification-success); }
+  &--warning svg { color: var(--notification-warning); }
+  &--error   svg { color: var(--notification-error); }
+}
+
+// ── Overview panel ───────────────────────────────────────────────────────────
+
+.model-overview {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding-top: 4px;
+}
+
+// Filter bar
+
+.model-overview__filter-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border: 1px solid var(--border-main);
+  border-radius: 4px;
+  background: var(--background-content);
+}
+
+.model-overview__filter-bar-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.model-overview__filter-icon {
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+.model-overview__filter-chip-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.model-overview__filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid var(--border-main);
+  border-radius: 16px;
+  font-size: 13px;
+  color: var(--text-primary);
+  background: transparent;
+  cursor: pointer;
+
+  &:hover {
+    background: var(--background-hover);
+  }
+}
+
+// Provider link inside DetailCard
+
+.model-overview__provider-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-button-primary);
+  text-decoration: none;
+  font-size: 14px;
+
+  &:hover {
+    text-decoration: underline;
+  }
+}
+
+// Cost configuration tab rows
+
+.model-overview__cost-config-rows {
+  display: flex;
+  flex-direction: column;
+}
+
+.model-overview__cost-config-row {
+  display: flex;
+  align-items: baseline;
+  padding: 12px 16px;
+
+  &--separator {
+    border-bottom: 1px solid var(--border-main);
+  }
+}
+
+.model-overview__cost-config-label {
+  flex: 0 0 260px;
+  color: var(--text-secondary);
+}
+
+.model-overview__cost-config-value {
+  flex: 1;
+  color: var(--text-primary);
+}
+
+// ── Associated resources panel ───────────────────────────────────────────────
+
+.model-associated {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-top: 4px;
+}
+
+.model-associated__heading {
+  margin: 0;
+}
+
+// Associated-resource name rendered as a link to that resource's detail page.
+// The name text is placed directly inside the anchor (no Typography wrapper) so
+// the link color + underline apply to it. Font metrics mirror `fs14` Typography
+// so the link lines up with the other (plain-text) cells in the table.
+.model-associated__link {
+  color: var(--text-button-primary);
+  font-size: 14px;
+  line-height: 24px;
+  font-weight: 400;
+  text-decoration: underline;
+  cursor: pointer;
+
+  &:hover {
+    text-decoration: underline;
+  }
+}
+
+.model-associated__status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.model-associated__status-icon {
+  display: inline-flex;
+  align-items: center;
+
+  &--success { color: var(--notification-success); }
+  &--error   { color: var(--notification-error); }
+  &--warning { color: var(--notification-warning); }
+}
+
+.model-associated__labels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+// ── Activity panel ───────────────────────────────────────────────────────────
+
+.model-activity {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-top: 4px;
+}
+
+.model-activity__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+
+  h2 {
+    margin: 0;
+  }
+}
+
+.model-activity__controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+// Status dot indicators
+
+.model-activity__status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.model-activity__status-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+
+  &--error   { background-color: var(--notification-error); }
+  &--success { background-color: var(--notification-success); }
+  &--warning { background-color: var(--notification-warning); }
+}

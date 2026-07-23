@@ -1,0 +1,371 @@
+{{- if .Values.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "config-service.fullname" . }}
+  labels:
+    {{- include "config-service.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "config-service.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "config-service.selectorLabels" . | nindent 8 }}
+        {{- if .Values.workloadIdentity.enabled }}
+        azure.workload.identity/use: "true"
+        {{- end }}
+      annotations:
+        # Opt into Istio native sidecar containers (k8s 1.28+, Istio 1.20+).
+        # With native sidecars, istio-proxy is injected as an initContainer
+        # with restartPolicy=Always, so it's already serving mTLS when the
+        # `wait-for-postgres` initContainer dials shared-postgresql in the
+        # STRICT-mTLS `database` namespace. Without this, wait-for-postgres
+        # runs BEFORE istio-init has set up iptables interception, its
+        # plain-TCP probe gets rejected by postgres's sidecar, and the pod
+        # hangs at Init:1/3 indefinitely (verified on sks6316).
+        sidecar.istio.io/nativeSidecar: "true"
+    spec:
+      serviceAccountName: {{ include "config-service.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      volumes:
+        {{- if and .Values.initContainer.enabled .Values.initContainer.waitForKeycloakSetup }}
+        - name: keycloak-oidc-secrets
+          secret:
+            secretName: keycloak-oidc-secrets
+        {{- end }}
+        {{- if .Values.certs.enabled }}
+        - name: custom-ca-certs
+          secret:
+            secretName: {{ .Values.certs.customCACertsSecret }}
+        {{- end }}
+      {{- if .Values.initContainer.enabled }}
+      initContainers:
+        {{- if .Values.initContainer.waitForKeycloakSetup }}
+        - name: wait-for-keycloak-setup
+          image: {{ .Values.global.imageRepository }}/init-tools:latest
+          imagePullPolicy: {{ .Values.global.imagePullPolicy | default "IfNotPresent" }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              # Read from mounted secret (no kubectl — avoids stuck rollouts)
+              MOUNT="/etc/keycloak-oidc-secrets"
+              echo "Waiting for keycloak-oidc-secrets to be populated..."
+              MAX_ATTEMPTS=120
+              ATTEMPT=0
+              
+              while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
+                SECRET_VALUE=$(cat "$MOUNT/config-service-client-secret" 2>/dev/null || echo "")
+                if [ -n "$SECRET_VALUE" ] && [ "$SECRET_VALUE" != "changeme-config-service-secret" ]; then
+                  echo "✅ keycloak-oidc-secrets is populated with actual credentials!"
+                  exit 0
+                fi
+                ATTEMPT=$((ATTEMPT + 1))
+                echo "Waiting for keycloak-oidc-secrets... (attempt $ATTEMPT/$MAX_ATTEMPTS)"
+                sleep 5
+              done
+              
+              echo "⚠️ Timeout waiting for keycloak-oidc-secrets, proceeding with current values..."
+              exit 0
+          volumeMounts:
+            - name: keycloak-oidc-secrets
+              mountPath: /etc/keycloak-oidc-secrets
+              readOnly: true
+          resources:
+            limits:
+              cpu: 50m
+              memory: 32Mi
+            requests:
+              cpu: 10m
+              memory: 16Mi
+        {{- end }}
+        - name: wait-for-postgres
+          image: {{ .Values.initContainer.image.repository | default (printf "%s/init-tools" .Values.global.imageRepository) }}:{{ .Values.initContainer.image.tag | default "latest" }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy | default .Values.initContainer.image.pullPolicy | default "IfNotPresent" }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              # Wait for PostgreSQL to be ready
+              until pg_isready -h "$POSTGRES_HOST" -p "$POSTGRES_PORT" -U "$POSTGRES_USER"; do
+                echo "Waiting for PostgreSQL at $POSTGRES_HOST:$POSTGRES_PORT to be ready..."
+                sleep 2
+              done
+              echo "PostgreSQL is ready!"
+              
+              # Create database if it doesn't exist
+              DB_EXISTS=$(PGPASSWORD="$POSTGRES_PASSWORD" psql -h "$POSTGRES_HOST" -p "$POSTGRES_PORT" -U "$POSTGRES_USER" -d postgres -tc "SELECT 1 FROM pg_database WHERE datname = '$POSTGRES_DB'" | grep -q 1 && echo "yes" || echo "no")
+              
+              if [ "$DB_EXISTS" = "no" ]; then
+                echo "Creating database '$POSTGRES_DB'..."
+                PGPASSWORD="$POSTGRES_PASSWORD" psql -h "$POSTGRES_HOST" -p "$POSTGRES_PORT" -U "$POSTGRES_USER" -d postgres -c "CREATE DATABASE \"$POSTGRES_DB\";"
+                if [ $? -eq 0 ]; then
+                  echo "Database '$POSTGRES_DB' created successfully!"
+                else
+                  echo "Warning: Failed to create database '$POSTGRES_DB', it may already exist."
+                fi
+              else
+                echo "Database '$POSTGRES_DB' already exists."
+              fi
+          env:
+            - name: POSTGRES_HOST
+              value: {{ .Values.database.host | quote }}
+            - name: POSTGRES_PORT
+              value: {{ .Values.database.port | quote }}
+            - name: POSTGRES_USER
+              value: {{ .Values.database.user | quote }}
+            - name: POSTGRES_DB
+              value: {{ .Values.database.name | quote }}
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ if .Values.database.existingSecret }}{{ .Values.database.existingSecret }}{{ else }}{{ include "config-service.fullname" . }}-postgresql{{ end }}
+                  key: {{ if .Values.database.existingSecret }}{{ .Values.database.existingSecretKey }}{{ else }}postgres-password{{ end }}
+          resources:
+            {{- if .Values.initContainer.resources }}
+            {{- toYaml .Values.initContainer.resources | nindent 12 }}
+            {{- else }}
+            limits:
+              cpu: 100m
+              memory: 64Mi
+            requests:
+              cpu: 50m
+              memory: 32Mi
+            {{- end }}
+      {{- end }}
+      containers:
+        - name: config-service
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.global.imageRepository }}/{{ .Values.image.repository }}:{{ .Values.global.imageTag | default .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy | default .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 3000
+              protocol: TCP
+            {{- if .Values.service.metricsPort }}
+            - name: metrics
+              containerPort: {{ .Values.service.metricsPort }}
+              protocol: TCP
+            {{- end }}
+          env:
+            {{- $releaseName := .Release.Name }}
+            {{- $releaseNamespace := .Release.Namespace }}
+            {{- $keycloakIssuerSet := false }}
+            {{- $llmGatewayUrlSet := false }}
+            {{- $root := . }}
+            {{- $envEntries := concat (.Values.env | default list) (.Values.extraEnv | default list) }}
+            {{- range $envEntries }}
+            - name: {{ .name }}
+              {{- if eq .name "KEYCLOAK_ISSUER" }}
+              {{- $keycloakIssuerSet = true }}
+              {{- /* Always set KEYCLOAK_ISSUER from template, ignore value from values.yaml */}}
+              {{- /* Template function will check both .Values.endpoint and .Values.global.endpoint */}}
+              value: {{ include "nemo.keycloakIssuer" $root | quote }}
+              {{- else if eq .name "LAKEKEEPER_URL" }}
+              {{- if and .value (ne .value "") }}
+              value: {{ .value | quote }}
+              {{- else }}
+              value: {{ include "nemo.lakekeeperHttpInternalBase" $root | quote }}
+              {{- end }}
+              {{- else if eq .name "LLM_GATEWAY_URL" }}
+              {{- $llmGatewayUrlSet = true }}
+              {{- /* Use FQDN of the bifrost-proxy ExternalName alias in the release namespace */}}
+              value: {{ include "nemo.llmGatewayUrl" $root | quote }}
+              {{- else if eq .name "ARTIFACT_SERVICE_URL" }}
+              {{- /* Always use FQDN so cross-namespace callers (e.g. bifrost in agentstudio-llm-gateway) can resolve the service */}}
+              value: "http://artifact-service.{{ $releaseNamespace }}.svc.cluster.local:8080/mcp"
+              {{- else if eq .name "ANALYTICS_MCP_URL" }}
+              value: "http://analytics-mcp-server.{{ $releaseNamespace }}.svc.cluster.local:8000/mcp"
+              {{- else if .value }}
+              value: {{ .value | quote }}
+              {{- else if .valueFrom }}
+              valueFrom:
+                {{- toYaml .valueFrom | nindent 16 }}
+              {{- end }}
+            {{- end }}
+            {{- /* Ensure KEYCLOAK_ISSUER is always set if not in env list */}}
+            {{- if not $keycloakIssuerSet }}
+            - name: KEYCLOAK_ISSUER
+              value: {{ include "nemo.keycloakIssuer" $root | quote }}
+            {{- end }}
+            {{- /* Cloud overlays (values-aks/gke) replace env[] and can drop LLM_GATEWAY_URL */}}
+            {{- if not $llmGatewayUrlSet }}
+            - name: LLM_GATEWAY_URL
+              value: {{ include "nemo.llmGatewayUrl" $root | quote }}
+            {{- end }}
+            {{- /* Set KEYCLOAK_INTERNAL_ISSUER for service-to-service JWKS fetching */}}
+            - name: KEYCLOAK_INTERNAL_ISSUER
+              value: {{ include "nemo.keycloakInternalIssuer" $root | quote }}
+            {{- /* Ensure KEYCLOAK_CLIENT_ID and KEYCLOAK_CLIENT_SECRET are set for service account auth */}}
+            - name: KEYCLOAK_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-oidc-secrets
+                  key: config-service-client-id
+            - name: KEYCLOAK_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-oidc-secrets
+                  key: config-service-client-secret
+            - name: KEYCLOAK_RESOURCE_SERVER_UUID
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-oidc-secrets
+                  key: resource-server-uuid
+            {{- /* Bootstrap admin credentials (KEYCLOAK_ADMIN_USER/PASSWORD) -- consumed by
+                   routes/setupRoutes.ts (GET /api/v1/setup/status) via ROPC against master/admin-cli.
+                   Supplied per-environment through .Values.env (rendered in the range loop above):
+                     - AKS: services/values-aks.yaml -> keycloak-bootstrap-admin-from-kv
+                     - GKE: services/values-gke.yaml -> keycloak-bootstrap-admin
+                   Both names are mirrored into this namespace by `make sync-shared-secrets`.
+                   Not hardcoded here so the source secret name stays cloud-specific and we avoid
+                   emitting duplicate env entries when an overlay also sets them. */}}
+            - name: POSTGRES_HOST
+              value: {{ .Values.database.host | quote }}
+            - name: POSTGRES_PORT
+              value: {{ .Values.database.port | quote }}
+            - name: POSTGRES_USER
+              value: {{ .Values.database.user | quote }}
+            - name: POSTGRES_DB
+              value: {{ .Values.database.name | quote }}
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ if .Values.database.existingSecret }}{{ .Values.database.existingSecret }}{{ else }}{{ include "config-service.fullname" . }}-postgresql{{ end }}
+                  key: {{ if .Values.database.existingSecret }}{{ .Values.database.existingSecretKey }}{{ else }}postgres-password{{ end }}
+            {{- /* S3 gateway credentials and endpoint — required for workspace bucket
+                 creation, presigned URLs, and any direct S3 access from config-service */}}
+            - name: S3_ENDPOINT
+              value: "http://s3gateway:7070"
+            - name: S3_REGION
+              value: {{ .Values.s3Region | default "us-east-1" | quote }}
+            - name: S3_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "nemo.s3gatewayCredentialsName" $root }}
+                  key: access-key
+            - name: S3_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "nemo.s3gatewayCredentialsName" $root }}
+                  key: secret-key
+            {{- if .Values.global.observability.otlpEndpoint }}
+            - name: AGENT_STUDIO_OBSERVABILITY_OTLP_TRACES_ENDPOINT
+              value: {{ .Values.global.observability.otlpEndpoint | quote }}
+            - name: AGENT_STUDIO_OBSERVABILITY_OTLP_LOGS_ENDPOINT
+              value: {{ .Values.global.observability.otlpEndpoint | quote }}
+            {{- end }}
+            - name: AGENT_STUDIO_OBSERVABILITY_LOG_FILE_PATH
+              value: "/dev/stdout"
+            - name: AGENT_STUDIO_OBSERVABILITY_TRACE_FILE_PATH
+              value: "/tmp/App_Logs/trace.jsonl"
+            - name: AGENT_STUDIO_OBSERVABILITY_TRACE_JSONL_FILTER
+              value: "all"
+            - name: NODE_OPTIONS
+              value: "--require /app/node_modules/@agentstudio/observability-client-runtime/dist/preload.js"
+            - name: AGENT_STUDIO_OBSERVABILITY_ENABLE_AUTO_INSTRUMENTATION
+              value: "false"
+            {{- if .Values.service.metricsPort }}
+            - name: AGENT_STUDIO_OBSERVABILITY_PROMETHEUS_METRICS_PORT
+              value: {{ .Values.service.metricsPort | quote }}
+            {{- end }}
+            - name: OTEL_SERVICE_NAME
+              value: "config-service"
+            - name: OTEL_METRICS_EXPORTER
+              value: "none"
+            {{- if .Values.tracing.otlpEndpoint }}
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: {{ .Values.tracing.otlpEndpoint | quote }}
+            {{- end }}
+            - name: K8S_NAMESPACE
+              value: {{ .Values.namespace | default .Release.Namespace | quote }}
+            - name: MCP_IMAGE_REPOSITORY
+              value: {{ .Values.mcpRuntime.imageRepository | default .Values.global.imageRepository | quote }}
+            {{- if or .Values.mcpRuntime.imageTag .Values.global.imageTag }}
+            - name: MCP_IMAGE_TAG
+              value: {{ .Values.mcpRuntime.imageTag | default .Values.global.imageTag | quote }}
+            {{- end }}
+            {{- if .Values.mcpRuntime.imagePullSecrets }}
+            - name: MCP_IMAGE_PULL_SECRETS
+              value: {{ .Values.mcpRuntime.imagePullSecrets | quote }}
+            {{- else if .Values.global.imagePullSecrets }}
+            - name: MCP_IMAGE_PULL_SECRETS
+              {{- $names := list }}
+              {{- range .Values.global.imagePullSecrets }}
+                {{- if kindIs "string" . }}
+                  {{- $names = append $names . }}
+                {{- else if kindIs "map" . }}
+                  {{- $names = append $names (index . "name") }}
+                {{- end }}
+              {{- end }}
+              value: {{ join "," $names | quote }}
+            {{- end }}
+            {{- /* DuckDB MCP catalog defaults — read by defaultEnvFn at provisioning time */}}
+            - name: DUCKDB_DEFAULT_WAREHOUSE
+              value: {{ .Values.duckdbMcp.defaultWarehouse | default (include "nemo.deploymentName" $root | trim) | quote }}
+            - name: LAKEKEEPER_CATALOG_URL
+              value: {{ .Values.duckdbMcp.lakekeeperCatalogUrl | default (include "nemo.lakekeeperCatalogRestUrl" $root) | quote }}
+            - name: DUCKDB_KEYCLOAK_TOKEN_URL
+              value: {{ .Values.duckdbMcp.keycloakTokenUrl | default (printf "%s/protocol/openid-connect/token" (include "nemo.keycloakInternalIssuer" $root)) | quote }}
+            - name: DUCKDB_S3_ENDPOINT
+              value: {{ .Values.duckdbMcp.s3Endpoint | default "http://s3gateway:7070" | quote }}
+            {{- /* Prometheus MCP catalog defaults -- read by defaultEnvFn at provisioning time */}}
+            - name: PROMETHEUS_MCP_DEFAULT_URL
+              value: {{ .Values.prometheusMcp.defaultUrl | default "http://prometheus-prometheus.monitoring.svc.cluster.local:9090" | quote }}
+            - name: JUPYTERLAB_DEFAULT_IMAGE
+              value: {{ .Values.workspace.jupyterlabImage | default (printf "%s/workspace-jupyterlab:%s" .Values.global.imageRepository (.Values.global.imageTag | default "latest")) | quote }}
+            - name: DB_POOL_SIZE
+              value: {{ .Values.database.poolSize | default 20 | quote }}
+            - name: DB_POOL_IDLE_TIMEOUT
+              value: {{ .Values.database.poolIdleTimeout | default 30000 | quote }}
+            - name: DB_CONNECTION_TIMEOUT
+              value: {{ .Values.database.connectionTimeout | default 5000 | quote }}
+            - name: DB_STATEMENT_TIMEOUT
+              value: {{ .Values.database.statementTimeout | default 30000 | quote }}
+            {{- if .Values.certs.enabled }}
+            - name: NODE_EXTRA_CA_CERTS
+              value: {{ .Values.certs.certsMountPath }}/{{ .Values.certs.certFileName }}
+            {{- end }}
+          {{- if .Values.certs.enabled }}
+          volumeMounts:
+            - name: custom-ca-certs
+              mountPath: {{ .Values.certs.certsMountPath }}
+              readOnly: true
+          {{- end }}
+          livenessProbe:
+            {{- toYaml .Values.livenessProbe | nindent 12 }}
+          readinessProbe:
+            {{- toYaml .Values.readinessProbe | nindent 12 }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- range . }}
+        {{- if kindIs "string" . }}
+        - name: {{ . | quote }}
+        {{- else if kindIs "map" . }}
+        - {{- toYaml . | nindent 10 }}
+        {{- else }}
+        - name: {{ . | quote }}
+        {{- end }}
+        {{- end }}
+      {{- end }}
+{{- end }}
+

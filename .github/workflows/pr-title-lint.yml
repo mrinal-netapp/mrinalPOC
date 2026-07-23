@@ -1,0 +1,63 @@
+# Validates that the PR title is a Conventional Commit
+# (https://www.conventionalcommits.org/). The title is what merges into
+# main when "Squash and merge" is used, and the review-level-gate workflow
+# parses the type and breaking marker out of it to decide whether L3
+# approval is required. (Scope is parsed but does NOT affect the gate.)
+# A garbled title would silently degrade the gate (no `feat` → no L3
+# requirement), so we hard-fail PRs that don't conform.
+#
+# This is intentionally separate from review-level-gate.yml so the two
+# concerns (lint vs. enforce) can fail independently with distinct error
+# messages on the PR.
+
+name: PR Title Lint
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  pull-requests: read
+
+# A title-only retrigger (`edited`) doesn't share the head SHA scope with
+# `synchronize`, so use the PR number for the concurrency key.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Conventional commit title
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate PR title
+        uses: amannn/action-semantic-pull-request@v5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          # Allowed conventional-commit types. Keep this list aligned with
+          # the parser in review-level-gate.yml.
+          types: |
+            feat
+            fix
+            perf
+            refactor
+            docs
+            chore
+            test
+            style
+            ci
+            build
+            revert
+          # Scope is optional and not used by the review-level-gate.
+          # L3 escalation depends ONLY on the type (`feat:`), breaking
+          # markers (`!:` in the type or `BREAKING CHANGE:` footer), and
+          # the `requires-l3` / `skip-l3` override labels — not on scope.
+          # Authors are still encouraged to include a scope (e.g.
+          # `feat(api): …`) for readable history.
+          requireScope: false
+          # Bot-authored PRs are allowed to use lowercase package names.
+          subjectPattern: ${{ github.event.pull_request.user.type == 'Bot' && '^.+$' || '^[A-Z].+$' }}
+          subjectPatternError: |
+            The subject of the PR title must start with a capital letter.
+            Got: "{subject}"

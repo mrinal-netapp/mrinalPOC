@@ -1,0 +1,1117 @@
+{{- /*
+Realm-bootstrap Job (T-102 — declarative agent-studio realm import).
+
+Lifecycle
+---------
+post-install + post-upgrade Helm hook. Waits for the Keycloak StatefulSet
+to be Ready (poll /health/ready on the management port), authenticates as
+the bootstrap admin via `kcadm.sh config credentials`, then either CREATES
+the realm (first run) or UPDATES it (subsequent runs):
+
+    kcadm.sh get realms/<realm>
+      ├─ exit 0  -> realm exists -> kcadm.sh update realms/<realm> -f /realm/realm.json
+      └─ exit !0 -> realm absent -> kcadm.sh create realms          -f /realm/realm.json
+
+We deliberately avoid `partialImport` (Keycloak Admin REST endpoint
+`/realms/<r>/partialImport`) because it has documented bugs around
+overwrite policy for client scopes and IdP mappers (KEYCLOAK-19156 et al.).
+The create-or-update split is the canonical idempotent path.
+
+Why a Helm hook instead of a regular Job
+----------------------------------------
+A regular Job would re-render every `helm upgrade` and Kubernetes would
+reject the spec change (Job spec is immutable post-creation), forcing
+operators to `kubectl delete job` between upgrades. The hook annotations
+plus `before-hook-creation` deletion policy mean Helm itself manages the
+lifecycle: each upgrade deletes the previous Job, runs a fresh one, and
+deletes it on success (`hook-succeeded`) so successful runs don't pile up.
+
+Render-time gates
+-----------------
+Job is only rendered when:
+  - .Values.realmBootstrap.enabled is true, AND
+  - either .Values.keycloak.bootstrapAdmin.existingSecret is set
+    OR     .Values.keycloak.bootstrapAdmin.password is set
+The second gate is required because the Job needs admin credentials to
+talk to the Keycloak Admin API. Without one of those values, the
+bootstrap-admin Secret isn't rendered (see bootstrap-admin-secret.yaml)
+and Keycloak falls back to its built-in admin/admin — which only works
+on first boot and can't be relied upon in a Job that may run on upgrade.
+
+When the Entra broker is enabled (realmBootstrap.broker.enabled=true)
+we additionally require:
+  - clientId, tenantId, groupAdminsObjectId, groupMembersObjectId
+    (public identifiers — non-empty strings)
+  - either broker.existingSecret OR broker.clientSecret (case 1 or 2 in
+    values.yaml; case 3 = neither set = fail)
+These guards exist because the realm.json's IdP block contains literal
+${KC_ENTRA_*} placeholders. If any of them aren't substituted the Job
+imports a realm with literal placeholder strings; Keycloak accepts this
+silently at import time but the IdP fails on first redirect — much
+harder to diagnose than a fail() at render time.
+*/}}
+{{- if .Values.realmBootstrap.enabled }}
+{{- if not (or .Values.keycloak.bootstrapAdmin.existingSecret .Values.keycloak.bootstrapAdmin.password) }}
+{{- fail "realmBootstrap.enabled=true requires either keycloak.bootstrapAdmin.existingSecret OR keycloak.bootstrapAdmin.password. The realm-bootstrap Job authenticates as the bootstrap admin via kcadm.sh; without one of those values no admin Secret is rendered and the Job can't log in. For local dev install with `-f values-local.yaml` (sets keycloak.bootstrapAdmin.password); for AKS point existingSecret at the Key-Vault-materialised Secret (typically `keycloak-bootstrap-admin-from-kv`)." }}
+{{- end }}
+{{- if .Values.realmBootstrap.broker.enabled }}
+{{- if not .Values.realmBootstrap.broker.clientId }}{{- fail "realmBootstrap.broker.enabled=true requires realmBootstrap.broker.clientId (Entra App Registration appId — output of `make aks-keycloak-entra-register`)." }}{{- end }}
+{{- if not .Values.realmBootstrap.broker.tenantId }}{{- fail "realmBootstrap.broker.enabled=true requires realmBootstrap.broker.tenantId (Entra tenant ID — `az account show --query tenantId -o tsv`)." }}{{- end }}
+{{- if not .Values.realmBootstrap.broker.groupAdminsObjectId }}{{- fail "realmBootstrap.broker.enabled=true requires realmBootstrap.broker.groupAdminsObjectId (objectId of the AgentStudio-PlatformAdmins security group — output of `make aks-keycloak-entra-register`). The group->realm-role IdP mapper keys off Entra's `groups` claim which carries objectIds, not displayNames." }}{{- end }}
+{{- if not .Values.realmBootstrap.broker.groupMembersObjectId }}{{- fail "realmBootstrap.broker.enabled=true requires realmBootstrap.broker.groupMembersObjectId (objectId of the AgentStudio-PlatformMembers security group — output of `make aks-keycloak-entra-register`)." }}{{- end }}
+{{- if not (or .Values.realmBootstrap.broker.existingSecret .Values.realmBootstrap.broker.clientSecret) }}{{- fail "realmBootstrap.broker.enabled=true requires either realmBootstrap.broker.existingSecret OR realmBootstrap.broker.clientSecret. AKS path: existingSecret = `keycloak-entra-broker-from-kv` (materialised by SPC from KV object `kc-entra-broker-secret` — published by `make aks-keycloak-entra-register`). Dev/test path: clientSecret set inline." }}{{- end }}
+{{- end }}
+{{- /* Render-time validation for additionalClients (name + kind only; secrets are Keycloak-generated). */ -}}
+{{- if .Values.realmBootstrap.additionalClients.enabled }}
+{{- range $i, $c := .Values.realmBootstrap.additionalClients.clients }}
+{{- if not $c.name }}{{- fail (printf "realmBootstrap.additionalClients.clients[%d].name is required" $i) }}{{- end }}
+{{- if not $c.kind }}{{- fail (printf "realmBootstrap.additionalClients.clients[%d] (%s): kind is required (one of confidential-svc | public-spa | confidential-spa)" $i $c.name) }}{{- end }}
+{{- end }}
+{{- end }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "keycloak.fullname" . }}-realm-bootstrap
+  labels:
+    {{- include "keycloak.labels" . | nindent 4 }}
+    app.kubernetes.io/component: realm-bootstrap
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  ## Bounded retries — increased backoffLimit to handle service startup dependencies.
+  ## Jobs run on every helm upgrade, so they must be mesh-protected with sidecars.
+  ## mTLS is handled transparently by native sidecar; retries allow time for services to be ready.
+  backoffLimit: 10
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        {{- include "keycloak.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: realm-bootstrap
+      annotations:
+        # Skip Istio sidecar injection on this one-shot Job.
+        # Istio sidecars don't exit when the main container completes,
+        # so the pod stays at 1/2 Ready forever and the Job times out.
+        # Safe here because the Job only calls Keycloak on ports 8080
+        # (kcadm Admin API) and 9000 (mgmt /health), both of which the
+        # `keycloak-http-permissive` PeerAuthentication exposes in
+        # PERMISSIVE mode — non-meshed clients can reach them in
+        # plain HTTP. See istio-mesh-policies chart.
+        sidecar.istio.io/inject: "false"
+    spec:
+      restartPolicy: OnFailure
+      serviceAccountName: {{ include "keycloak.serviceAccountName" . }}
+      {{- include "keycloak.imagePullSecrets" . | nindent 6 }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: kcadm
+          image: {{ include "keycloak.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          env:
+            - name: KC_OPTS
+              ## kcadm.sh launches a fresh Java process per call and the
+              ## realm-bootstrap script makes dozens of them in a tight loop
+              ## (one per client, per role, per protocol mapper). The JVM's
+              ## default cold-start cost dominates total Job runtime — often
+              ## several minutes for a full bootstrap.
+              ## - UseSerialGC: smaller GC code-path → faster startup
+              ## - TieredStopAtLevel=1: skip the C2 compiler (we don't run
+              ##   long enough to benefit from it)
+              ## - Xmx256m: cap heap; kcadm needs single-digit MB but the
+              ##   default heuristic picks ~25% of container memory and
+              ##   spends time committing/zeroing it on every launch
+              ## kcadm.sh launches Java with unquoted $KC_OPTS, so keep this
+              ## as a space-separated string — no shell metacharacters.
+              value: "-XX:+UseSerialGC -XX:TieredStopAtLevel=1 -Xmx256m"
+            - name: KC_SERVER_URL
+              ## In-cluster ClusterIP Service of the Keycloak StatefulSet.
+              ## Plain HTTP — Istio sidecar mTLS is phase 2.
+              value: "http://{{ include "keycloak.fullname" . }}:{{ .Values.service.port }}"
+            - name: KC_MGMT_URL
+              ## Management port hosts /health/ready in KC 26.
+              value: "http://{{ include "keycloak.fullname" . }}:{{ .Values.service.managementPort }}"
+            - name: KC_REALM
+              value: {{ .Values.realmBootstrap.realm | quote }}
+            - name: KC_NAMESPACE
+              value: {{ .Release.Namespace | quote }}
+            - name: KC_ADMIN_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "keycloak.bootstrapAdminSecretName" . }}
+                  key: {{ .Values.keycloak.bootstrapAdmin.secretKeys.usernameKey }}
+            - name: KC_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "keycloak.bootstrapAdminSecretName" . }}
+                  key: {{ .Values.keycloak.bootstrapAdmin.secretKeys.passwordKey }}
+            {{- if .Values.realmBootstrap.broker.enabled }}
+            ## Entra broker: 4 public identifiers (chart values) + 1 secret
+            ## (secretKeyRef). All five flow into a side-by-side substitution
+            ## step in the args block below.
+            - name: KC_ENTRA_CLIENT_ID
+              value: {{ .Values.realmBootstrap.broker.clientId | quote }}
+            - name: KC_ENTRA_TENANT_ID
+              value: {{ .Values.realmBootstrap.broker.tenantId | quote }}
+            - name: KC_ENTRA_GROUP_ADMINS_OBJECTID
+              value: {{ .Values.realmBootstrap.broker.groupAdminsObjectId | quote }}
+            - name: KC_ENTRA_GROUP_MEMBERS_OBJECTID
+              value: {{ .Values.realmBootstrap.broker.groupMembersObjectId | quote }}
+            - name: KC_ENTRA_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "keycloak.brokerSecretName" . }}
+                  key: {{ .Values.realmBootstrap.broker.secretKeys.clientSecretKey }}
+            {{- end }}
+          command: ["/bin/bash", "-eu", "-o", "pipefail", "-c"]
+          args:
+            - |
+              KCADM=/opt/keycloak/bin/kcadm.sh
+              REALM_TEMPLATE=/realm/realm.json
+              # /realm is mounted read-only from the ConfigMap, so we
+              # substitute placeholders into a writable file under /tmp.
+              REALM_FILE=/tmp/realm.json
+
+              # The Keycloak 26.x image deliberately ships without curl,
+              # wget, awk, or nc, so we use bash's /dev/tcp pseudo-device
+              # for a TCP-level readiness probe against the management
+              # port. Keycloak only opens this port once /health/ready is
+              # wired up, so a successful TCP connect is functionally
+              # equivalent to a successful HTTP probe for our purposes.
+              # URL parsing uses bash parameter expansion only (no awk).
+              HOSTPORT="${KC_MGMT_URL#http://}"
+              HOSTPORT="${HOSTPORT#https://}"
+              KC_MGMT_HOST="${HOSTPORT%%:*}"
+              KC_MGMT_PORT="${HOSTPORT##*:}"
+              KC_MGMT_PORT="${KC_MGMT_PORT%%/*}"
+              echo "[bootstrap] waiting for Keycloak management port ${KC_MGMT_HOST}:${KC_MGMT_PORT} (TCP probe)"
+              for i in $(seq 1 60); do
+                if (exec 3<>"/dev/tcp/${KC_MGMT_HOST}/${KC_MGMT_PORT}") 2>/dev/null; then
+                  exec 3<&-; exec 3>&-
+                  echo "[bootstrap] Keycloak management port reachable after ${i} attempt(s)"
+                  break
+                fi
+                if [ "${i}" -eq 60 ]; then
+                  echo "[bootstrap] ERROR: Keycloak management port not reachable within 5 minutes." >&2
+                  echo "[bootstrap] Common causes: keycloak-0 Pending (Insufficient memory), CrashLoopBackOff, or DB unreachable." >&2
+                  echo "[bootstrap] Check: kubectl get pods -n ${KC_NAMESPACE} -l app.kubernetes.io/name=keycloak" >&2
+                  echo "[bootstrap] Local dev: ensure values-local.yaml resources fit your node (512Mi request) or free memory from other pods." >&2
+                  exit 1
+                fi
+                sleep 5
+              done
+
+              cp "${REALM_TEMPLATE}" "${REALM_FILE}"
+              {{- if .Values.realmBootstrap.broker.enabled }}
+
+              ## Substitute Entra broker placeholders into the realm JSON.
+              ## Only the Entra broker uses placeholders now; additional-client
+              ## secrets are generated by Keycloak and read back by the
+              ## post-realm-bootstrap Job — no placeholder needed in realm.json.
+              ##
+              ## Public identifiers (clientId, tenantId, group objectIds —
+              ## hex-only) are substituted via sed; the regex-meta-character
+              ## risk is zero because they're known-safe character classes.
+              ##
+              ## The Entra client secret CANNOT use sed — KV-generated secrets
+              ## occasionally contain `&`, `\`, or `|` which sed treats as
+              ## metacharacters. Pure-bash parameter expansion treats the
+              ## replacement as a literal string, so no escaping is needed.
+              echo "[bootstrap] substituting Entra public placeholders (sed; safe)"
+              # shellcheck disable=SC2016  # we WANT literal $-syntax here
+              sed -i \
+                -e "s|\${KC_ENTRA_CLIENT_ID}|${KC_ENTRA_CLIENT_ID}|g" \
+                -e "s|\${KC_ENTRA_TENANT_ID}|${KC_ENTRA_TENANT_ID}|g" \
+                -e "s|\${KC_ENTRA_GROUP_ADMINS_OBJECTID}|${KC_ENTRA_GROUP_ADMINS_OBJECTID}|g" \
+                -e "s|\${KC_ENTRA_GROUP_MEMBERS_OBJECTID}|${KC_ENTRA_GROUP_MEMBERS_OBJECTID}|g" \
+                "${REALM_FILE}"
+
+              echo "[bootstrap] substituting Entra secret placeholder (pure-bash; no sed metachar risk)"
+              REALM_BODY=$(< "${REALM_FILE}")
+              REALM_BODY=${REALM_BODY//'${KC_ENTRA_CLIENT_SECRET}'/${KC_ENTRA_CLIENT_SECRET}}
+              # Write back via printf %s to preserve trailing newlines / special chars.
+              printf '%s' "${REALM_BODY}" > "${REALM_FILE}"
+              unset REALM_BODY
+
+              # Sanity check: no remaining ${KC_*} placeholders.
+              if grep -E '\$\{KC_[A-Z0-9_]+\}' "${REALM_FILE}" > /dev/null; then
+                echo "[bootstrap] ERROR: realm JSON still contains unresolved placeholders after substitution:" >&2
+                grep -oE '\$\{KC_[A-Z0-9_]+\}' "${REALM_FILE}" | sort -u >&2
+                exit 1
+              fi
+              {{- end }}
+
+              echo "[bootstrap] authenticating as bootstrap admin"
+              "${KCADM}" config credentials \
+                --server "${KC_SERVER_URL}" \
+                --realm master \
+                --user "${KC_ADMIN_USERNAME}" \
+                --password "${KC_ADMIN_PASSWORD}"
+
+              echo "[bootstrap] checking whether realm '${KC_REALM}' already exists"
+              if "${KCADM}" get "realms/${KC_REALM}" > /dev/null 2>&1; then
+                echo "[bootstrap] realm exists -> updating realm settings from ${REALM_FILE}"
+                ## kcadm update realms/<r> -f <file> patches top-level realm settings
+                ## (tokens, brute-force, display name, etc.) but does NOT import
+                ## roles, clients, groups, or client scopes. We handle those below.
+                "${KCADM}" update "realms/${KC_REALM}" -f "${REALM_FILE}"
+
+                ## Ensure required realm roles exist on an existing realm.
+                ## The composite-reconciliation step below requires platform-member
+                ## and platform-admin to be present; kcadm update never creates them.
+                echo "[bootstrap] ensuring required realm roles exist"
+                for _role in platform-member platform-admin; do
+                  if "${KCADM}" get "roles/${_role}" -r "${KC_REALM}" > /dev/null 2>&1; then
+                    echo "[bootstrap]   realm role '${_role}' already present"
+                  else
+                    echo "[bootstrap]   creating realm role '${_role}'"
+                    "${KCADM}" create roles -r "${KC_REALM}" \
+                      -s "name=${_role}" \
+                      -s composite=true
+                  fi
+                done
+              else
+                echo "[bootstrap] realm absent -> creating from ${REALM_FILE}"
+                "${KCADM}" create realms -f "${REALM_FILE}"
+              fi
+
+              {{- if .Values.realmBootstrap.broker.enabled }}
+              ## ---------------------------------------------------------
+              ## Entra IdP reconciliation.
+              ##
+              ## `kcadm update realms/<r>` does NOT create new identity
+              ## providers — it only updates top-level realm attributes.
+              ## If the realm was originally created without the broker
+              ## (broker.enabled=false) and a later upgrade flips it on,
+              ## the IdP and its mappers are absent until we explicitly
+              ## create them via the identity-provider Admin REST API.
+              ##
+              ## Idempotent: check whether the IdP alias already exists;
+              ## create if absent, update if present. Mappers follow the
+              ## same create-or-skip pattern (kcadm create returns non-zero
+              ## if a mapper with the same name already exists on the IdP).
+              echo "[bootstrap] reconciling azure-entra identity provider"
+              IDP_JSON='{
+                "alias": "azure-entra",
+                "displayName": "Microsoft Entra ID",
+                "providerId": "oidc",
+                "enabled": true,
+                "trustEmail": true,
+                "storeToken": false,
+                "addReadTokenRoleOnCreate": false,
+                "linkOnly": false,
+                "firstBrokerLoginFlowAlias": "first broker login",
+                "config": {
+                  "clientId": "'"${KC_ENTRA_CLIENT_ID}"'",
+                  "clientSecret": "'"${KC_ENTRA_CLIENT_SECRET}"'",
+                  "clientAuthMethod": "client_secret_post",
+                  "pkceEnabled": "true",
+                  "pkceMethod": "S256",
+                  "syncMode": "FORCE",
+                  "defaultScope": "openid profile email",
+                  "useJwksUrl": "true",
+                  "validateSignature": "true",
+                  "issuer": "https://login.microsoftonline.com/'"${KC_ENTRA_TENANT_ID}"'/v2.0",
+                  "authorizationUrl": "https://login.microsoftonline.com/'"${KC_ENTRA_TENANT_ID}"'/oauth2/v2.0/authorize",
+                  "tokenUrl": "https://login.microsoftonline.com/'"${KC_ENTRA_TENANT_ID}"'/oauth2/v2.0/token",
+                  "userInfoUrl": "https://graph.microsoft.com/oidc/userinfo",
+                  "jwksUrl": "https://login.microsoftonline.com/'"${KC_ENTRA_TENANT_ID}"'/discovery/v2.0/keys",
+                  "logoutUrl": "https://login.microsoftonline.com/'"${KC_ENTRA_TENANT_ID}"'/oauth2/v2.0/logout",
+                  "backchannelSupported": "false"
+                }
+              }'
+
+              if "${KCADM}" get "identity-provider/instances/azure-entra" -r "${KC_REALM}" > /dev/null 2>&1; then
+                echo "[bootstrap]   azure-entra exists -> updating config"
+                printf '%s' "${IDP_JSON}" | "${KCADM}" update "identity-provider/instances/azure-entra" -r "${KC_REALM}" -f -
+              else
+                echo "[bootstrap]   azure-entra absent -> creating"
+                printf '%s' "${IDP_JSON}" | "${KCADM}" create "identity-provider/instances" -r "${KC_REALM}" -f -
+              fi
+
+              ## Reconcile IdP mappers. Create each if it doesn't already
+              ## exist; existing mappers are left as-is (their config is
+              ## stable across runs — only the group objectIds change, and
+              ## those are baked into the JSON below from Helm values).
+              idp_ensure_mapper() {
+                local mapper_name="$1" mapper_json="$2"
+                local existing
+                existing=$("${KCADM}" get "identity-provider/instances/azure-entra/mappers" \
+                  -r "${KC_REALM}" 2>/dev/null || true)
+                if printf '%s' "${existing}" | grep -q "\"name\" : \"${mapper_name}\""; then
+                  echo "[bootstrap]   mapper '${mapper_name}' already exists"
+                else
+                  echo "[bootstrap]   creating mapper '${mapper_name}'"
+                  printf '%s' "${mapper_json}" | "${KCADM}" create \
+                    "identity-provider/instances/azure-entra/mappers" \
+                    -r "${KC_REALM}" -f -
+                fi
+              }
+
+              idp_ensure_mapper "groups-to-platform-admin" '{
+                "name": "groups-to-platform-admin",
+                "identityProviderAlias": "azure-entra",
+                "identityProviderMapper": "oidc-role-idp-mapper",
+                "config": {
+                  "syncMode": "INHERIT",
+                  "claim": "groups",
+                  "claim.value": "'"${KC_ENTRA_GROUP_ADMINS_OBJECTID}"'",
+                  "role": "platform-admin"
+                }
+              }'
+
+              idp_ensure_mapper "always-assign-platform-member" '{
+                "name": "always-assign-platform-member",
+                "identityProviderAlias": "azure-entra",
+                "identityProviderMapper": "oidc-hardcoded-role-idp-mapper",
+                "config": {
+                  "syncMode": "INHERIT",
+                  "role": "platform-member"
+                }
+              }'
+
+              ## Remove the legacy groups-to-platform-member IdP mapper.
+              ##
+              ## platform-member is now UNIVERSAL: realm.defaultRole grants it
+              ## at user creation and always-assign-platform-member grants it on
+              ## first brokered login, so every authenticated user is a member.
+              ##
+              ## The old groups-to-platform-member (oidc-role-idp-mapper) ran
+              ## with the IdP's FORCE sync mode, which RE-EVALUATES on every
+              ## login and DELETES the role from any user whose `groups` claim
+              ## does not carry the AgentStudio-PlatformMembers objectId. That
+              ## silently stripped platform-member from legitimate users on
+              ## their second login (a hardcoded-role mapper's updateBrokeredUser
+              ## is a no-op, so nothing ever re-granted it) -> "signed in but no
+              ## platform role". We delete the mapper so it can never strip the
+              ## role again. Idempotent: no-op when the mapper is absent.
+              echo "[bootstrap] removing legacy groups-to-platform-member IdP mapper (if present)"
+              for _gm_id in $("${KCADM}" get "identity-provider/instances/azure-entra/mappers" \
+                  -r "${KC_REALM}" --fields id --format csv --noquotes 2>/dev/null); do
+                _gm_name=$("${KCADM}" get "identity-provider/instances/azure-entra/mappers/${_gm_id}" \
+                  -r "${KC_REALM}" --fields name --format csv --noquotes 2>/dev/null || true)
+                if [[ "${_gm_name}" == "groups-to-platform-member" ]]; then
+                  if "${KCADM}" delete "identity-provider/instances/azure-entra/mappers/${_gm_id}" \
+                      -r "${KC_REALM}" >/dev/null 2>&1; then
+                    echo "[bootstrap]   deleted groups-to-platform-member mapper (${_gm_id})"
+                  else
+                    echo "[bootstrap]   WARNING: failed to delete groups-to-platform-member mapper ${_gm_id}" >&2
+                  fi
+                fi
+              done
+              {{- end }}
+
+              ## Strip auto-promoted defaultRole composites from platform-member.
+              ##
+              ## When realm.defaultRole points to a custom role (rather than
+              ## the system-default default-roles-<realm>), Keycloak's import
+              ## attaches the built-in account-management composites
+              ## (offline_access, account/view-profile, account/manage-account,
+              ## and the default-roles-<realm> umbrella itself) DIRECTLY as
+              ## composites of the named role. Without this cleanup every
+              ## issued token would carry those four under realm_access.roles
+              ## via composite expansion -- noise that production tokens
+              ## (cross-checked against the team's reference sample) do not
+              ## have. The realm JSON declares platform-member with only the
+              ## composites we want; this block reconciles the runtime to
+              ## match the declaration.
+              ##
+              ## We intentionally KEEP uma_authorization as an explicit
+              ## composite of platform-member (declared in realm.json)
+              ## because UMA RPT issuance against agent-studio-api
+              ## requires it on every authenticated subject.
+              ##
+              ## kcadm has no first-class "remove role composite" verb, so
+              ## we call the raw Admin REST endpoint:
+              ##   DELETE /admin/realms/{realm}/roles-by-id/{pm-id}/composites
+              ## with a body listing child role IDs to detach. Idempotent:
+              ## kcadm returns non-zero when the composite isn't present,
+              ## which we treat as "already clean" and log.
+              echo "[bootstrap] reconciling platform-member composites against realm.json declaration"
+
+              ## Extract the first <key> field from a JSON payload using a
+              ## bash regex -- the KC 26 image ships without jq, python, or
+              ## awk. Default key is "id"; pass "_id" for authz resources
+              ## (Keycloak's authz API uses _id, not id, for resource UUIDs).
+              ## The opening-quote anchor in the regex prevents accidental
+              ## matches on substrings like _id when key=id.
+              kc_get_id_from_json() {
+                local json="$1"
+                local key="${2:-id}"
+                if [[ "${json}" =~ \"${key}\"[[:space:]]*:[[:space:]]*\"([^\"]+)\" ]]; then
+                  printf '%s' "${BASH_REMATCH[1]}"
+                fi
+              }
+
+              PM_ROLE_JSON=$("${KCADM}" get "roles/platform-member" -r "${KC_REALM}" 2>/dev/null || true)
+              PM_ID=$(kc_get_id_from_json "${PM_ROLE_JSON}")
+              if [[ -z "${PM_ID}" ]]; then
+                echo "[bootstrap] ERROR: could not resolve platform-member role ID after import" >&2
+                exit 1
+              fi
+
+              # Detach a realm role from platform-member's composite list.
+              pm_detach_realm_role() {
+                local role_name="$1"
+                local role_json role_id
+                role_json=$("${KCADM}" get "roles/${role_name}" -r "${KC_REALM}" 2>/dev/null || true)
+                role_id=$(kc_get_id_from_json "${role_json}")
+                if [[ -z "${role_id}" ]]; then
+                  echo "[bootstrap]   realm role '${role_name}' not present, skipping"
+                  return 0
+                fi
+                if "${KCADM}" delete "roles-by-id/${PM_ID}/composites" -r "${KC_REALM}" \
+                    -b "[{\"id\":\"${role_id}\"}]" >/dev/null 2>&1; then
+                  echo "[bootstrap]   detached realm composite '${role_name}' from platform-member"
+                else
+                  echo "[bootstrap]   realm composite '${role_name}' not attached to platform-member (already clean)"
+                fi
+              }
+
+              # Detach a client role from platform-member's composite list.
+              #
+              # When `client_id == "account"` we reuse the cached
+              # ACCOUNT_CLIENT_UUID (resolved once outside this loop) to
+              # skip a redundant `kcadm get clients` call per invocation.
+              # Each kcadm call forks a JVM (see KC_OPTS env) — the loop
+              # below calls pm_detach_client_role multiple times for the
+              # same account client, so caching shaves seconds off the
+              # bootstrap.
+              pm_detach_client_role() {
+                local client_id="$1"; local role_name="$2"
+                local client_json client_uuid role_json role_id
+                if [[ "${client_id}" == "account" && -n "${ACCOUNT_CLIENT_UUID:-}" ]]; then
+                  client_uuid="${ACCOUNT_CLIENT_UUID}"
+                else
+                  client_json=$("${KCADM}" get clients -r "${KC_REALM}" -q "clientId=${client_id}" 2>/dev/null || true)
+                  client_uuid=$(kc_get_id_from_json "${client_json}")
+                fi
+                if [[ -z "${client_uuid}" ]]; then
+                  echo "[bootstrap]   client '${client_id}' not present, skipping role '${role_name}'"
+                  return 0
+                fi
+                role_json=$("${KCADM}" get "clients/${client_uuid}/roles/${role_name}" -r "${KC_REALM}" 2>/dev/null || true)
+                role_id=$(kc_get_id_from_json "${role_json}")
+                if [[ -z "${role_id}" ]]; then
+                  echo "[bootstrap]   client role '${client_id}/${role_name}' not present, skipping"
+                  return 0
+                fi
+                if "${KCADM}" delete "roles-by-id/${PM_ID}/composites" -r "${KC_REALM}" \
+                    -b "[{\"id\":\"${role_id}\"}]" >/dev/null 2>&1; then
+                  echo "[bootstrap]   detached client composite '${client_id}/${role_name}' from platform-member"
+                else
+                  echo "[bootstrap]   client composite '${client_id}/${role_name}' not attached (already clean)"
+                fi
+              }
+
+              pm_detach_realm_role "offline_access"
+              pm_detach_realm_role "default-roles-${KC_REALM}"
+              ## Resolve the account client UUID ONCE and pass it through to
+              ## pm_detach_client_role via env. The account client is hit
+              ## multiple times below; each `kcadm get clients` call is a
+              ## JVM cold-start, so caching matters even with KC_OPTS tuning.
+              ACCOUNT_CLIENT_JSON=$("${KCADM}" get clients -r "${KC_REALM}" -q "clientId=account" 2>/dev/null || true)
+              ACCOUNT_CLIENT_UUID=$(kc_get_id_from_json "${ACCOUNT_CLIENT_JSON}")
+              pm_detach_client_role "account" "view-profile"
+              pm_detach_client_role "account" "manage-account"
+
+              ## Attach uma_authorization as a composite of platform-member.
+              ## It cannot be declared in realm.json composites because
+              ## uma_authorization is a Keycloak built-in role created after
+              ## realm initialisation; referencing it at import time causes
+              ## "Unable to find composite realm role: uma_authorization".
+              echo "[bootstrap] attaching uma_authorization composite to platform-member"
+              UMA_AUTH_JSON=$("${KCADM}" get "roles/uma_authorization" -r "${KC_REALM}" 2>/dev/null || true)
+              UMA_AUTH_ID=$(kc_get_id_from_json "${UMA_AUTH_JSON}")
+              if [[ -z "${UMA_AUTH_ID}" ]]; then
+                echo "[bootstrap] WARNING: uma_authorization role not found, skipping" >&2
+              else
+                if "${KCADM}" create "roles-by-id/${PM_ID}/composites" -r "${KC_REALM}" \
+                    -b "[{\"id\":\"${UMA_AUTH_ID}\"}]" >/dev/null 2>&1; then
+                  echo "[bootstrap] attached uma_authorization to platform-member"
+                else
+                  echo "[bootstrap] uma_authorization already composite of platform-member (already clean)"
+                fi
+              fi
+
+              ## --------------------------------------------------------
+              ## Builtin client-scope protocol-mapper fixups.
+              ##
+              ## Keycloak's realm import treats `roles`, `profile`, `email`,
+              ## and `web-origins` as RESERVED builtin names and silently
+              ## overrides their `protocolMappers` config from the imported
+              ## JSON with a stub built-in set whose `config: {}` is empty.
+              ## Tokens minted from a fresh-imported realm therefore ship
+              ## WITHOUT `realm_access.roles`, `preferred_username`, `email`,
+              ## or `allowed-origins` claims -- breaking RBAC, profile
+              ## display, and CORS in every downstream service.
+              ##
+              ## Mitigation: after import, walk the four reserved scopes and
+              ## DELETE+RECREATE each mapper with the explicit config we
+              ## want. This is the kcadm pattern KC support recommends for
+              ## the bug (KEYCLOAK-19551 / KEYCLOAK-20255 family); upstream
+              ## has refused to fix realm-import semantics because some
+              ## operators rely on the override behavior.
+              ##
+              ## Idempotent: each `kcadm delete` returns non-zero if the
+              ## mapper doesn't exist (treated as "already clean"); each
+              ## subsequent `create` reinstalls our canonical config.
+
+              # Find a scope's UUID by name.
+              kc_get_scope_id() {
+                local name="$1" json
+                json=$("${KCADM}" get client-scopes -r "${KC_REALM}" -q "name=${name}" 2>/dev/null || true)
+                kc_get_id_from_json "${json}"
+              }
+
+              # Recreate a protocol-mapper on a scope. Takes scope UUID,
+              # mapper name, JSON body, and (optionally) a pre-fetched
+              # protocol-mappers blob. When called multiple times for the
+              # same scope (ROLES, PROFILE, EMAIL all have 2-3 mappers),
+              # the caller should fetch the mappers list ONCE and pass it
+              # as $4 — each kcadm call forks a JVM (see KC_OPTS env), so
+              # eliminating N-1 lookups per scope is a measurable win.
+              # When $4 is absent we fall back to fetching here for
+              # backward-compat with single-mapper scopes.
+              kc_recreate_mapper() {
+                local scope_id="$1" mapper_name="$2" body="$3" mappers="${4:-}"
+                local existing_id
+                if [[ -z "${mappers}" ]]; then
+                  mappers=$("${KCADM}" get "client-scopes/${scope_id}/protocol-mappers/models" -r "${KC_REALM}" 2>/dev/null || true)
+                fi
+                # Find the matching mapper id by name. Simple substring search;
+                # mapper names within a single scope are unique by Keycloak invariant.
+                existing_id=""
+                while IFS= read -r line; do
+                  case "${line}" in
+                    *"\"name\" : \"${mapper_name}\""*|*"\"name\":\"${mapper_name}\""*)
+                      # Look backwards a few lines for the id
+                      existing_id=$(printf '%s' "${mappers}" | grep -B2 "\"name\"[[:space:]]*:[[:space:]]*\"${mapper_name}\"" | grep -oE '"id"[[:space:]]*:[[:space:]]*"[^"]+"' | head -1 | grep -oE '"[^"]+"$' | tr -d '"')
+                      break
+                      ;;
+                  esac
+                done <<< "${mappers}"
+                if [[ -n "${existing_id}" ]]; then
+                  "${KCADM}" delete "client-scopes/${scope_id}/protocol-mappers/models/${existing_id}" -r "${KC_REALM}" >/dev/null 2>&1 || true
+                fi
+                printf '%s' "${body}" | "${KCADM}" create "client-scopes/${scope_id}/protocol-mappers/models" -r "${KC_REALM}" -f -
+              }
+
+              echo "[bootstrap] fixing builtin client-scope protocol mappers"
+
+              ROLES_SCOPE_ID=$(kc_get_scope_id "roles")
+              if [[ -n "${ROLES_SCOPE_ID}" ]]; then
+                # Cache mappers once for all 3 ROLES-scope recreates.
+                ROLES_SCOPE_MAPPERS=$("${KCADM}" get "client-scopes/${ROLES_SCOPE_ID}/protocol-mappers/models" -r "${KC_REALM}" 2>/dev/null || true)
+                kc_recreate_mapper "${ROLES_SCOPE_ID}" "realm roles" '{
+                  "name":"realm roles",
+                  "protocol":"openid-connect",
+                  "protocolMapper":"oidc-usermodel-realm-role-mapper",
+                  "consentRequired":false,
+                  "config":{
+                    "introspection.token.claim":"true",
+                    "multivalued":"true",
+                    "userinfo.token.claim":"false",
+                    "id.token.claim":"false",
+                    "access.token.claim":"true",
+                    "claim.name":"realm_access.roles",
+                    "jsonType.label":"String"
+                  }
+                }' "${ROLES_SCOPE_MAPPERS}"
+                kc_recreate_mapper "${ROLES_SCOPE_ID}" "client roles" '{
+                  "name":"client roles",
+                  "protocol":"openid-connect",
+                  "protocolMapper":"oidc-usermodel-client-role-mapper",
+                  "consentRequired":false,
+                  "config":{
+                    "introspection.token.claim":"true",
+                    "multivalued":"true",
+                    "userinfo.token.claim":"false",
+                    "id.token.claim":"false",
+                    "access.token.claim":"true",
+                    "claim.name":"resource_access.${client_id}.roles",
+                    "jsonType.label":"String"
+                  }
+                }' "${ROLES_SCOPE_MAPPERS}"
+                kc_recreate_mapper "${ROLES_SCOPE_ID}" "audience resolve" '{
+                  "name":"audience resolve",
+                  "protocol":"openid-connect",
+                  "protocolMapper":"oidc-audience-resolve-mapper",
+                  "consentRequired":false,
+                  "config":{
+                    "introspection.token.claim":"true",
+                    "access.token.claim":"true"
+                  }
+                }' "${ROLES_SCOPE_MAPPERS}"
+              fi
+
+              PROFILE_SCOPE_ID=$(kc_get_scope_id "profile")
+              if [[ -n "${PROFILE_SCOPE_ID}" ]]; then
+                # Cache mappers once for all 3 PROFILE-scope recreates.
+                PROFILE_SCOPE_MAPPERS=$("${KCADM}" get "client-scopes/${PROFILE_SCOPE_ID}/protocol-mappers/models" -r "${KC_REALM}" 2>/dev/null || true)
+                kc_recreate_mapper "${PROFILE_SCOPE_ID}" "username" '{
+                  "name":"username",
+                  "protocol":"openid-connect",
+                  "protocolMapper":"oidc-usermodel-attribute-mapper",
+                  "consentRequired":false,
+                  "config":{
+                    "introspection.token.claim":"true",
+                    "userinfo.token.claim":"true",
+                    "user.attribute":"username",
+                    "id.token.claim":"true",
+                    "access.token.claim":"true",
+                    "claim.name":"preferred_username",
+                    "jsonType.label":"String"
+                  }
+                }' "${PROFILE_SCOPE_MAPPERS}"
+                kc_recreate_mapper "${PROFILE_SCOPE_ID}" "given name" '{
+                  "name":"given name",
+                  "protocol":"openid-connect",
+                  "protocolMapper":"oidc-usermodel-attribute-mapper",
+                  "consentRequired":false,
+                  "config":{
+                    "introspection.token.claim":"true",
+                    "userinfo.token.claim":"true",
+                    "user.attribute":"firstName",
+                    "id.token.claim":"true",
+                    "access.token.claim":"true",
+                    "claim.name":"given_name",
+                    "jsonType.label":"String"
+                  }
+                }' "${PROFILE_SCOPE_MAPPERS}"
+                kc_recreate_mapper "${PROFILE_SCOPE_ID}" "family name" '{
+                  "name":"family name",
+                  "protocol":"openid-connect",
+                  "protocolMapper":"oidc-usermodel-attribute-mapper",
+                  "consentRequired":false,
+                  "config":{
+                    "introspection.token.claim":"true",
+                    "userinfo.token.claim":"true",
+                    "user.attribute":"lastName",
+                    "id.token.claim":"true",
+                    "access.token.claim":"true",
+                    "claim.name":"family_name",
+                    "jsonType.label":"String"
+                  }
+                }' "${PROFILE_SCOPE_MAPPERS}"
+              fi
+
+              EMAIL_SCOPE_ID=$(kc_get_scope_id "email")
+              if [[ -n "${EMAIL_SCOPE_ID}" ]]; then
+                # Cache mappers once for both EMAIL-scope recreates.
+                EMAIL_SCOPE_MAPPERS=$("${KCADM}" get "client-scopes/${EMAIL_SCOPE_ID}/protocol-mappers/models" -r "${KC_REALM}" 2>/dev/null || true)
+                kc_recreate_mapper "${EMAIL_SCOPE_ID}" "email" '{
+                  "name":"email",
+                  "protocol":"openid-connect",
+                  "protocolMapper":"oidc-usermodel-attribute-mapper",
+                  "consentRequired":false,
+                  "config":{
+                    "introspection.token.claim":"true",
+                    "userinfo.token.claim":"true",
+                    "user.attribute":"email",
+                    "id.token.claim":"true",
+                    "access.token.claim":"true",
+                    "claim.name":"email",
+                    "jsonType.label":"String"
+                  }
+                }' "${EMAIL_SCOPE_MAPPERS}"
+                kc_recreate_mapper "${EMAIL_SCOPE_ID}" "email verified" '{
+                  "name":"email verified",
+                  "protocol":"openid-connect",
+                  "protocolMapper":"oidc-usermodel-property-mapper",
+                  "consentRequired":false,
+                  "config":{
+                    "introspection.token.claim":"true",
+                    "userinfo.token.claim":"true",
+                    "user.attribute":"emailVerified",
+                    "id.token.claim":"true",
+                    "access.token.claim":"true",
+                    "claim.name":"email_verified",
+                    "jsonType.label":"boolean"
+                  }
+                }' "${EMAIL_SCOPE_MAPPERS}"
+              fi
+
+              WEBORIGINS_SCOPE_ID=$(kc_get_scope_id "web-origins")
+              if [[ -n "${WEBORIGINS_SCOPE_ID}" ]]; then
+                kc_recreate_mapper "${WEBORIGINS_SCOPE_ID}" "allowed web origins" '{
+                  "name":"allowed web origins",
+                  "protocol":"openid-connect",
+                  "protocolMapper":"oidc-allowed-origins-mapper",
+                  "consentRequired":false,
+                  "config":{
+                    "introspection.token.claim":"true",
+                    "access.token.claim":"true"
+                  }
+                }'
+              fi
+
+              ## --------------------------------------------------------
+              ## Reconcile redirectUris / webOrigins on additional clients.
+              ## `kcadm update realms/<realm>` does not reliably update nested
+              ## client redirect URIs or web origins on an existing realm, so
+              ## hostname/port changes in values-<cloud>.yaml would otherwise
+              ## be ignored after the first install.
+              ##
+              ## IMPORTANT: the realm.json template substitutes
+              ## `agentstudio.local` → `$deployEndpoint` (when global.endpoint
+              ## is set) at every URI it emits for browser clients. The
+              ## reconciliation below must perform the IDENTICAL substitution,
+              ## otherwise it would overwrite the imported (substituted) URIs
+              ## with the raw `agentstudio.local` strings from values, silently
+              ## undoing the endpoint swap on every redeploy. Mirror the logic
+              ## from agent-studio-realm.json exactly.
+              ##
+              ## NOTE: default-client-scope attachment (e.g. the `lakekeeper`
+              ## scope on agentstudio-lakekeeper{,-ui} for audience injection)
+              ## is now handled declaratively via the realm.json template's
+              ## `$c.extraDefaultScopes` field — see values-<cloud>.yaml. The
+              ## previous kcadm post-fix-up block here silently no-op'd with
+              ## HTTP 404 (kcadm `update clients/<u>/default-client-scopes/<s>`
+              ## returns 0 even when the scope-client relationship doesn't
+              ## exist), so tokens were issued without `aud` and Lakekeeper
+              ## rejected every request.
+              {{- if .Values.realmBootstrap.additionalClients.enabled }}
+              echo "[bootstrap] reconciling additional clients (confidential-spa create-if-absent + redirect/web-origin/backchannel)"
+              {{- $deployEndpoint := "" }}
+              {{- with .Values.global }}{{- with .endpoint }}{{- $deployEndpoint = . }}{{- end }}{{- end }}
+              {{- $shouldSwap := and $deployEndpoint (ne $deployEndpoint "agentstudio.local") }}
+              {{- $addlRedirects := .Values.realmBootstrap.additionalClients.additionalRedirectUris | default dict }}
+              {{- $addlWebOrigins := .Values.realmBootstrap.additionalClients.additionalWebOrigins | default dict }}
+
+              ## Scope-mapping helpers — used ONLY by the confidential-spa create
+              ## path below. A client added to additionalClients AFTER a realm was
+              ## first imported is never created by `kcadm update realms`; the
+              ## create branch fills that gap. Scoped to confidential-spa for now
+              ## (grafana-proxy + gateway); other kinds are a follow-up.
+              ## All calls are guarded so a failure can never abort the identity hook.
+              API_CLIENT_UUID_FOR_SCOPE=$(kc_get_id_from_json "$("${KCADM}" get clients -r "${KC_REALM}" -q "clientId=agent-studio-api" 2>/dev/null || true)")
+              kc_add_realm_scope_mapping() {
+                local u="$1" role="$2" rid
+                rid=$(kc_get_id_from_json "$("${KCADM}" get "roles/${role}" -r "${KC_REALM}" 2>/dev/null || true)")
+                if [[ -z "${rid}" ]]; then
+                  echo "[bootstrap]     WARNING: realm role '${role}' missing; cannot scope-map" >&2; return 0
+                fi
+                if "${KCADM}" create "clients/${u}/scope-mappings/realm" -r "${KC_REALM}" \
+                     -b "[{\"id\":\"${rid}\",\"name\":\"${role}\"}]" >/dev/null 2>&1; then
+                  echo "[bootstrap]     + realm scope-mapping ${role}"
+                else
+                  echo "[bootstrap]     realm scope-mapping ${role} already present"
+                fi
+              }
+              kc_add_client_scope_mapping() {
+                local u="$1" role="$2" rid
+                if [[ -z "${API_CLIENT_UUID_FOR_SCOPE}" ]]; then
+                  echo "[bootstrap]     WARNING: agent-studio-api absent; cannot client-scope-map ${role}" >&2; return 0
+                fi
+                rid=$(kc_get_id_from_json "$("${KCADM}" get "clients/${API_CLIENT_UUID_FOR_SCOPE}/roles/${role}" -r "${KC_REALM}" 2>/dev/null || true)")
+                if [[ -z "${rid}" ]]; then
+                  echo "[bootstrap]     WARNING: agent-studio-api role '${role}' missing; skip" >&2; return 0
+                fi
+                if "${KCADM}" create "clients/${u}/scope-mappings/clients/${API_CLIENT_UUID_FOR_SCOPE}" -r "${KC_REALM}" \
+                     -b "[{\"id\":\"${rid}\",\"name\":\"${role}\"}]" >/dev/null 2>&1; then
+                  echo "[bootstrap]     + api scope-mapping ${role}"
+                else
+                  echo "[bootstrap]     api scope-mapping ${role} already present"
+                fi
+              }
+              ## agent-studio-api-audience scope UUID (PUT keys on UUID, not name).
+              ## `|| true`: a no-match grep must not abort the hook under `set -eu -o pipefail`.
+              AUDIENCE_SCOPE_UUID=$("${KCADM}" get client-scopes -r "${KC_REALM}" --fields id,name 2>/dev/null \
+                | tr -d ' \n' | grep -oE '\{"id":"[^"]+","name":"agent-studio-api-audience"' \
+                | grep -oE '"id":"[^"]+"' | head -1 | cut -d'"' -f4 || true)
+              ## Idempotent attach of agent-studio-api-audience to an existing client.
+              kc_attach_audience_scope() {
+                local u="$1"
+                [[ -z "${u}" || -z "${AUDIENCE_SCOPE_UUID}" ]] && return 0
+                case "$("${KCADM}" get "clients/${u}/default-client-scopes" -r "${KC_REALM}" 2>/dev/null || true)" in
+                  *agent-studio-api-audience*) return 0 ;;
+                esac
+                "${KCADM}" update "clients/${u}/default-client-scopes/${AUDIENCE_SCOPE_UUID}" -r "${KC_REALM}" >/dev/null 2>&1 || true
+                ## Read back: kcadm update can silently no-op, so confirm via the list.
+                case "$("${KCADM}" get "clients/${u}/default-client-scopes" -r "${KC_REALM}" 2>/dev/null || true)" in
+                  *agent-studio-api-audience*) echo "[bootstrap]     + agent-studio-api-audience attached" ;;
+                  *) echo "[bootstrap]     WARNING: agent-studio-api-audience not attached (tokens may lack aud)" >&2 ;;
+                esac
+              }
+              {{- range $i, $c := .Values.realmBootstrap.additionalClients.clients }}
+              {{- $extraRedirects := index $addlRedirects $c.name | default list }}
+              {{- $extraOrigins := index $addlWebOrigins $c.name | default list }}
+              {{- $rawRedirects := concat ($c.redirectUris | default list) $extraRedirects | uniq }}
+              {{- $rawOrigins := concat ($c.webOrigins | default list) $extraOrigins | uniq }}
+              {{- $effectiveRedirects := list }}
+              {{- $effectiveOrigins := list }}
+              {{- if $shouldSwap }}
+                {{- range $u := $rawRedirects }}
+                  {{- $effectiveRedirects = append $effectiveRedirects (replace "agentstudio.local" $deployEndpoint $u) }}
+                {{- end }}
+                {{- range $u := $rawOrigins }}
+                  {{- $effectiveOrigins = append $effectiveOrigins (replace "agentstudio.local" $deployEndpoint $u) }}
+                {{- end }}
+                {{- $effectiveRedirects = $effectiveRedirects | uniq }}
+                {{- $effectiveOrigins = $effectiveOrigins | uniq }}
+              {{- else }}
+                {{- $effectiveRedirects = $rawRedirects }}
+                {{- $effectiveOrigins = $rawOrigins }}
+              {{- end }}
+              {{- $postLogoutRedirects := get ($c.attributes | default dict) "post.logout.redirect.uris" | default "" }}
+              {{- if and $shouldSwap $postLogoutRedirects }}
+                {{- $postLogoutRedirects = replace "agentstudio.local" $deployEndpoint $postLogoutRedirects }}
+              {{- end }}
+              {{- $backchannelLogoutUrl := get ($c.attributes | default dict) "backchannel.logout.url" | default "" }}
+              {{- if and $shouldSwap $backchannelLogoutUrl }}
+                {{- $backchannelLogoutUrl = replace "agentstudio.local" $deployEndpoint $backchannelLogoutUrl }}
+              {{- end }}
+              {{- $spaScopes := concat (list "web-origins" "acr" "profile" "roles" "basic" "email" "agent-studio-api-audience") ($c.extraDefaultScopes | default list) | uniq }}
+              client_json=$("${KCADM}" get clients -r "${KC_REALM}" -q "clientId={{ $c.name }}" 2>/dev/null || true)
+              client_uuid=$(kc_get_id_from_json "${client_json}")
+              {{- if eq $c.kind "confidential-spa" }}
+              ## INTERIM (scoped to confidential-spa): create grafana-proxy / gateway if
+              ## the realm was imported before they were added to the list. The client
+              ## representation mirrors realm.json's confidential-spa branch, and
+              ## defaultClientScopes is set HERE (in the representation) — NOT via the
+              ## broken post-hoc default-client-scopes endpoint — so agent-studio-api-audience
+              ## actually attaches.
+              if [[ -z "${client_uuid}" ]]; then
+                echo "[bootstrap]   {{ $c.name }} absent -> creating (confidential-spa)"
+                ## Keycloak generates the client secret; omit `secret` from the
+                ## representation so Keycloak assigns one on creation. The
+                ## post-realm-bootstrap Job reads it back and patches keycloak-oidc-secrets.
+                CLIENT_JSON='{
+                  "clientId": {{ $c.name | quote }},
+                  "name": {{ $c.name | quote }},
+                  "description": {{ $c.description | default (printf "Service client for %s." $c.name) | quote }},
+                  "enabled": true,
+                  "protocol": "openid-connect",
+                  "fullScopeAllowed": {{ $c.fullScopeAllowed | default false }},
+                  "publicClient": false,
+                  "bearerOnly": false,
+                  "clientAuthenticatorType": "client-secret",
+                  "standardFlowEnabled": true,
+                  "implicitFlowEnabled": false,
+                  "directAccessGrantsEnabled": false,
+                  "serviceAccountsEnabled": false,
+                  "redirectUris": {{ $effectiveRedirects | toJson }},
+                  "webOrigins": {{ $effectiveOrigins | toJson }},
+                  "attributes": {{ $c.attributes | default dict | toJson }},
+                  "defaultClientScopes": {{ $spaScopes | toJson }},
+                  "optionalClientScopes": ["address","phone","offline_access","organization","microprofile-jwt"]
+                }'
+                ## Create. Non-fatal: a lost race / transient error must not abort the identity hook.
+                if printf '%s' "${CLIENT_JSON}" | "${KCADM}" create clients -r "${KC_REALM}" -f - >/dev/null 2>&1; then
+                  echo "[bootstrap]   created {{ $c.name }}"
+                else
+                  echo "[bootstrap]   WARNING: create {{ $c.name }} returned non-zero (may already exist) -- continuing" >&2
+                fi
+                unset CLIENT_JSON
+                client_uuid=$(kc_get_id_from_json "$("${KCADM}" get clients -r "${KC_REALM}" -q "clientId={{ $c.name }}" 2>/dev/null || true)")
+                if [[ -n "${client_uuid}" ]]; then
+                  ## Project platform roles into tokens (parity with realm.json
+                  ## scopeMappings + clientScopeMappings). Without the realm mapping,
+                  ## grafana-proxy can't see platform-admin and downgrades admins to Viewer.
+                  kc_add_realm_scope_mapping  "${client_uuid}" platform-admin
+                  kc_add_realm_scope_mapping  "${client_uuid}" platform-member
+                  kc_add_client_scope_mapping "${client_uuid}" platform-admin
+                  kc_add_client_scope_mapping "${client_uuid}" platform-member
+                  ## Guard against the silent-404 audience trap: confirm it attached.
+                  case "$("${KCADM}" get "clients/${client_uuid}/default-client-scopes" -r "${KC_REALM}" 2>/dev/null || true)" in
+                    *agent-studio-api-audience*) echo "[bootstrap]   verified agent-studio-api-audience on {{ $c.name }}" ;;
+                    *) echo "[bootstrap]   WARNING: {{ $c.name }} missing agent-studio-api-audience default scope -- tokens may lack aud" >&2 ;;
+                  esac
+                fi
+              fi
+              {{- end }}
+              if [[ -z "${client_uuid}" ]]; then
+                echo "[bootstrap]   {{ $c.name }} not present, skipping redirect/web-origin reconciliation"
+              else
+                {{- if eq $c.kind "confidential-svc" }}
+                ## Attach agent-studio-api-audience to pre-existing svc clients (mesh aud check).
+                kc_attach_audience_scope "${client_uuid}"
+                {{- end }}
+                "${KCADM}" update "clients/${client_uuid}" -r "${KC_REALM}" \
+                  -s 'redirectUris={{ $effectiveRedirects | toJson }}' \
+                  -s 'webOrigins={{ $effectiveOrigins | toJson }}' >/dev/null
+                {{- if $postLogoutRedirects }}
+                "${KCADM}" update "clients/${client_uuid}" -r "${KC_REALM}" \
+                  -s 'attributes."post.logout.redirect.uris"={{ $postLogoutRedirects | quote }}' >/dev/null
+                {{- end }}
+                {{- if $backchannelLogoutUrl }}
+                ## Backchannel logout: Keycloak will POST a logout token to this URL
+                ## whenever the user's SSO session ends, allowing the proxy to
+                ## immediately invalidate the affected browser session.
+                "${KCADM}" update "clients/${client_uuid}" -r "${KC_REALM}" \
+                  -s 'attributes."backchannel.logout.url"={{ $backchannelLogoutUrl | quote }}' \
+                  -s 'attributes."backchannel.logout.session.required"="true"' \
+                  -s 'attributes."backchannel.logout.revoke.offline.tokens"="false"' >/dev/null
+                echo "[bootstrap]   set backchannel.logout.url for {{ $c.name }}"
+                {{- end }}
+                echo "[bootstrap]   reconciled redirectUris/webOrigins for {{ $c.name }}"
+              fi
+              {{- end }}{{/* range over additionalClients.clients */}}
+              {{- end }}{{/* if additionalClients.enabled */}}
+              ## --------------------------------------------------------
+              ## Reconcile agent-studio-api authorization settings.
+              ## `kcadm update realms` does NOT reliably propagate nested
+              ## authorizationSettings fields (KEYCLOAK-19156 family).
+              ## We patch the resource-server directly via the Admin API.
+              echo "[bootstrap] reconciling agent-studio-api authorization settings"
+              API_CLIENT_JSON=$("${KCADM}" get clients -r "${KC_REALM}" -q "clientId=agent-studio-api" 2>/dev/null || true)
+              API_CLIENT_UUID=$(kc_get_id_from_json "${API_CLIENT_JSON}")
+              if [[ -n "${API_CLIENT_UUID}" ]]; then
+                "${KCADM}" update "clients/${API_CLIENT_UUID}/authz/resource-server" -r "${KC_REALM}" \
+                  -s "decisionStrategy=AFFIRMATIVE" \
+                  -s "allowRemoteResourceManagement=true"
+                echo "[bootstrap]   decisionStrategy=AFFIRMATIVE, allowRemoteResourceManagement=true"
+
+                # Ensure the template 'project' resource has the URI pattern.
+                # Authz resources use "_id"; fall back to "id" for safety.
+                PROJECT_RES_JSON=$("${KCADM}" get "clients/${API_CLIENT_UUID}/authz/resource-server/resource?name=project&exactName=true" \
+                  -r "${KC_REALM}" 2>/dev/null || true)
+                PROJECT_RES_ID=$(kc_get_id_from_json "${PROJECT_RES_JSON}" "_id")
+                if [[ -z "${PROJECT_RES_ID}" ]]; then
+                  PROJECT_RES_ID=$(kc_get_id_from_json "${PROJECT_RES_JSON}")
+                fi
+                if [[ -n "${PROJECT_RES_ID}" ]]; then
+                  "${KCADM}" update "clients/${API_CLIENT_UUID}/authz/resource-server/resource/${PROJECT_RES_ID}" \
+                    -r "${KC_REALM}" \
+                    -s 'uris=["/projects/{projectId}"]'
+                  echo "[bootstrap]   project resource URI set to /projects/{projectId}"
+                else
+                  echo "[bootstrap]   WARNING: could not find project resource to set URI" >&2
+                fi
+              else
+                echo "[bootstrap]   WARNING: agent-studio-api client not found; skipping authz reconciliation" >&2
+              fi
+
+              ## Service-account role grants for authz-admin clients.
+              ## We do this AFTER the realm import (and not via the JSON's
+              ## users[] block) because realm-import has documented bugs around
+              ## service-account role assignment (KEYCLOAK-13823 et al.) and the
+              ## kcadm add-roles path is the canonical workaround.
+              ##
+              ## Every service that calls Keycloak's Admin Authz REST API
+              ## (per-project resource create/delete, user policies, scope
+              ## permissions) needs three things in place:
+              ##
+              ##   (1) `manage-authorization` on the `realm-management`
+              ##       client — gates `/admin/realms/<r>/clients/<uuid>/authz/...`
+              ##   (2) `uma_protection` on the `agent-studio-api` client
+              ##       — gates the Protection API path used when enriching
+              ##       tokens with `authorization.permissions`.
+              ##   (3) `fullScopeAllowed=true` on the calling client itself.
+              ##       Without this, roles granted on the service-account
+              ##       user are filtered OUT of the issued client_credentials
+              ##       token (the token's `resource_access` map only carries
+              ##       roles inside the client's effective scope, which is
+              ##       empty when fullScopeAllowed is false). This trips a
+              ##       silent 403 on the Admin Authz endpoint because the
+              ##       bearer's SA has the role on paper but the token in
+              ##       hand doesn't carry it.
+              ##
+              ##       `additionalClients` defaults `fullScopeAllowed=false`
+              ##       at realm.json render time (the broad-default-narrow-
+              ##       override convention); we widen it here only for the
+              ##       handful of clients in authzAdminClients.
+              ##
+              ## We do all three AFTER the realm import (not in realm.json
+              ## users[] / clients[]) because realm-import has documented
+              ## bugs around service-account role assignment
+              ## (KEYCLOAK-13823 et al.) and `kcadm update realms` doesn't
+              ## reliably propagate nested per-client mutations. kcadm
+              ## update + add-roles are both idempotent so re-running the
+              ## Job is safe.
+              ##
+              ## Source list is `.Values.realmBootstrap.authzAdminClients`
+              ## (default: agentstudio-workflow-engine, agentstudio-config-service).
+              ## Missing clients are skipped with a warning so the Job stays
+              ## idempotent across realm shapes — e.g. on a fresh local
+              ## install where additionalClients hasn't been enabled yet.
+              echo "[bootstrap] reconciling Authorization Services admin clients"
+              {{- range $i, $clientId := .Values.realmBootstrap.authzAdminClients | default list }}
+              client_json=$("${KCADM}" get clients -r "${KC_REALM}" -q "clientId={{ $clientId }}" 2>/dev/null || true)
+              client_uuid=$(kc_get_id_from_json "${client_json}")
+              SA_USER="service-account-{{ $clientId }}"
+              if [[ -z "${client_uuid}" ]]; then
+                echo "[bootstrap]   skipping {{ $clientId }} (client not present in realm — add an entry to realmBootstrap.additionalClients.clients)"
+              else
+                echo "[bootstrap]   reconciling {{ $clientId }} (uuid=${client_uuid})"
+                ## (3) Widen scope so the SA's role grants survive token issuance.
+                if "${KCADM}" update "clients/${client_uuid}" -r "${KC_REALM}" -s 'fullScopeAllowed=true' >/dev/null 2>&1; then
+                  echo "[bootstrap]     + fullScopeAllowed=true"
+                else
+                  echo "[bootstrap]     ERROR: failed to set fullScopeAllowed=true for {{ $clientId }}; cannot proceed" >&2
+                  exit 1
+                fi
+                ## (1) + (2) Service-account role grants.
+                "${KCADM}" add-roles -r "${KC_REALM}" \
+                  --uusername "${SA_USER}" \
+                  --cclientid agent-studio-api \
+                  --rolename uma_protection \
+                  >/dev/null \
+                  && echo "[bootstrap]     + uma_protection on agent-studio-api" \
+                  || { echo "[bootstrap]     ERROR: failed to grant uma_protection on agent-studio-api to ${SA_USER}" >&2; exit 1; }
+                "${KCADM}" add-roles -r "${KC_REALM}" \
+                  --uusername "${SA_USER}" \
+                  --cclientid realm-management \
+                  --rolename manage-authorization \
+                  >/dev/null \
+                  && echo "[bootstrap]     + manage-authorization on realm-management" \
+                  || { echo "[bootstrap]     ERROR: failed to grant manage-authorization on realm-management to ${SA_USER}" >&2; exit 1; }
+              fi
+              {{- end }}
+
+              echo "[bootstrap] done."
+          volumeMounts:
+            - name: realm
+              mountPath: /realm
+              readOnly: true
+          resources:
+            ## Each kcadm.sh invocation forks a fresh JVM (capped at
+            ## -Xmx256m via KC_OPTS above). The script makes ~47 such
+            ## calls in series for a full bootstrap (one per realm role,
+            ## client, role-mapping, protocol-mapper, etc.).
+            ##
+            ## CPU is THE bottleneck. JVM cold-start is dominated by
+            ## class-loading + tiered-C1 JIT compilation, both of which
+            ## parallelize across cores in JDK 21. Capping at 1 core
+            ## stretches each cold-start to ~10s (observed: 8+ min total
+            ## bootstrap, job pegged at 1.0 CPU for the entire run).
+            ## Bumping the limit to 3 lets each cold-start finish in
+            ## ~3-4s and brings full bootstrap to ~2-3 min on typical
+            ## nodes. Requests stay modest (500m) so the Job still
+            ## schedules on resource-constrained dev clusters — burst
+            ## headroom comes from the limit, not the reservation.
+            ##
+            ## Memory: a single Xmx256m JVM + native overhead + bash
+            ## peaks around ~350Mi. 768Mi limit keeps a comfortable
+            ## OOM margin without inflating the reservation.
+            ##
+            ## History: 50m/128Mi → 500m/512Mi (KC_OPTS landing) →
+            ## 100m/256Mi req, 1/768Mi lim (first CPU bump — still
+            ## throttled) → current 500m/256Mi req, 3/768Mi lim.
+            requests:
+              cpu: 500m
+              memory: 256Mi
+            limits:
+              cpu: "3"
+              memory: 768Mi
+      volumes:
+        - name: realm
+          configMap:
+            name: {{ include "keycloak.fullname" . }}-realm-bootstrap
+            items:
+              - key: realm.json
+                path: realm.json
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

@@ -1,0 +1,684 @@
+# Reusable AgentStudio deploy workflow.
+#
+# Cloud-agnostic body of the per-cloud `deploy-<cloud>.yml` callers.
+# Picks up cluster credentials, runs the helm-template smoke test,
+# and invokes `make deploy CLOUD=<cloud>` to roll the AgentStudio per-tier
+# Helm releases (database -> identity -> workers -> platform -> llm-gateway
+# -> services -> console, plus optional observability).
+#
+# ─── How callers wire this in ─────────────────────────────────────────────
+# Each per-cloud caller (deploy-aks.yml, deploy-gke.yml, deploy-eks.yml) passes:
+#   - cloud:              one of {aks, gke, eks}
+#   - cloud_environment:  GitHub Environment name to read vars/secrets from
+#                         (e.g. dev, dev-gke, prod-aks). The job picks up
+#                         all per-cluster config from `vars.*` of this
+#                         environment, so no secret has to round-trip
+#                         through `with:`.
+#   - image_tag:          image tag to deploy (forwarded from the caller's
+#                         workflow_dispatch / workflow_call inputs).
+#
+# ─── Auth model ───────────────────────────────────────────────────────────
+# Cluster access uses OIDC / Workload Identity Federation -- no long-lived
+# credentials in the repo. The cloud-conditional auth blocks below
+# (`if: inputs.cloud == 'aks'` / `'gke'`) handle the per-cloud OIDC
+# exchange. Each cloud needs the equivalent vars wired in its
+# environment; see the deploy-<cloud>.yml caller's header for the
+# per-cloud variable list.
+#
+# ─── Adding a new cloud ───────────────────────────────────────────────────
+# 1. Add a `if: inputs.cloud == '<new>'` auth + cluster-context block here.
+# 2. Add a deploy-<new>.yml caller that sets cloud=<new>.
+# 3. Add `mk/cloud/<new>.mk` (per docs/deployment/makefile-target-conventions.md);
+#    `make deploy CLOUD=<new>` then routes to the right orchestrator.
+# 4. Add `<new>` to the validate-inputs block below if it has new
+#    required env vars.
+
+name: Deploy AgentStudio (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      cloud:
+        description: "Target cluster type (aks|gke|eks)"
+        required: true
+        type: string
+      cloud_environment:
+        description: "GitHub Environment name to read vars/secrets from (e.g. dev, dev-gke)"
+        required: true
+        type: string
+      image_tag:
+        description: "Image tag to deploy across every AgentStudio subchart"
+        required: true
+        type: string
+      observability:
+        description: >
+          Deploy Phase 0 observability stack (1=on, 0=off). Empty uses
+          vars.OBSERVABILITY when set, otherwise cloud default (GKE=0, AKS/EKS=1).
+        required: false
+        type: string
+        default: ""
+      infra_env:
+        description: >
+          Optional deployments/<cloud>/envs/<name>.yaml key. When set, runs
+          `make deploy CLOUD={azure|gcp|aws} ENV=<name>` so ENDPOINT and
+          CONTAINER_IMAGE_REPO are read from the env file (preprod pipelines).
+          When empty, uses GitHub Environment vars (dev-style flag mode).
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+  id-token: write   # required for OIDC token exchange (Azure / GCP / AWS)
+
+# Concurrency keyed by environment so two deploys against the same cluster
+# serialise, but two different clouds (e.g. dev + dev-gke) can run in parallel.
+concurrency:
+  group: deploy-${{ inputs.cloud_environment }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: helm upgrade (${{ inputs.cloud }})
+    # Self-hosted so the runner can reach AKS/GKE clusters behind private
+    # networks (private API server, internal-only registry, etc.).
+    runs-on: [self-hosted, netapp]
+    environment: ${{ inputs.cloud_environment }}
+    # `make deploy CLOUD=<cloud>` runs up to 8 helm upgrades and waits for
+    # post-install/upgrade hook Jobs. 60 min gives all tiers comfortable headroom.
+    timeout-minutes: 60
+    env:
+      # ─── Common (cloud-agnostic) ────────────────────────────────────────
+      IMAGE_TAG: ${{ inputs.image_tag }}
+      ENDPOINT: ${{ vars.AGENTSTUDIO_ENDPOINT }}
+      # CONTAINER_IMAGE_REPO: per-cloud var name varies (ACR_REGISTRY on
+      # AKS, GAR_REGISTRY on GKE, ECR_REGISTRY on EKS). The first non-empty
+      # wins.
+      CONTAINER_IMAGE_REPO: >-
+        ${{
+          vars.CONTAINER_IMAGE_REPO ||
+          vars.ACR_REGISTRY ||
+          vars.GAR_REGISTRY ||
+          vars.ECR_REGISTRY
+        }}
+      # Tier namespaces (multi-namespace layout; same defaults across clouds).
+      HELM_NS_SERVICES:        ${{ vars.HELM_NS_SERVICES        || 'agentstudio-services' }}
+      HELM_NS_CONSOLE:         ${{ vars.HELM_NS_CONSOLE         || 'agentstudio-console' }}
+      HELM_NS_WORKERS:         ${{ vars.HELM_NS_WORKERS         || 'agentstudio-workers' }}
+      HELM_NS_LLM_GATEWAY:     ${{ vars.HELM_NS_LLM_GATEWAY     || 'agentstudio-llm-gateway' }}
+      HELM_NS_PLATFORM:        ${{ vars.HELM_NS_PLATFORM        || 'agentstudio-platform' }}
+      HELM_NS_IDENTITY:        ${{ vars.HELM_NS_IDENTITY        || 'agentstudio-identity' }}
+      HELM_NS_DATABASE:        ${{ vars.HELM_NS_DATABASE        || 'database' }}
+      HELM_NS_OBSERVABILITY:   ${{ vars.HELM_NS_OBSERVABILITY   || 'monitoring' }}
+      HELM_NS_EDGE:            ${{ vars.HELM_NS_EDGE            || 'agentstudio-edge' }}
+      # Gateway data plane: "istio" (self-managed, default on all clouds)
+      # or "nginx" (NGF rollback). Set vars.GATEWAY_PROVIDER=nginx on a
+      # specific environment to roll back that cluster only.
+      GATEWAY_PROVIDER: ${{ vars.GATEWAY_PROVIDER || 'istio' }}
+      # Legacy namespace aliases (kept for back-compat with deploy-foundation / deploy-identity).
+      SERVICES_NAMESPACE:      ${{ vars.HELM_NS_SERVICES        || 'agentstudio-services' }}
+      KEYCLOAK_NAMESPACE:      ${{ vars.HELM_NS_IDENTITY        || 'agentstudio-identity' }}
+      DATABASE_NAMESPACE:      ${{ vars.HELM_NS_DATABASE        || 'database' }}
+      OBSERVABILITY_NAMESPACE: ${{ vars.HELM_NS_OBSERVABILITY   || 'monitoring' }}
+      # Phase 0 (Prometheus + Grafana). GKE defaults OFF; AKS/EKS default ON.
+      # Override per environment via vars.OBSERVABILITY or the observability input.
+      OBSERVABILITY: >-
+        ${{
+          inputs.observability ||
+          vars.OBSERVABILITY ||
+          (inputs.cloud == 'gke' && '0') ||
+          '1'
+        }}
+      CERT_MANAGER_GATEWAY_TLS: ${{ vars.CERT_MANAGER_GATEWAY_TLS || '' }}
+      CERT_MANAGER_ISSUER_NAME: ${{ vars.CERT_MANAGER_ISSUER_NAME || 'nemo-gateway-selfsigned' }}
+      GATEWAY_LB_IP:            ${{ vars.GATEWAY_LB_IP            || '' }}
+      GATEWAY_MATCH_ALL_HOSTS:  ${{ vars.GATEWAY_MATCH_ALL_HOSTS  || '' }}
+      DEPLOYMENT_NAME:          ${{ vars.DEPLOYMENT_NAME          || '' }}
+      # Extra args forwarded to per-tier helm upgrade targets. Empty for stock deploys.
+      HELM_EXTRA_ARGS:          ${{ vars.HELM_EXTRA_ARGS          || '' }}
+      # ─── AKS-only (Workload Identity + Key Vault + Entra) ───────────────
+      # KEYCLOAK_DEPLOY_TARGET pins the per-cloud install path; defaults
+      # to the cluster name's canonical install. KEYCLOAK_AKS_CONFIRM=yes
+      # is harmless on GKE (only checked by aks-keycloak-confirm). The
+      # KEYCLOAK_KV_NAME / KEYCLOAK_UAMI_CLIENT_ID / KEYCLOAK_TENANT_ID /
+      # KEYCLOAK_ENTRA_* set is empty on GKE (where the chart's render-time
+      # required() guards in the GKE overlay don't trigger them).
+      KEYCLOAK_DEPLOY_TARGET: >-
+        ${{
+          vars.KEYCLOAK_DEPLOY_TARGET ||
+          (inputs.cloud == 'aks' && 'helm-identity-install-aks') ||
+          (inputs.cloud == 'gke' && 'helm-identity-install-gke') ||
+          (inputs.cloud == 'eks' && 'helm-identity-install-eks') ||
+          'helm-identity-install-local'
+        }}
+      KEYCLOAK_AKS_CONFIRM: 'yes'
+      KEYCLOAK_KV_NAME:                       ${{ vars.KEYCLOAK_KV_NAME                       || '' }}
+      KEYCLOAK_UAMI_CLIENT_ID:                ${{ vars.KEYCLOAK_UAMI_CLIENT_ID                || '' }}
+      KEYCLOAK_TENANT_ID:                     ${{ vars.AZURE_TENANT_ID                        || '' }}
+      # Default to https://auth.<endpoint> with NO :port suffix -- the cloud
+      # gateway listens on standard HTTPS (443), so Keycloak's KC_HOSTNAME (and
+      # the iss claim in tokens it emits) MUST match the no-port form. Setting
+      # vars.KEYCLOAK_HOSTNAME explicitly is still supported (overrides this
+      # default); historical values that included `:8443` were a local-dev
+      # convention that leaked into cloud environments and caused JWT issuer
+      # string-compare failures across workflow-engine / analytics-engine /
+      # apigateway-service (chain of services that validate JWT iss as strings).
+      # If your `vars.KEYCLOAK_HOSTNAME` is set with :8443 in a CD environment,
+      # clear it (`gh variable delete KEYCLOAK_HOSTNAME -e <env>`) so this
+      # default takes effect.
+      KEYCLOAK_HOSTNAME:                      ${{ vars.KEYCLOAK_HOSTNAME || format('https://auth.{0}', vars.AGENTSTUDIO_ENDPOINT) }}
+      KEYCLOAK_ENTRA_APP_CLIENT_ID:           ${{ vars.KEYCLOAK_ENTRA_APP_CLIENT_ID           || '' }}
+      KEYCLOAK_ENTRA_GROUP_ADMINS_OBJECTID:   ${{ vars.KEYCLOAK_ENTRA_GROUP_ADMINS_OBJECTID   || '' }}
+      KEYCLOAK_ENTRA_GROUP_MEMBERS_OBJECTID:  ${{ vars.KEYCLOAK_ENTRA_GROUP_MEMBERS_OBJECTID  || '' }}
+      # NOTE: GKE Keycloak brokers through a dedicated Entra app and has no Key
+      # Vault. The broker client secret is NOT passed through CD. It lives in an
+      # externally-managed `keycloak-entra-broker` K8s Secret (created once via
+      # `make gke-keycloak-broker-secret`) that the chart references through
+      # broker.existingSecret; deploy only verifies it is present
+      # (gke-keycloak-broker-secret-require). No GitHub secret is required.
+      # ─── GKE storage bootstrap (GCNV-native Trident) ───────────────────────
+      # Required by `make gke-ensure-storage-ready` (invoked from deploy-all-tiers-gke).
+      GCNV_LOCATION:           ${{ vars.GCNV_LOCATION           || '' }}
+      GCNV_NETWORK:            ${{ vars.GCNV_NETWORK            || '' }}
+      TRIDENT_GSA_EMAIL:       ${{ vars.TRIDENT_GSA_EMAIL       || '' }}
+      GCNV_SAN_ZONE:           ${{ vars.GCNV_SAN_ZONE           || '' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate environment configuration
+        shell: bash -e {0}
+        run: |
+          missing=()
+          [[ -n "$CONTAINER_IMAGE_REPO" ]] || missing+=("CONTAINER_IMAGE_REPO (set via vars.CONTAINER_IMAGE_REPO / ACR_REGISTRY / GAR_REGISTRY / ECR_REGISTRY)")
+          [[ -n "$ENDPOINT" ]]             || missing+=("AGENTSTUDIO_ENDPOINT (variable)")
+          [[ -n "$IMAGE_TAG" ]]            || missing+=("image_tag (workflow input)")
+          # Cloud-conditional required vars.
+          case "${{ inputs.cloud }}" in
+            aks)
+              [[ -n "${{ vars.AZURE_CLIENT_ID }}" ]]       || missing+=("AZURE_CLIENT_ID (variable)")
+              [[ -n "${{ vars.AZURE_TENANT_ID }}" ]]       || missing+=("AZURE_TENANT_ID (variable)")
+              [[ -n "${{ vars.AZURE_SUBSCRIPTION_ID }}" ]] || missing+=("AZURE_SUBSCRIPTION_ID (variable)")
+              [[ -n "${{ vars.AKS_RESOURCE_GROUP }}" ]]    || missing+=("AKS_RESOURCE_GROUP (variable)")
+              [[ -n "${{ vars.AKS_CLUSTER_NAME }}" ]]      || missing+=("AKS_CLUSTER_NAME (variable)")
+              if [[ "$KEYCLOAK_DEPLOY_TARGET" == "helm-identity-install-aks" ]]; then
+                [[ -n "$KEYCLOAK_KV_NAME" ]]                            || missing+=("KEYCLOAK_KV_NAME (variable, AKS mode)")
+                [[ -n "$KEYCLOAK_UAMI_CLIENT_ID" ]]                     || missing+=("KEYCLOAK_UAMI_CLIENT_ID (variable, AKS mode)")
+                [[ -n "$KEYCLOAK_HOSTNAME" ]]                           || missing+=("KEYCLOAK_HOSTNAME (variable, AKS mode -- or set AGENTSTUDIO_ENDPOINT for the auto-derived https://auth.<endpoint>)")
+                [[ -n "$KEYCLOAK_ENTRA_APP_CLIENT_ID" ]]                || missing+=("KEYCLOAK_ENTRA_APP_CLIENT_ID (variable, AKS mode -- run 'make aks-keycloak-entra-register')")
+                [[ -n "$KEYCLOAK_ENTRA_GROUP_ADMINS_OBJECTID" ]]        || missing+=("KEYCLOAK_ENTRA_GROUP_ADMINS_OBJECTID (variable, AKS mode -- run 'make aks-keycloak-entra-register')")
+                [[ -n "$KEYCLOAK_ENTRA_GROUP_MEMBERS_OBJECTID" ]]       || missing+=("KEYCLOAK_ENTRA_GROUP_MEMBERS_OBJECTID (variable, AKS mode -- run 'make aks-keycloak-entra-register')")
+              fi
+              ;;
+            gke)
+              [[ -n "${{ vars.GCP_PROJECT_ID }}" ]]                  || missing+=("GCP_PROJECT_ID (variable)")
+              [[ -n "${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}" ]]  || missing+=("GCP_WORKLOAD_IDENTITY_PROVIDER (variable, full resource path)")
+              [[ -n "${{ vars.GCP_SERVICE_ACCOUNT }}" ]]             || missing+=("GCP_SERVICE_ACCOUNT (variable, email)")
+              [[ -n "${{ vars.GKE_CLUSTER_NAME }}" ]]                || missing+=("GKE_CLUSTER_NAME (variable)")
+              [[ -n "${{ vars.GKE_CLUSTER_LOCATION }}" ]]            || missing+=("GKE_CLUSTER_LOCATION (variable, region or zone)")
+              [[ -n "${{ vars.GCNV_LOCATION }}" ]]                   || missing+=("GCNV_LOCATION (variable)")
+              [[ -n "${{ vars.GCNV_NETWORK }}" ]]                    || missing+=("GCNV_NETWORK (variable, format: name=<vpc>)")
+              [[ -n "${{ vars.TRIDENT_GSA_EMAIL }}" ]]               || missing+=("TRIDENT_GSA_EMAIL (variable, GSA email)")
+              # GKE Keycloak ALWAYS enables the Entra broker (values-gke.yaml) using
+              # the dedicated `agent-studio-dev-gke-broker` app registration. Unlike
+              # AKS, the GKE deploy path (deploy-all-tiers-gke) calls
+              # helm-identity-install-gke directly -- it does NOT honor
+              # KEYCLOAK_DEPLOY_TARGET -- so these broker vars are required for every
+              # GKE deploy regardless of that override.
+              [[ -n "$KEYCLOAK_ENTRA_APP_CLIENT_ID" ]]          || missing+=("KEYCLOAK_ENTRA_APP_CLIENT_ID (variable, GKE broker -- appId of agent-studio-dev-gke-broker)")
+              [[ -n "$KEYCLOAK_TENANT_ID" ]]                    || missing+=("AZURE_TENANT_ID (variable, GKE broker -- Entra tenant)")
+              [[ -n "$KEYCLOAK_ENTRA_GROUP_ADMINS_OBJECTID" ]]  || missing+=("KEYCLOAK_ENTRA_GROUP_ADMINS_OBJECTID (variable, GKE broker)")
+              [[ -n "$KEYCLOAK_ENTRA_GROUP_MEMBERS_OBJECTID" ]] || missing+=("KEYCLOAK_ENTRA_GROUP_MEMBERS_OBJECTID (variable, GKE broker)")
+              # NOTE: the broker CLIENT SECRET is not a CD input. It lives in the
+              # externally-managed `keycloak-entra-broker` K8s Secret (see
+              # gke-keycloak-broker-secret-require); deploy verifies its presence
+              # in-cluster rather than receiving it here.
+              ;;
+            eks)
+              [[ -n "${{ vars.AWS_REGION }}" ]]      || missing+=("AWS_REGION (variable)")
+              [[ -n "${{ vars.AWS_ROLE_ARN }}" ]]    || missing+=("AWS_ROLE_ARN (variable, IAM role ARN federated to GitHub OIDC)")
+              [[ -n "${{ vars.EKS_CLUSTER_NAME }}" ]] || missing+=("EKS_CLUSTER_NAME (variable)")
+              # EKS Keycloak ALWAYS enables the Entra broker (values-eks.yaml) using
+              # the dedicated `agent-studio-dev-eks-broker` app registration. The
+              # deploy path (deploy-all-tiers-eks) calls helm-identity-install-eks
+              # directly, so these broker vars are required for every EKS deploy.
+              [[ -n "$KEYCLOAK_ENTRA_APP_CLIENT_ID" ]]          || missing+=("KEYCLOAK_ENTRA_APP_CLIENT_ID (variable, EKS broker -- appId of agent-studio-dev-eks-broker)")
+              [[ -n "$KEYCLOAK_TENANT_ID" ]]                    || missing+=("AZURE_TENANT_ID (variable, EKS broker -- Entra tenant)")
+              [[ -n "$KEYCLOAK_ENTRA_GROUP_ADMINS_OBJECTID" ]]  || missing+=("KEYCLOAK_ENTRA_GROUP_ADMINS_OBJECTID (variable, EKS broker)")
+              [[ -n "$KEYCLOAK_ENTRA_GROUP_MEMBERS_OBJECTID" ]] || missing+=("KEYCLOAK_ENTRA_GROUP_MEMBERS_OBJECTID (variable, EKS broker)")
+              ;;
+            *)
+              echo "::error::Unknown cloud '${{ inputs.cloud }}'. Expected aks|gke|eks."
+              exit 1
+              ;;
+          esac
+          if (( ${#missing[@]} > 0 )); then
+            echo "::error::Missing required '${{ inputs.cloud_environment }}' environment configuration:"
+            printf '  - %s\n' "${missing[@]}"
+            echo "See .github/workflows/deploy-${{ inputs.cloud }}.yml header for setup instructions."
+            exit 1
+          fi
+          echo "Environment '${{ inputs.cloud_environment }}' configuration present (cloud=${{ inputs.cloud }})."
+          echo "  endpoint               : $ENDPOINT"
+          echo "  container image repo   : $CONTAINER_IMAGE_REPO"
+          echo "  image tag              : $IMAGE_TAG"
+          echo "  observability enabled  : ${OBSERVABILITY:-0}"
+          echo "  cert-manager TLS       : ${CERT_MANAGER_GATEWAY_TLS:-0}"
+
+      # ─── AKS auth ─────────────────────────────────────────────────────
+      - name: Ensure Azure CLI is installed
+        if: ${{ inputs.cloud == 'aks' }}
+        shell: bash -e {0}
+        run: |
+          if command -v az >/dev/null 2>&1; then
+            echo "az already installed: $(az version --only-show-errors --query '"azure-cli"' -o tsv)"
+            exit 0
+          fi
+          echo "Installing Azure CLI via apt (Microsoft repo)..."
+          if command -v sudo >/dev/null 2>&1; then SUDO="sudo"; else SUDO=""; fi
+          $SUDO apt-get update -y
+          $SUDO apt-get install -y ca-certificates curl apt-transport-https lsb-release gnupg
+          $SUDO install -m 0755 -d /etc/apt/keyrings
+          curl -sLS https://packages.microsoft.com/keys/microsoft.asc \
+            | gpg --dearmor \
+            | $SUDO tee /etc/apt/keyrings/microsoft.gpg >/dev/null
+          $SUDO chmod go+r /etc/apt/keyrings/microsoft.gpg
+          AZ_DIST="$(lsb_release -cs)"
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/microsoft.gpg] https://packages.microsoft.com/repos/azure-cli/ ${AZ_DIST} main" \
+            | $SUDO tee /etc/apt/sources.list.d/azure-cli.list >/dev/null
+          $SUDO apt-get update -y
+          $SUDO apt-get install -y azure-cli
+          az version --only-show-errors
+
+      - name: Azure login (OIDC)
+        if: ${{ inputs.cloud == 'aks' }}
+        uses: azure/login@v2
+        with:
+          client-id:       ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id:       ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Ensure unzip is installed (AKS)
+        if: ${{ inputs.cloud == 'aks' }}
+        shell: bash -e {0}
+        run: |
+          if command -v unzip >/dev/null 2>&1; then exit 0; fi
+          if command -v sudo >/dev/null 2>&1; then SUDO="sudo"; else SUDO=""; fi
+          $SUDO apt-get update -y && $SUDO apt-get install -y unzip
+
+      - name: Setup kubelogin (AKS)
+        if: ${{ inputs.cloud == 'aks' }}
+        uses: azure/use-kubelogin@v1
+        with:
+          kubelogin-version: v0.1.4
+
+      - name: Set AKS context
+        if: ${{ inputs.cloud == 'aks' }}
+        uses: azure/aks-set-context@v4
+        with:
+          resource-group: ${{ vars.AKS_RESOURCE_GROUP }}
+          cluster-name:   ${{ vars.AKS_CLUSTER_NAME }}
+          admin:          'false'
+          use-kubelogin:  'true'
+
+      # ─── GKE auth ─────────────────────────────────────────────────────
+      - name: GCP auth (OIDC)
+        if: ${{ inputs.cloud == 'gke' }}
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account:            ${{ vars.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud SDK (GKE)
+        if: ${{ inputs.cloud == 'gke' }}
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          install_components: 'gke-gcloud-auth-plugin'
+
+      - name: Get GKE credentials
+        if: ${{ inputs.cloud == 'gke' }}
+        uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: ${{ vars.GKE_CLUSTER_NAME }}
+          location:     ${{ vars.GKE_CLUSTER_LOCATION }}
+          project_id:   ${{ vars.GCP_PROJECT_ID }}
+
+      # ─── EKS auth ─────────────────────────────────────────────────────
+      - name: Set EKS kubeconfig path
+        if: ${{ inputs.cloud == 'eks' }}
+        shell: bash -e {0}
+        run: echo "KUBECONFIG=${RUNNER_TEMP}/eks-kubeconfig" >> "$GITHUB_ENV"
+
+      - name: Ensure AWS CLI is installed (EKS)
+        if: ${{ inputs.cloud == 'eks' }}
+        shell: bash -e {0}
+        run: |
+          if command -v aws >/dev/null 2>&1; then
+            echo "aws already installed: $(aws --version 2>&1 | head -1)"
+            exit 0
+          fi
+          echo "Installing AWS CLI..."
+          if command -v sudo >/dev/null 2>&1; then SUDO="sudo"; else SUDO=""; fi
+          if command -v apt-get >/dev/null 2>&1; then
+            $SUDO apt-get update -y
+            if $SUDO apt-get install -y awscli; then
+              aws --version
+              exit 0
+            fi
+            echo "apt awscli unavailable; falling back to AWS CLI v2 installer."
+            $SUDO apt-get install -y unzip curl
+          elif ! command -v unzip >/dev/null 2>&1 || ! command -v curl >/dev/null 2>&1; then
+            echo "::error::aws is missing and this runner has no apt-get; install aws CLI v2 (and curl/unzip) on the runner image."
+            exit 1
+          fi
+          tmp_dir="${RUNNER_TEMP}/awscli-installer"
+          rm -rf "$tmp_dir"
+          mkdir -p "$tmp_dir"
+          curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "$tmp_dir/awscliv2.zip"
+          unzip -q "$tmp_dir/awscliv2.zip" -d "$tmp_dir"
+          $SUDO "$tmp_dir/aws/install" --update
+          aws --version
+
+      - name: AWS login (OIDC)
+        if: ${{ inputs.cloud == 'eks' }}
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region:     ${{ vars.AWS_REGION }}
+
+      - name: Set EKS context
+        if: ${{ inputs.cloud == 'eks' }}
+        shell: bash -e {0}
+        run: |
+          mkdir -p "$(dirname "$KUBECONFIG")"
+          : > "$KUBECONFIG"
+          chmod 600 "$KUBECONFIG"
+          aws eks update-kubeconfig \
+            --name "${{ vars.EKS_CLUSTER_NAME }}" \
+            --region "${{ vars.AWS_REGION }}" \
+            --kubeconfig "$KUBECONFIG"
+
+      # ─── Common toolchain ─────────────────────────────────────────────
+      - name: Setup Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v4.2.1
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: v1.30.0
+
+      - name: Ensure jq is installed
+        shell: bash -e {0}
+        run: |
+          if command -v jq >/dev/null 2>&1; then exit 0; fi
+          if command -v sudo >/dev/null 2>&1; then SUDO="sudo"; else SUDO=""; fi
+          $SUDO apt-get update -y && $SUDO apt-get install -y jq
+
+      - name: Verify cluster access
+        shell: bash -e {0}
+        run: |
+          kubectl cluster-info
+          kubectl get nodes -o wide || true
+
+      # ─── Istio prerequisites (gated on the gateway provider) ───────────
+      # Gate on env.GATEWAY_PROVIDER, not inputs.cloud, so the same two
+      # steps light up on whichever cloud first flips its overlay to istio.
+      #
+      # Two-step pattern (install then verify) for two reasons:
+      #   1. Idempotent install runs FIRST -- on a first-time NGF->Istio
+      #      migration cluster, istiod / Gateway API CRDs / nemo-gateway-tls
+      #      may not yet exist. `make istio-prereq` installs all three and
+      #      no-ops on already-istio clusters.
+      #   2. Verify runs SECOND with its own GHA log entry -- if the install
+      #      partially succeeded but istiod is unhealthy / GatewayClass is
+      #      not Accepted / TLS Secret wasn't bridged, we fail fast HERE
+      #      with a focused error message rather than mid-way through a
+      #      `helm upgrade edge` deep inside `make deploy CLOUD=<cloud>`.
+      #
+      # Previously this section ran ONLY `make verify-istio-gateway`,
+      # which fail-fast'd on every first-time migration cluster because
+      # istiod hadn't been installed yet (chicken-and-egg). The orchestrator
+      # (`make deploy CLOUD=<cloud>` -> `deploy-all-tiers-<cloud>`) ALSO
+      # runs both targets as its own preflight, so on a healthy cluster
+      # both step pairs are pure no-ops; this workflow-level pair just
+      # surfaces the install + verify as observable GHA log entries
+      # rather than burying them inside the much larger `make deploy`
+      # step output.
+      - name: Install Istio prerequisites
+        if: ${{ env.GATEWAY_PROVIDER == 'istio' }}
+        shell: bash -e {0}
+        run: |
+          make istio-prereq
+
+      - name: Verify Istio prerequisites
+        if: ${{ env.GATEWAY_PROVIDER == 'istio' }}
+        shell: bash -e {0}
+        run: |
+          make verify-istio-gateway
+
+      # ─── Render-time smoke test (no cluster mutation) ─────────────────
+      # Renders both gateway.provider branches so a template regression
+      # in either branch fails the build before any cluster mutation.
+      # Both branches must render until follow-up PRs delete the NGF
+      # templates entirely.
+      - name: Helm template smoke test (tier charts) — provider=nginx
+        run: |
+          _helm_args="$HELM_EXTRA_ARGS"
+          [ "$_helm_args" = "none" ] && _helm_args=""
+          GATEWAY_PROVIDER=nginx make helm-tier-template-${{ inputs.cloud }} \
+            CONTAINER_IMAGE_REPO="$CONTAINER_IMAGE_REPO" \
+            HELM_EXTRA_ARGS="$_helm_args"
+
+      - name: Helm template smoke test (tier charts) — provider=istio
+        run: |
+          _helm_args="$HELM_EXTRA_ARGS"
+          [ "$_helm_args" = "none" ] && _helm_args=""
+          GATEWAY_PROVIDER=istio make helm-tier-template-${{ inputs.cloud }} \
+            CONTAINER_IMAGE_REPO="$CONTAINER_IMAGE_REPO" \
+            HELM_EXTRA_ARGS="$_helm_args"
+
+      # ─── Deploy via the canonical CLOUD-dispatched facade ─────────────
+      # Routes (see mk/dispatch.mk):
+      #   CLOUD=aks    -> deploy-all-tiers-aks     (mk/cloud/aks.mk)
+      #   CLOUD=gke    -> deploy-gke               (mk/cloud/gke.mk; derives KEYCLOAK_HOSTNAME, then deploy-all-tiers-gke)
+      #   CLOUD=eks    -> deploy-eks               (mk/cloud/eks.mk; derives KEYCLOAK_HOSTNAME, then deploy-all-tiers-eks)
+      - name: Deploy (make deploy CLOUD=${{ inputs.cloud }})
+        run: |
+          _helm_args="$HELM_EXTRA_ARGS"
+          [ "$_helm_args" = "none" ] && _helm_args=""
+          # NOTE: the GKE and EKS Entra broker client secret is NOT passed here. It lives
+          # in an externally-managed `keycloak-entra-broker` K8s Secret that the
+          # chart references via broker.existingSecret; deploy-all-tiers-gke only
+          # verifies its presence (gke-keycloak-broker-secret-require).
+          make deploy CLOUD=${{ inputs.cloud }} \
+            IMAGE_TAG="$IMAGE_TAG" \
+            CONTAINER_IMAGE_REPO="$CONTAINER_IMAGE_REPO" \
+            ENDPOINT="$ENDPOINT" \
+            GATEWAY_PROVIDER="$GATEWAY_PROVIDER" \
+            HELM_NS_SERVICES="$HELM_NS_SERVICES" \
+            HELM_NS_CONSOLE="$HELM_NS_CONSOLE" \
+            HELM_NS_WORKERS="$HELM_NS_WORKERS" \
+            HELM_NS_LLM_GATEWAY="$HELM_NS_LLM_GATEWAY" \
+            HELM_NS_PLATFORM="$HELM_NS_PLATFORM" \
+            HELM_NS_IDENTITY="$HELM_NS_IDENTITY" \
+            HELM_NS_DATABASE="$HELM_NS_DATABASE" \
+            HELM_NS_OBSERVABILITY="$HELM_NS_OBSERVABILITY" \
+            HELM_NS_EDGE="$HELM_NS_EDGE" \
+            KEYCLOAK_DEPLOY_TARGET="$KEYCLOAK_DEPLOY_TARGET" \
+            KEYCLOAK_AKS_CONFIRM="$KEYCLOAK_AKS_CONFIRM" \
+            KEYCLOAK_KV_NAME="$KEYCLOAK_KV_NAME" \
+            KEYCLOAK_UAMI_CLIENT_ID="$KEYCLOAK_UAMI_CLIENT_ID" \
+            KEYCLOAK_TENANT_ID="$KEYCLOAK_TENANT_ID" \
+            KEYCLOAK_HOSTNAME="$KEYCLOAK_HOSTNAME" \
+            KEYCLOAK_ENTRA_APP_CLIENT_ID="$KEYCLOAK_ENTRA_APP_CLIENT_ID" \
+            KEYCLOAK_ENTRA_GROUP_ADMINS_OBJECTID="$KEYCLOAK_ENTRA_GROUP_ADMINS_OBJECTID" \
+            KEYCLOAK_ENTRA_GROUP_MEMBERS_OBJECTID="$KEYCLOAK_ENTRA_GROUP_MEMBERS_OBJECTID" \
+            CERT_MANAGER_GATEWAY_TLS="$CERT_MANAGER_GATEWAY_TLS" \
+            CERT_MANAGER_ISSUER_NAME="$CERT_MANAGER_ISSUER_NAME" \
+            GATEWAY_LB_IP="$GATEWAY_LB_IP" \
+            GATEWAY_MATCH_ALL_HOSTS="$GATEWAY_MATCH_ALL_HOSTS" \
+            DEPLOYMENT_NAME="$DEPLOYMENT_NAME" \
+            HELM_EXTRA_ARGS="$_helm_args"
+
+      # Regression guard: the Lakekeeper catalog UI bakes its browser-facing
+      # OIDC issuer into the served JS bundle at pod start. A deploy-path or
+      # chart-index drift can silently leave it pointing at the local-dev
+      # `auth.agentstudio.local` host (unreachable in real environments), which
+      # breaks catalog login with no error in the deploy logs. Assert the live
+      # bundle advertises auth.<endpoint> and fail loudly if it does not.
+      #
+      # Port handling: the regex and `expected` value accept BOTH the no-port
+      # form (https://auth.<endpoint>/...) and the legacy :8443 form
+      # (https://auth.<endpoint>:8443/...). The no-port form is the canonical
+      # post-PR-#TODO shape for cloud (Keycloak's KC_HOSTNAME does not include
+      # :443); the :8443 form is preserved for local/KIND clusters and for
+      # cloud clusters that haven't yet redeployed past the port-convergence
+      # change.
+      - name: Verify catalog OIDC issuer matches endpoint
+        if: ${{ env.ENDPOINT != '' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          host="catalog.${ENDPOINT}"
+          # Try the no-port form first; fall back to :8443 if the gateway
+          # listener is still on the legacy port (e.g. local KIND, or a cloud
+          # cluster not yet redeployed since the port-convergence change).
+          base="https://${host}"
+          if ! curl -skI --max-time 10 "${base}/ui/login" >/dev/null 2>&1; then
+            echo "Catalog not reachable on :443; trying legacy :8443"
+            base="https://${host}:8443"
+          fi
+          echo "Checking catalog OIDC issuer baked into the UI bundle at ${base}/ui/login"
+          bundle=$(curl -sk --max-time 20 "${base}/ui/login" \
+            | grep -oE '/ui/assets/index-[A-Za-z0-9_-]+\.js' | head -1 || true)
+          if [[ -z "$bundle" ]]; then
+            echo "WARN: could not locate UI bundle (catalog may not be exposed yet); skipping issuer check."
+            exit 0
+          fi
+          # Issuer URL regex accepts optional :8443 so this check works during
+          # the transition from :8443 to no-port URLs across cloud overlays.
+          issuers=$(curl -sk --max-time 30 "${base}${bundle}" \
+            | grep -oE 'https://auth\.[A-Za-z0-9._-]+(:[0-9]+)?/realms/nemo' | sort -u || true)
+          echo "Issuer(s) found in bundle: ${issuers:-<none>}"
+          if [[ -z "$issuers" ]]; then
+            echo "FATAL: no OIDC issuer URL detected in the catalog UI bundle."
+            echo "  Expected to find: https://auth.${ENDPOINT}/realms/nemo (or :8443 variant)"
+            echo "  The bundle format may have changed (regex drift) or the issuer is missing."
+            exit 1
+          fi
+          if echo "$issuers" | grep -qF "auth.agentstudio.local"; then
+            echo "FATAL: catalog UI advertises the local-dev OIDC issuer 'auth.agentstudio.local'."
+            echo "  Expected hostname: auth.${ENDPOINT}"
+            echo "  The platform-tier ENDPOINT override (helm-platform-upgrade-${{ inputs.cloud }},"
+            echo "  lakekeeper.catalog.extraEnv indices 5/10/12) likely did not apply."
+            exit 1
+          fi
+          # Match against the endpoint hostname only; port can be either no-port
+          # or :8443 during the transition.
+          if ! echo "$issuers" | grep -qE "^https://auth\.${ENDPOINT//./\\.}(:[0-9]+)?/realms/nemo$"; then
+            echo "FATAL: catalog UI OIDC issuer '${issuers}' does not match expected auth.${ENDPOINT}."
+            exit 1
+          fi
+          echo "OK: catalog UI OIDC issuer matches auth.${ENDPOINT} (port: $(echo "$issuers" | grep -oE ':[0-9]+' || echo '443 (implicit)'))."
+
+      # ─── Post-deploy gateway verification (gated on Istio) ──────────
+      # Blocks until the new Gateway is Programmed=True, reads the bound
+      # LB IP from Gateway.status.addresses[0].value, then runs a small
+      # curl smoke covering one path per public hostname using --resolve
+      # to bypass DNS. Cloud-agnostic.
+      - name: Post-deploy Istio Gateway verification
+        if: ${{ env.GATEWAY_PROVIDER == 'istio' && success() }}
+        shell: bash -e {0}
+        run: |
+          set -uo pipefail
+          : "${ENDPOINT:?ENDPOINT not set}"
+          # Wait up to 5 min for Gateway Programmed=True.
+          for i in $(seq 1 60); do
+            status=$(kubectl -n "$HELM_NS_EDGE" get gateway agentstudio-gateway \
+              -o jsonpath='{.status.conditions[?(@.type=="Programmed")].status}' 2>/dev/null || true)
+            if [ "$status" = "True" ]; then
+              echo "Gateway agentstudio-gateway Programmed=True"
+              break
+            fi
+            if [ "$i" = "60" ]; then
+              echo "::error::Gateway agentstudio-gateway did not reach Programmed=True after 5min"
+              kubectl -n "$HELM_NS_EDGE" get gateway agentstudio-gateway -o yaml || true
+              exit 1
+            fi
+            sleep 5
+          done
+          # Resolve the bound LB IP (or hostname).
+          lb_ip=$(kubectl -n "$HELM_NS_EDGE" get gateway agentstudio-gateway \
+            -o jsonpath='{.status.addresses[0].value}' 2>/dev/null || true)
+          if [ -z "$lb_ip" ]; then
+            echo "::warning::Gateway has no status.addresses[0].value yet; skipping per-host smoke."
+            exit 0
+          fi
+          echo "Gateway LB address: $lb_ip"
+          # Per-host smoke: each hostname routed through the LB IP, TLS
+          # accepted (-k) because we may be hitting a self-signed cert in dev.
+          status=0
+          for host in "app.${ENDPOINT}" "auth.${ENDPOINT}" \
+                       "catalog.${ENDPOINT}" "workflows.${ENDPOINT}" \
+                       "phoenix.${ENDPOINT}"; do
+            echo "--- Probing https://${host} via ${lb_ip}"
+            case "$host" in
+              auth.*) probe_path="/realms/nemo/.well-known/openid-configuration" ;;
+              app.*)  probe_path="/health" ;;
+              *)      probe_path="/" ;;
+            esac
+            if ! curl -k -fsS --max-time 15 \
+                --resolve "${host}:443:${lb_ip}" \
+                "https://${host}${probe_path}" >/dev/null; then
+              echo "::warning::probe failed for ${host}${probe_path}"
+              status=1
+            fi
+          done
+          if [ "$status" -ne 0 ]; then
+            echo "::warning::At least one post-deploy probe failed; inspect kubectl get httproute -n $HELM_NS_EDGE for ResolvedRefs."
+          fi
+
+      - name: Show release status
+        if: always()
+        shell: bash -e {0}
+        run: |
+          for ns in "$HELM_NS_DATABASE" "$HELM_NS_IDENTITY" "$HELM_NS_PLATFORM" \
+                    "$HELM_NS_LLM_GATEWAY" "$HELM_NS_SERVICES" "$HELM_NS_CONSOLE" \
+                    "$HELM_NS_WORKERS" "$HELM_NS_EDGE"; do
+            echo "--- Releases in $ns ---"
+            helm list -n "$ns" || true
+          done
+          if [[ "${OBSERVABILITY:-0}" == "1" ]]; then
+            echo "--- Releases in $HELM_NS_OBSERVABILITY ---"
+            helm list -n "$HELM_NS_OBSERVABILITY" || true
+          fi
+          echo "--- Gateway API resources (cluster-wide) ---"
+          kubectl get gateway,httproute -A 2>/dev/null || true
+          echo "--- Pods in $HELM_NS_SERVICES ---"
+          kubectl get pods -n "$HELM_NS_SERVICES" -o wide 2>/dev/null || true
+          if [[ "${{ inputs.cloud }}" == "aks" ]]; then
+            echo "--- Workload Identity ServiceAccounts (all tier namespaces) ---"
+            kubectl get sa -A -l azure.workload.identity/client-id 2>/dev/null || true
+          fi
+
+      # Self-hosted runners persist $HOME and $RUNNER_TEMP across jobs, so
+      # scrub the cloud CLI session and any kubeconfig before releasing the
+      # runner. The OIDC access token is already short-lived; this is
+      # defense in depth.
+      - name: Cleanup credentials
+        if: always()
+        shell: bash
+        run: |
+          if [[ "${{ inputs.cloud }}" == "aks" ]]; then
+            az logout || true
+            az account clear || true
+          fi
+          if [[ "${{ inputs.cloud }}" == "gke" ]]; then
+            gcloud auth revoke --all 2>/dev/null || true
+          fi
+          if [[ "${{ inputs.cloud }}" == "eks" ]]; then
+            rm -f "${{ runner.temp }}/eks-kubeconfig" || true
+          fi
+          rm -f "${{ runner.temp }}"/kubeconfig* || true

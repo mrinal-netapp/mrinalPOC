@@ -1,0 +1,884 @@
+// Data Source Form — wizard-style full-page layout
+// Used for both Register (create) and Edit flows.
+
+.ds-form-page {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - var(--topbar-height));
+  margin: -24px -32px;
+  background-color: var(--background-main);
+}
+
+// -- Loading / Error states --
+
+.ds-form-page__loading,
+.ds-form-page__error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 64px 0;
+}
+
+// -- Top bar --
+
+.ds-form-page__top-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 56px;
+  min-height: 56px;
+  padding: 0 24px;
+  background-color: var(--background-content);
+  border-bottom: 1px solid var(--border-main);
+}
+
+.ds-form-page__top-bar-title {
+  margin: 0;
+}
+
+// -- Scrollable body --
+
+.ds-form-page__body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding: 40px 24px;
+}
+
+.ds-form-page__body-inner {
+  width: 100%;
+  max-width: 1336px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+
+  &::after {
+    content: "";
+    display: block;
+    flex-shrink: 0;
+    height: 85px;
+  }
+}
+
+.ds-form-page__header {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 792px;
+
+  > p {
+    margin: 0;
+  }
+}
+
+.ds-form-page__form-card {
+  width: 100%;
+}
+
+// -- Sticky footer --
+
+.ds-form-page__footer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  height: 64px;
+  min-height: 64px;
+  padding: 0 24px;
+  background-color: var(--background-content);
+  border-top: 1px solid var(--border-main);
+}
+
+// -- Section (separated by horizontal divider) --
+
+.ds-form__section {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+// -- Section header --
+
+.ds-form__section-header {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ds-form__section-title {
+  margin: 0;
+}
+
+.ds-form__section-subtitle {
+  margin: 0;
+}
+
+// -- Fields --
+
+.ds-form__fields {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.ds-form__field {
+  width: 616px;
+  max-width: 100%;
+}
+
+// -- Access configuration card --
+
+.ds-form__source-card {
+  width: 616px;
+  max-width: 100%;
+}
+
+.ds-form__source-card .card-header__actions {
+  flex-shrink: 0;
+}
+
+// -- Access config info panel (key-value list shown after configuration) --
+
+.ds-form__access-info {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ds-form__access-info-row {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  line-height: 24px;
+
+  > :first-child {
+    min-width: 140px;
+    flex-shrink: 0;
+  }
+}
+
+.ds-form__access-info-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+// -- Scanning notice --
+
+.ds-form__notice {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.ds-form__notice-icon {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  margin-top: 4px;
+  color: var(--notification-information);
+
+  & svg {
+    width: 16px;
+    height: 16px;
+  }
+}
+
+.ds-form__notice-text {
+  margin: 0;
+}
+
+// -- Access config dialog --
+
+.ds-form__access-dialog {
+  max-width: 1064px;
+  width: 100%;
+}
+
+.ds-form__source-type-block {
+  padding-top: 0;
+}
+
+.ds-form__source-type-radios {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.ds-form__access-fields-block {
+  padding-top: 0;
+}
+
+.ds-form__access-dialog-footer {
+  padding-block: 32px;
+
+  .card-footer__actions > * {
+    min-width: 152px;
+  }
+}
+
+.ds-form__access-fields-row {
+  display: flex;
+  gap: 24px;
+
+  > * {
+    flex: 1;
+    min-width: 0;
+  }
+}
+
+// -- Scan config dialog --
+
+.ds-form__scan-dialog {
+  max-width: 1064px;
+  width: 100%;
+}
+
+.ds-form__scan-table {
+  display: flex;
+  flex-direction: column;
+}
+
+.ds-form__scan-table-header,
+.ds-form__scan-table-row {
+  display: flex;
+  align-items: center;
+}
+
+.ds-form__scan-table-header {
+  height: 56px;
+  background: var(--background-content);
+
+  .ds-form__scan-table-cell--selector {
+    padding-left: 75px;
+  }
+}
+
+.ds-form__scan-table-row {
+  height: 56px;
+  background: var(--background-main);
+  border-bottom: 1px solid var(--background-content);
+}
+
+.ds-form__scan-table-cell {
+  padding-left: 24px;
+  display: flex;
+  align-items: center;
+
+  &--selector {
+    width: 367px;
+    flex-shrink: 0;
+  }
+
+  &--desc {
+    flex: 1;
+    min-width: 0;
+  }
+}
+
+.ds-form__custom-depth-section {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.ds-form__custom-depth-header {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+
+  > p {
+    margin: 0;
+  }
+}
+
+.ds-form__scan-dialog-footer {
+  padding-block: 32px;
+
+  .card-footer__actions > * {
+    min-width: 152px;
+  }
+}
+
+// -- Scanning summary (shown when scanning is enabled) --
+
+.ds-form__scan-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+// -- Discard dialog --
+
+.ds-form__discard-dialog {
+  max-width: 440px;
+}
+
+// -- Dialog body — owns all internal spacing, no CardBlock cascade involved --
+
+.ds-form__access-body {
+  display: flex;
+  flex-direction: column;
+  // deliberate: no gap — each section controls its own top/bottom padding
+}
+
+// -- Subtitle row --
+
+.ds-form__access-subtitle {
+  padding: 16px 40px;
+  // span elements don't have browser default margins, so no reset needed
+}
+
+// -- Category tabs — tab list already has its own bottom border --
+
+.ds-form__category-tabs {
+  padding: 0;
+}
+
+.ds-form__catalog-status {
+  display: flex;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  padding: 12px 40px 0;
+
+  &--error {
+    color: var(--color-status-error, #b91c1c);
+  }
+}
+
+.ds-form__catalog-status-spinner {
+  flex-shrink: 0;
+  margin-top: 2px;
+  animation: ds-form-spin 0.8s linear infinite;
+}
+
+.ds-form__catalog-status-text {
+  margin: 0;
+  flex: 1 1 200px;
+}
+
+// -- Storage system tab: type radios --
+
+.ds-form__storage-type-block {
+  padding: 24px 40px 0;
+  display: flex;
+  flex-direction: column;
+}
+
+// -- Storage system tab: server / username / password fields --
+
+.ds-form__storage-fields-block {
+  padding: 24px 40px;
+}
+
+// -- Database type section — spaced below the tab separator --
+
+.ds-form__db-type-section {
+  padding: 24px 40px 0;
+}
+
+// -- Database auth section --
+
+.ds-form__db-auth-section {
+  padding: 24px 40px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+// -- Auth section title/subtitle (rendered as span so no browser default margin) --
+
+.ds-form__db-auth-title {
+  display: block;
+}
+
+.ds-form__db-auth-subtitle {
+  display: block;
+  margin-top: 4px;
+}
+
+// Table column geometry — shared so header and rows align perfectly
+$db-table-check-w: 48px;
+$db-table-name-w: 200px;
+$db-table-pad-x: 16px;
+
+// Figma: header is white, BOTH data rows are grey, and the table has NO outer outline.
+// Selection is indicated solely by the blue circular checkmark, not the row background.
+.ds-form__db-table {
+  display: flex;
+  flex-direction: column;
+  border: none;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.ds-form__db-table-header {
+  display: flex;
+  align-items: center;
+  height: 48px;
+  // White header (matches the dialog surface) with a divider above the grey rows
+  background-color: var(--background-content);
+  border-bottom: 1px solid var(--border-main);
+  padding: 0 $db-table-pad-x;
+}
+
+.ds-form__db-table-row {
+  display: flex;
+  align-items: center;
+  min-height: 56px;
+  padding: 12px $db-table-pad-x;
+  // ALL data rows share the same grey fill (#F5F5F5 in light theme)
+  background-color: var(--background-main);
+  border-bottom: 1px solid var(--border-main);
+  cursor: pointer;
+  outline: none;
+
+  &:last-child {
+    border-bottom: none;
+  }
+
+  // Selected row keeps the same grey — the checkmark conveys selection
+  &--selected {
+    background-color: var(--background-main);
+  }
+
+  &:focus-visible {
+    box-shadow: inset 0 0 0 2px var(--border-focus-outline);
+  }
+}
+
+.ds-form__db-table-cell {
+  display: flex;
+  align-items: center;
+
+  // Selection control column
+  &--check {
+    width: $db-table-check-w;
+    flex-shrink: 0;
+  }
+
+  // Row name column
+  &--name {
+    width: $db-table-name-w;
+    flex-shrink: 0;
+    padding-right: 16px;
+  }
+
+  // Header "Name" spans the check + name columns so "Description" lines up
+  &--name-head {
+    width: $db-table-check-w + $db-table-name-w;
+    flex-shrink: 0;
+    padding-right: 16px;
+  }
+
+  &--desc {
+    flex: 1;
+    min-width: 0;
+  }
+}
+
+// Circular checkbox (Figma uses a filled circle + white checkmark for selection).
+// Compound selector raises specificity above the base `.checkbox { border-radius: 3px }`.
+.checkbox.ds-form__db-check {
+  border-radius: 50%;
+}
+
+// -- Database auth block header --
+
+.ds-form__db-auth-header {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+
+  > p {
+    margin: 0;
+  }
+}
+
+.ds-form__auth-mode-radios {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+// -- Database auth content (fields below radio selection) --
+
+.ds-form__db-auth-content {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding-top: 4px;
+}
+
+.ds-form__db-field {
+  max-width: 616px;
+}
+
+.ds-form__db-password-wrap {
+  position: relative;
+}
+
+.ds-form__db-password-toggle {
+  position: absolute;
+  right: 12px;
+  bottom: 9px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+
+  &:hover {
+    color: var(--text-primary);
+  }
+}
+
+.ds-form__db-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+// -- Object Store Connection layout --
+
+.ds-form__req-label {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-bottom: 6px;
+}
+
+.ds-form__req-asterisk {
+  color: var(--notification-error);
+}
+
+.ds-form__os-grow {
+  flex: 1 1 0;
+  min-width: 0;
+  max-width: none;
+}
+
+.ds-form__os-row {
+  display: flex;
+  gap: 16px;
+  max-width: 616px;
+}
+
+.ds-form__db-host {
+  flex: 2 1 0;
+  min-width: 0;
+}
+
+.ds-form__db-port {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.ds-form__os-test-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  // Match the 40px horizontal inset of the field sections above so the button
+  // and status line up with the input boxes (24px bottom spaces it from the footer).
+  padding: 0 40px 24px;
+}
+
+.ds-form__conn-test {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  white-space: nowrap;
+
+  svg {
+    flex-shrink: 0;
+  }
+
+  &--untested {
+    color: var(--text-disabled);
+  }
+
+  &--loading {
+    color: var(--color-text-secondary, #6b7280);
+  }
+
+  &--success {
+    color: var(--color-status-success, #15803d);
+  }
+
+  &--error {
+    color: var(--color-status-error, #b91c1c);
+    white-space: normal;
+    flex-shrink: 1;
+    min-width: 0;
+  }
+}
+
+.ds-form__conn-test-spinner {
+  animation: ds-form-spin 0.8s linear infinite;
+}
+
+@keyframes ds-form-spin {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.ds-form__db-project-section {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.ds-form__db-section-header {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ds-form__db-section-title,
+.ds-form__db-section-subtitle {
+  display: block;
+}
+
+// -- Textarea (service account key) --
+
+.ds-form__db-textarea-label {
+  margin-bottom: 6px;
+}
+
+// Textarea matches the design-system text field (white bg, field border) — Figma parity
+.ds-form__db-textarea {
+  width: 100%;
+  max-width: 616px;
+  min-height: 96px;
+  padding: 10px 16px;
+  font-family: var(--font-family);
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--text-primary);
+  background-color: var(--background-content);
+  border: 1px solid var(--field-border);
+  border-radius: 4px;
+  resize: vertical;
+  outline: none;
+  box-sizing: border-box;
+
+  &::placeholder {
+    color: var(--text-disabled);
+  }
+
+  &:hover:not(:focus) {
+    outline: 1px solid var(--field-border);
+  }
+
+  &:focus {
+    border-color: var(--field-border-selected);
+    outline: 1px solid var(--field-border-selected);
+  }
+}
+
+.ds-form__db-upload-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  // Breathing room between the service account key textarea and the Upload button
+  margin-top: 16px;
+}
+
+.ds-form__db-file-input {
+  display: none;
+}
+
+// -- Instructions expandable section --
+
+// No box outline per design — the section is a plain collapsible block
+.ds-form__db-instructions {
+  max-width: 616px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ds-form__db-instructions-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  color: var(--text-button-primary);
+
+  svg {
+    color: var(--text-button-primary);
+    flex-shrink: 0;
+  }
+}
+
+// Instructions heading stays blue (link/interactive color)
+.ds-form__db-instructions-label {
+  color: var(--text-button-primary);
+}
+
+.ds-form__db-instructions-body {
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ds-form__db-instructions-intro {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.ds-form__db-instructions-intro-icon {
+  flex-shrink: 0;
+  margin-top: 4px;
+  color: var(--notification-information);
+}
+
+.ds-form__db-instructions-list {
+  margin: 0;
+  padding-left: 36px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 14px;
+  color: var(--text-primary);
+  line-height: 1.5;
+}
+
+// -- Placeholder block for unimplemented tabs --
+
+.ds-form__placeholder-block {
+  padding: 40px 24px;
+  display: flex;
+  justify-content: center;
+}
+
+// -- Labels editor (free-text input + Add button + removable chips) --
+
+.ds-form__labels-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.ds-form__labels-input-row {
+  display: flex;
+  gap: 16px;
+  align-items: flex-end;
+}
+
+.ds-form__labels-input {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.ds-form__labels-add {
+  flex: 0 0 auto;
+}
+
+.ds-form__labels-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ds-form__labels-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border: 1px solid var(--border-default);
+  border-radius: 6px;
+  background: var(--surface-secondary);
+  color: var(--text-primary);
+}
+
+.ds-form__labels-tag-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+
+  &:hover {
+    color: var(--text-primary);
+  }
+}
+
+// -- Volume metadata key/value editor --
+
+.ds-form__vol-kv {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 616px;
+}
+
+.ds-form__vol-kv-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.ds-form__vol-kv-add {
+  display: flex;
+  align-items: flex-end;
+  flex: 0 0 auto;
+}
+
+.ds-form__vol-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ds-form__vol-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border: 1px solid var(--border-default);
+  border-radius: 6px;
+  background: var(--surface-secondary);
+  color: var(--text-primary);
+}
+
+.ds-form__vol-tag-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+
+  &:hover {
+    color: var(--text-primary);
+  }
+}
+

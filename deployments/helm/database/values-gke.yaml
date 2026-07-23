@@ -1,0 +1,16 @@
+# GKE overlay for shared PostgreSQL on GCNV-native SAN (Trident StorageClass gcnv-san-rwo).
+#
+# PostgreSQL stays on a single-writer RWO class; RWX NAS is used only for
+# shared filesystem workloads in workers/services tiers.
+
+postgresql:
+  primary:
+    persistence:
+      storageClass: "gcnv-san-rwo"
+    nodeSelector:
+      agentstudio.netapp.io/san: "true"
+    tolerations:
+      - key: "agentstudio.netapp.io/san"
+        operator: "Equal"
+        value: "true"
+        effect: "NoSchedule"

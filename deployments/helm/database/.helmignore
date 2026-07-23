@@ -1,0 +1,48 @@
+# Patterns excluded from `helm package` AND from the in-cluster release
+# Secret that `helm upgrade` stores. Without these, the runner workspace
+# accumulates stale subchart .tgz files / unpacked subchart dirs / IDE
+# crud across runs and helm packs all of it into the release Secret,
+# which can blow past the kube-apiserver 3 MiB request limit.
+#
+# Note: Bitnami's postgresql subchart ships its own .helmignore inside
+# the .tgz, so this file only needs to cover the parent chart layer.
+.DS_Store
+# Common VCS dirs
+.git/
+.gitignore
+.bzr/
+.bzrignore
+.hg/
+.hgignore
+.svn/
+# Editor / OS scratch
+*.swp
+*.bak
+*.tmp
+*.orig
+*~
+.project
+.idea/
+*.tmproj
+.vscode/
+# Local-dev caches that can wander into a workspace
+__pycache__/
+*.pyc
+.venv/
+node_modules/
+# Helm's own caches if it ever falls back to writing them in CWD
+# (i.e. inside the chart dir). The Bitnami repo index alone is ~26 MB —
+# if `.cache/helm/repository/` ends up next to Chart.yaml on a runner
+# without $HOME/$XDG_CACHE_HOME set, helm packs the whole thing into
+# the release Secret and blows past the kube-apiserver's 3 MiB request
+# limit. The root Makefile's `helm-deps-update` macro points
+# HELM_CACHE_HOME et al. at repo-root-scoped paths to make this
+# impossible in the first place; these patterns are belt-and-suspenders.
+.cache/
+.config/
+.helm/
+# Note: `*.bak` above already matches `charts/<anything>.tgz.bak`
+# (helm uses gitignore-style basename matching at any depth). Stale
+# outdated .tgz files are scrubbed by the Makefile's `helm-deps-update`
+# macro before every `helm dependency update`, and `charts/` itself is
+# not excluded because helm needs it at upgrade time.

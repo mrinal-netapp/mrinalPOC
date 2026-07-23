@@ -1,0 +1,568 @@
+openapi: 3.0.3
+info:
+  title: KB Retrieval Service API
+  description: |
+    REST API for semantic search over knowledge base embeddings using LanceDB vector databases.
+
+    This service provides vector similarity search capabilities for Retrieval Augmented Generation (RAG) operations,
+    enabling agents to retrieve relevant context from document collections.
+
+    ## Features
+    - Single and multi-knowledge base search
+    - Multiple search modes: vector, full-text, and hybrid (vector + FTS + RRF)
+    - Multiple distance metrics (cosine, L2, dot product)
+    - Connection pooling with LRU cache and TTL
+    - ONNX-based embedding model (all-MiniLM-L6-v2, 384 dimensions)
+    - S3/MinIO storage backend via native LanceDB Rust SDK
+
+    ## Authentication
+    All API endpoints require JWT authentication via the API Gateway. The gateway validates tokens and injects
+    `X-Project-ID` and `X-User-ID` headers for authorization.
+  version: 1.0.0
+  contact:
+    name: AgentStudio Platform
+    url: https://github.com/agentstudio
+
+servers:
+  - url: http://localhost:5000
+    description: Local development
+  - url: http://kb-retrieval-service:5000
+    description: Kubernetes cluster
+  - url: https://api.agentstudio.local/api/v1
+    description: Production API Gateway
+
+tags:
+  - name: Search
+    description: Vector similarity search operations
+  - name: Metadata
+    description: Knowledge base metadata operations
+  - name: Health
+    description: Service health and monitoring
+
+paths:
+  /api/v1/projects/{projectId}/knowledgebases/{kbId}/search:
+    post:
+      tags:
+        - Search
+      summary: Search a single knowledge base
+      description: |
+        Performs search on a single knowledge base. Supports vector similarity search,
+        full-text search (BM25), and hybrid search (vector + FTS with RRF reranking).
+
+        The query text is embedded using the same model used to process the knowledge base documents,
+        then the search is performed using the specified mode and distance metric.
+
+        Results are sorted by similarity score (higher is better) and can be filtered by a minimum score threshold.
+      operationId: searchKnowledgeBase
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          description: Project ID (owner of the knowledge base)
+          schema:
+            type: string
+            example: "my-project"
+        - name: kbId
+          in: path
+          required: true
+          description: Knowledge base ID to search (format kb<8 chars>)
+          schema:
+            type: string
+            pattern: '^kb[a-z0-9]{8}$'
+            example: "kbab12cd34"
+        - name: X-Project-ID
+          in: header
+          required: true
+          description: Project ID (injected by API Gateway)
+          schema:
+            type: string
+        - name: X-User-ID
+          in: header
+          required: false
+          description: User ID (injected by API Gateway)
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SearchRequest'
+            examples:
+              basic:
+                summary: Basic vector search
+                value:
+                  query: "How do I implement authentication?"
+                  topK: 10
+                  minScore: 0.7
+              hybrid:
+                summary: Hybrid search with RRF
+                value:
+                  query: "What is the architecture of the system?"
+                  topK: 20
+                  minScore: 0.6
+                  searchMode: "hybrid"
+                  distanceMetric: "cosine"
+      responses:
+        '200':
+          description: Search results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchResponse'
+        '400':
+          description: Bad request (invalid parameters)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Knowledge base not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/v1/projects/{projectId}/knowledgebases/search:
+    post:
+      tags:
+        - Search
+      summary: Search across multiple knowledge bases
+      description: |
+        Performs search across multiple knowledge bases and aggregates results.
+
+        The aggregation strategy determines how results are combined:
+        - `merge`: Merge all results and re-sort by score (default)
+        - `per_kb`: Return separate result sets per knowledge base
+      operationId: searchMultipleKnowledgeBases
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          description: Project ID (owner of the knowledge bases)
+          schema:
+            type: string
+            example: "my-project"
+        - name: X-Project-ID
+          in: header
+          required: true
+          description: Project ID (injected by API Gateway)
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MultiSearchRequest'
+      responses:
+        '200':
+          description: Aggregated search results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MultiSearchResponse'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/v1/projects/{projectId}/knowledgebases/{kbId}/metadata:
+    get:
+      tags:
+        - Metadata
+      summary: Get knowledge base metadata
+      description: |
+        Returns metadata about a knowledge base including S3 storage path,
+        embedding model configuration, and processing status from S3 metadata.json.
+      operationId: getKnowledgeBaseMetadata
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          description: Project ID
+          schema:
+            type: string
+        - name: kbId
+          in: path
+          required: true
+          description: Knowledge base ID
+          schema:
+            type: string
+            pattern: '^kb[a-z0-9]{8}$'
+        - name: X-Project-ID
+          in: header
+          required: true
+          description: Project ID (injected by API Gateway)
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Knowledge base metadata
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KnowledgeBaseMetadata'
+        '404':
+          description: Knowledge base not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /health:
+    get:
+      tags:
+        - Health
+      summary: Health check
+      description: Returns the health status of the service. Used by Kubernetes liveness probes.
+      operationId: healthCheck
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+  /ready:
+    get:
+      tags:
+        - Health
+      summary: Readiness check
+      description: |
+        Returns the readiness status of the service. Used by Kubernetes readiness probes.
+        The service is considered ready when the embedding model is loaded.
+      operationId: readinessCheck
+      responses:
+        '200':
+          description: Service is ready
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadinessResponse'
+        '503':
+          description: Service is not ready
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadinessResponse'
+
+  /metrics:
+    get:
+      tags:
+        - Health
+      summary: Service metrics
+      description: |
+        Returns operational metrics including connection pool statistics
+        and request counters.
+      operationId: getMetrics
+      responses:
+        '200':
+          description: Service metrics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MetricsResponse'
+
+components:
+  schemas:
+    SearchRequest:
+      type: object
+      required:
+        - query
+      properties:
+        query:
+          type: string
+          description: Search query text (will be embedded for vector/hybrid modes)
+          minLength: 1
+          maxLength: 8000
+        topK:
+          type: integer
+          description: Number of results to return
+          default: 10
+          minimum: 1
+          maximum: 100
+        minScore:
+          type: number
+          format: float
+          description: Minimum similarity score threshold (0.0-1.0)
+          default: 0.0
+          minimum: 0.0
+          maximum: 1.0
+        distanceMetric:
+          type: string
+          description: Distance metric for similarity calculation
+          enum: [cosine, l2, dot]
+          default: cosine
+        searchMode:
+          type: string
+          description: |
+            Search mode. If not specified, auto-detected from KB indexingMode.
+            - vector: Pure vector similarity search
+            - fts: Full-text BM25 keyword search
+            - hybrid: Combined vector + FTS with RRF reranking
+          enum: [vector, fts, hybrid]
+        rerankerType:
+          type: string
+          description: |
+            Reranker for hybrid search.
+            - rrf (default): fuse vector + FTS results with Reciprocal Rank Fusion.
+            - none: disable reranking — hybrid still runs vector + FTS but merges
+              them with a plain score-based union instead of RRF.
+            Ignored for vector / fts search modes.
+          enum: [rrf, none]
+          default: rrf
+        rerankerOptions:
+          type: object
+          description: Options for the reranker
+          additionalProperties: true
+        nprobe:
+          type: integer
+          description: Number of IVF partitions to search (for IVF_PQ indexed KBs)
+          minimum: 1
+          maximum: 1000
+        refineFactor:
+          type: integer
+          description: Refine factor for IVF_PQ index search
+          minimum: 1
+          maximum: 100
+
+    MultiSearchRequest:
+      type: object
+      required:
+        - query
+        - knowledgeBaseIds
+      properties:
+        query:
+          type: string
+          description: Search query text
+          minLength: 1
+          maxLength: 8000
+        knowledgeBaseIds:
+          type: array
+          description: List of knowledge base IDs to search
+          minItems: 1
+          maxItems: 10
+          items:
+            type: string
+        topK:
+          type: integer
+          default: 10
+          minimum: 1
+          maximum: 100
+        minScore:
+          type: number
+          format: float
+          default: 0.0
+          minimum: 0.0
+          maximum: 1.0
+        distanceMetric:
+          type: string
+          enum: [cosine, l2, dot]
+          default: cosine
+        aggregationStrategy:
+          type: string
+          enum: [merge, per_kb]
+          default: merge
+        searchMode:
+          type: string
+          enum: [vector, fts, hybrid]
+
+    SearchResponse:
+      type: object
+      properties:
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/SearchResult'
+        query:
+          type: string
+        topK:
+          type: integer
+        resultCount:
+          type: integer
+        processingTimeMs:
+          type: number
+          format: float
+        knowledgeBaseId:
+          type: string
+        searchMode:
+          type: string
+        indexingMode:
+          type: string
+        distanceMetric:
+          type: string
+        rerankerType:
+          type: string
+        nprobe:
+          type: integer
+        refineFactor:
+          type: integer
+
+    MultiSearchResponse:
+      type: object
+      properties:
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/SearchResult'
+        aggregationStrategy:
+          type: string
+        query:
+          type: string
+        topK:
+          type: integer
+        processingTimeMs:
+          type: number
+          format: float
+        knowledgeBasesQueried:
+          type: integer
+        requestedSearchMode:
+          type: string
+
+    SearchResult:
+      type: object
+      properties:
+        id:
+          type: string
+        documentId:
+          type: string
+        source:
+          type: string
+        text:
+          type: string
+        score:
+          type: number
+          format: float
+          minimum: 0.0
+          maximum: 1.0
+        chunkIndex:
+          type: integer
+        metadata:
+          type: object
+          additionalProperties: true
+        downloadUrl:
+          type: string
+        knowledgeBaseId:
+          type: string
+        knowledgeBaseName:
+          type: string
+
+    KnowledgeBaseMetadata:
+      type: object
+      properties:
+        knowledgeBaseId:
+          type: string
+        projectId:
+          type: string
+        s3Path:
+          type: string
+        embeddingModel:
+          type: string
+        vectorSize:
+          type: integer
+        chunkCount:
+          type: integer
+        lastProcessedAt:
+          type: string
+        lastProcessingMode:
+          type: string
+        indexingMode:
+          type: string
+
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+        service:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+
+    ReadinessResponse:
+      type: object
+      properties:
+        status:
+          type: string
+        service:
+          type: string
+        embeddingModel:
+          type: string
+        s3Connection:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+
+    MetricsResponse:
+      type: object
+      properties:
+        connectionPool:
+          type: object
+          properties:
+            size:
+              type: integer
+            maxSize:
+              type: integer
+            hits:
+              type: integer
+            misses:
+              type: integer
+            evictions:
+              type: integer
+            hitRate:
+              type: number
+              format: float
+        requests:
+          type: object
+          properties:
+            total:
+              type: integer
+            successful:
+              type: integer
+            failed:
+              type: integer
+            avgLatencyMs:
+              type: number
+              format: float
+
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT token validated by API Gateway
+
+security:
+  - BearerAuth: []

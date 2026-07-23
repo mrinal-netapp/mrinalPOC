@@ -1,0 +1,24 @@
+openapi: 3.0.0
+info:
+  title: AgentStudio Artifact Service
+  version: 0.1.0
+  description: |
+    Persistent, version-tracked artifact store for AgentStudio agents.
+    Each store is a bare git repo on the shared NFS PVC; reads/writes
+    are mediated by this service. Read-only viewer endpoints are exposed
+    here for the GUI; all agent-driven writes happen via the MCP server.
+servers:
+  - url: http://artifact-service:8080
+paths:
+  /health:
+    get:
+      summary: Liveness probe
+      responses:
+        '200':
+          description: OK
+  /ready:
+    get:
+      summary: Readiness probe
+      responses:
+        '200':
+          description: OK

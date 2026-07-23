@@ -1,0 +1,117 @@
+// Models overview — page chrome around the BaseTable panels. The dt-* table
+// chrome is owned by baseTableMcpBxp.scss (loaded transitively); we only
+// style the surrounding layout + cell-internal decorations here.
+@use "@/ui-lib/base-components/baseTableMcpBxp/baseTableMcpBxp.scss";
+
+.models-overview {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 40px;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.models-overview__sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.models-overview__intro {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  max-width: 66rem;
+}
+
+.models-overview__title {
+  margin: 0;
+  font-family: var(--font-family);
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 28px;
+  color: var(--text-primary);
+}
+
+.models-overview__lede {
+  margin: 0;
+  font-family: var(--font-family);
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 20px;
+  color: var(--text-secondary);
+  max-width: 50rem;
+}
+
+.models-overview__main {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  width: 100%;
+  min-width: 0;
+}
+
+.models-overview__tabs {
+  gap: 16px;
+}
+
+.models-overview__tabs .tab-group__list--general {
+  border-bottom-color: var(--grey-30);
+}
+
+.models-overview__tab-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 100%;
+  min-width: 0;
+}
+
+.models-overview__panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  min-width: 0;
+}
+
+/* In-cell affordances rendered by the column files. */
+.models-overview__status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  line-height: 24px;
+  white-space: nowrap;
+}
+
+.models-overview__name-link {
+  display: inline-flex;
+  align-items: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.models-overview__name-link:focus-visible {
+  outline: 2px solid var(--text-button-primary);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/* Proxy-config edit modal (opened from the Providers tab kebab menu). */
+.provider-proxy-modal__fields {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 100%;
+}

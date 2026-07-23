@@ -1,0 +1,66 @@
+.ds-list {
+  &__loading {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 64px 0;
+  }
+
+  &__empty {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 64px 0;
+  }
+}
+
+// Column cell helpers (used inside column defs)
+
+.ds-name-link {
+  all: unset;
+  cursor: pointer;
+  display: inline-flex;
+
+  &:hover span {
+    text-decoration: underline;
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--border-focus-outline);
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+}
+
+.ds-status-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+
+  .ds-status-spinner {
+    flex-shrink: 0;
+
+    .spinner__circle {
+      stroke: var(--notification-information);
+    }
+  }
+}
+
+.ds-datasets-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.ds-cell-placeholder {
+  color: var(--text-disabled);
+}
+
+// Deprecated row styling
+.row--deprecated {
+  opacity: 0.5;
+
+  .ds-name-link span {
+    color: var(--text-disabled);
+  }
+}

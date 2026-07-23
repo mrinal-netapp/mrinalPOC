@@ -1,0 +1,7 @@
+@use "@/styles/mixins" as *;
+
+.cron-expression-input {
+  & .input-field {
+    font-family: var(--font-family-mono);
+  }
+}

@@ -1,0 +1,14 @@
+# actionlint configuration.
+#
+# Declares the custom self-hosted runner labels used across the AgentStudio
+# workflows so actionlint stops reporting them as "unknown label". These are
+# real labels registered on the self-hosted runner pool:
+#   - netapp    : self-hosted runners able to reach private AKS/GKE/EKS API
+#                 servers, the internal registry, and cluster gateways.
+#   - runner-4  : the build/publish runner (build-common.yml).
+#   - bds-only  : BlackDuck-scan runner (build-common.yml security jobs).
+self-hosted-runner:
+  labels:
+    - netapp
+    - runner-4
+    - bds-only

@@ -1,0 +1,104 @@
+# dev.yaml -- AgentStudio Azure infra config for the dev environment.
+#
+# SYNCED FROM LIVE (2026-06-27): rg-agentstudio-dev-eus2-001 / aks-agentstudio-dev-eus2-001.
+# Cluster was provisioned out-of-band; actionOnUnmanage: detachAll prevents stack updates
+# from deleting drifted resources. Use ACTION=plan to preview diff vs live.
+#
+#   make infra CLOUD=azure ENV=dev ACTION=plan
+#   make infra CLOUD=azure ENV=dev ACTION=apply   # adopt/import strategy required first
+
+# ---- Runner-only keys ----
+env: dev
+subscriptionId: "ae26acbb-72f9-440e-822f-b13ef3e4fec1"
+resourceGroup: rg-agentstudio-dev-eus2-001
+stackName: agentstudio-dev
+actionOnUnmanage: detachAll
+endpoint: agentstudio.dev.openeng.netapp.com
+
+# ---- main.bicep parameters ----
+location: eastus2
+tenantId: "8e21f23a-10b9-46fb-9d50-720ef604be98"
+
+networking:
+  vnetName: vnet-agentstudio-dev-eus2-001
+  vnetAddressPrefix: 10.0.0.0/16
+  aksSubnetName: snet-agentstudio-aks-dev-eus2-001
+  aksSubnetPrefix: 10.0.0.0/22
+  ilbSubnetName: snet-agentstudio-ilb-dev-eus2-001
+  ilbSubnetPrefix: 10.0.4.0/24
+  anfSubnetName: snet-agentstudio-anf-dev-eus2-001
+  anfSubnetPrefix: 10.0.8.0/24
+
+aks:
+  clusterName: aks-agentstudio-dev-eus2-001
+  kubernetesVersion: "1.35"
+  dnsPrefix: aks-agentstudio-dev-eus2
+  nodePools:
+    - name: nodepool1
+      mode: System
+      vmSize: Standard_D4s_v5
+      count: 8
+      enableAutoScaling: true
+      minCount: 3
+      maxCount: 10
+      osDiskSizeGB: 128
+  autoUpgradeProfile:
+    upgradeChannel: none
+    nodeOSUpgradeChannel: NodeImage
+  autoScalerProfile: {}
+
+anf:
+  anfAccountName: anf-agentstudio-dev-eus2-001
+  pools:
+    - name: pool-standard-001
+      serviceLevel: Standard
+      sizeTiB: 4
+      qosType: Auto
+      coolAccessEnabled: false
+
+containerRegistry:
+  registryName: cragentstudiodeveus2001
+  sku: Standard
+  adminUserEnabled: false
+  zoneRedundancyEnabled: false
+
+keyVault:
+  keyVaultName: kv-aias-keycloak-eus2
+  purgeProtectionEnabled: false
+  softDeleteRetentionInDays: 7
+
+workloadIdentity:
+  uamiNamePrefix: id-agentstudio-
+  services:
+    - { name: agent-service,        namespace: agentstudio-services,    resources: [] }
+    - { name: apigateway-service,   namespace: agentstudio-services,    resources: [] }
+    - { name: config-service,       namespace: agentstudio-services,    resources: [] }
+    - { name: storage-manager,      namespace: agentstudio-services,    resources: [] }
+    - { name: workflow-engine,      namespace: agentstudio-services,    resources: [] }
+    - { name: kb-retrieval-service, namespace: agentstudio-services,    resources: [] }
+    - { name: analytics-engine,     namespace: agentstudio-services,    resources: [] }
+    - { name: analytics-mcp-server, namespace: agentstudio-services,    resources: [] }
+    - { name: artifact-service,     namespace: agentstudio-services,    resources: [] }
+    - { name: gui,                  namespace: agentstudio-edge,        resources: [] }
+    - { name: dataset-worker,       namespace: agentstudio-workers,     resources: [] }
+    - { name: kb-worker,            namespace: agentstudio-workers,     resources: [] }
+    - { name: connector-worker,     namespace: agentstudio-workers,     resources: [] }
+    - { name: bifrost,              namespace: agentstudio-llm-gateway, resources: [] }
+    - { name: temporal,             namespace: agentstudio-platform,    resources: [] }
+    - { name: s3gateway,            namespace: agentstudio-platform,    resources: [] }
+
+storage:
+  trident:
+    helmVersion: "100.2410.0"
+    namespace: trident
+  anf:
+    backendName: anf-backend-nfs
+    storageClassName: anf-nfs
+    exportRule: auto
+
+# Gateway static PIP for Istio edge. PIP lives in the AKS node RG on this legacy
+# dev cluster — override gatewayLbResourceGroup; preprod/stack-managed envs omit it
+# and deploy uses resourceGroup from this file.
+edge:
+  gatewayPipName: pip-agentstudio-gw-dev-eus2-001
+  gatewayLbResourceGroup: MC_rg-agentstudio-dev-eus2-001_aks-agentstudio-dev-eus2-001_eastus2

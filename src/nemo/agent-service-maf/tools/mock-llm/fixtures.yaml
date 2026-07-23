@@ -1,0 +1,65 @@
+# Mock LLM fixtures for Bruno + e2e tests (plan I4).
+#
+# Each rule is matched in order against the user's last message
+# (case-insensitive substring). First match wins. If nothing matches,
+# the mock returns the default reply `MOCK_LLM_NO_FIXTURE_MATCHED`
+# so a missing fixture is obvious in assertions rather than silently
+# passing.
+
+# ------------------------------------------------------------------
+# Baseline (no JSON contract) — used by 01-baseline.
+# ------------------------------------------------------------------
+- match_input: "what is the capital of france"
+  response: "The capital of France is Paris."
+
+# ------------------------------------------------------------------
+# response_format-only path (02-response-format-only).
+# Caller wants JSON but no schema is declared on the agent.
+# ------------------------------------------------------------------
+- match_input: "list any three fruits as json"
+  response: '{"fruits": ["apple", "banana", "cherry"]}'
+
+- match_input: "refuse to emit json"
+  response: "I cannot comply with that request."
+
+# ------------------------------------------------------------------
+# output_schema-only path (03-output-schema-only).
+# Agent has output_schema declared; mock responds with matching shape.
+# ------------------------------------------------------------------
+- match_input: "generate an invoice for customer acme for"
+  response: '{"customerId": "acme-123", "amount": 42.50}'
+
+- match_input: "generate an invoice missing the amount"
+  response: '{"customerId": "acme-mismatch"}'
+
+- match_input: "wrap an invoice in a markdown code block"
+  response: |-
+    Here is the invoice you requested:
+
+    ```json
+    {"customerId": "acme-fenced", "amount": 99.99}
+    ```
+
+    Let me know if you need adjustments.
+
+# ------------------------------------------------------------------
+# Both knobs (04-both-knobs) — schema validation wins.
+# ------------------------------------------------------------------
+- match_input: "both knobs invoice for acme"
+  response: '{"customerId": "acme-both", "amount": 1.0}'
+
+# ------------------------------------------------------------------
+# Per-request override (05-per-request-override).
+# ------------------------------------------------------------------
+- match_input: "issue a ticket for printer outage"
+  response: '{"ticketId": "TKT-7", "priority": "high"}'
+
+- match_input: "issue an invoice instead of a ticket"
+  response: '{"customerId": "acme-fallback", "amount": 12.5}'
+
+# ------------------------------------------------------------------
+# Malformed agent schema (06-malformed-agent-schema).
+# Bundle has startup_error; invokes still succeed (raw parse fallback).
+# ------------------------------------------------------------------
+- match_input: "send any json for the broken schema team"
+  response: '{"anything": "is", "fine": 1}'

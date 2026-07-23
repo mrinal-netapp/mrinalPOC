@@ -1,0 +1,6 @@
+apiVersion: v2
+name: tempo
+description: Grafana Tempo — distributed tracing backend with 7-day retention
+type: application
+version: 0.1.0
+appVersion: "2.7.2"

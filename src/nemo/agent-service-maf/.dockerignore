@@ -1,0 +1,70 @@
+# Keep the Docker build context lean and avoid leaking dev/test artifacts.
+# The Dockerfile (deploy/Dockerfile) copies pyproject.toml + src/ + configs/.
+# Everything below is excluded from the build context entirely.
+
+# Version control / IDE
+.git
+.gitignore
+.idea
+.vscode
+.cursor
+.editorconfig
+
+# Python tooling caches & artifacts
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.coverage
+.coverage.*
+htmlcov
+coverage.xml
+.tox
+.nox
+.hypothesis
+
+# Build / packaging
+build
+dist
+*.egg-info
+*.egg
+pip-wheel-metadata
+
+# Virtual environments
+.venv
+venv
+env
+
+# Local secrets / env files (never bake into image)
+.env
+.env.*
+!.env.example
+
+# Tests + dev-only scripts (not needed in the runtime image)
+tests
+bruno
+scripts/test_*.sh
+scripts/demo_*.py
+
+# Docs (not needed at runtime)
+README*.md
+*.md
+docs
+
+# Docker / k8s / helm / bicep manifests (not part of the running app)
+docker
+deploy/k8s
+deploy/helm
+deploy/bicep
+deploy/docker-compose.yaml
+
+# Misc
+*.log
+*.tmp
+.DS_Store
+node_modules
+data/local

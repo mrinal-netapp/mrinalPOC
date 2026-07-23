@@ -1,0 +1,93 @@
+.tooltip__trigger--icon {
+  color: var(--text-secondary, #737373);
+
+  &:hover {
+    color: var(--text-primary, #1a1a1a);
+  }
+}
+
+.tooltip__positioner {
+  z-index: 50;
+  isolation: isolate;
+}
+
+.tooltip__popup {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 280px;
+  padding: 6px 12px;
+  border-radius: 6px;
+  background-color: var(--background-tooltip, var(--background-content, #fff));
+  color: var(--text-primary, #1a1a1a);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12), 0 1px 3px rgba(0, 0, 0, 0.08);
+  border: 1px solid var(--border-main, #e5e5e5);
+  font-family: var(--font-family);
+  pointer-events: none;
+  transform-origin: var(--transform-origin);
+
+  &[data-open] {
+    animation: tooltip-fade-in 0.15s ease-out;
+  }
+
+  &[data-closed] {
+    animation: tooltip-fade-out 0.1s ease-in;
+  }
+}
+
+.tooltip__arrow {
+  width: 10px;
+  height: 10px;
+  transform: rotate(45deg);
+  border-radius: 2px;
+  background-color: var(--background-tooltip, var(--background-content, #fff));
+  border: 1px solid var(--border-main, #e5e5e5);
+
+  // clip the border edges that face the popup body
+  &[data-side="top"] {
+    bottom: -5px;
+    border-top: none;
+    border-left: none;
+  }
+
+  &[data-side="bottom"] {
+    top: -5px;
+    border-bottom: none;
+    border-right: none;
+  }
+
+  &[data-side="left"] {
+    right: -5px;
+    border-bottom: none;
+    border-left: none;
+  }
+
+  &[data-side="right"] {
+    left: -5px;
+    border-top: none;
+    border-right: none;
+  }
+}
+
+@keyframes tooltip-fade-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes tooltip-fade-out {
+  from {
+    opacity: 1;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+}

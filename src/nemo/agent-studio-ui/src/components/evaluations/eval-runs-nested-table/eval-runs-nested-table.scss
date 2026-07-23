@@ -1,0 +1,35 @@
+.eval-nested-table {
+  padding: 8px 0;
+  min-width: 0;
+  overflow-x: auto;
+
+  .table-container {
+    border: 1px solid var(--border-default);
+    border-radius: 6px;
+    overflow: visible;
+  }
+
+  .table {
+    min-width: 720px;
+  }
+
+  .table-header {
+    background-color: var(--surface-secondary);
+  }
+
+  .table-head {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    padding: 8px 12px;
+  }
+
+  .table-cell {
+    padding: 10px 12px;
+    vertical-align: middle;
+  }
+
+  .table-row:not(:last-child) .table-cell {
+    border-bottom: 1px solid var(--border-default);
+  }
+}

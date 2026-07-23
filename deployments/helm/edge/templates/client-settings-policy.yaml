@@ -1,0 +1,47 @@
+{{- /*
+NGF ClientSettingsPolicy -- per-Gateway body size + keepalive tuning.
+Rendered only on the NGF branch (gateway.provider == "nginx") and only
+when the operator explicitly opts in via .Values.gateway.clientSettingsPolicy.enabled.
+
+Istio-equivalent tuning (idle timeout, max body size) lives on the per-Gateway
+ConfigMap rendered out-of-chart by the istiod controller; not handled here.
+*/ -}}
+{{- if and .Values.gateway.enabled (eq (.Values.gateway.provider | default "nginx") "nginx") .Values.gateway.clientSettingsPolicy.enabled -}}
+{{- $gatewayName := include "nemo.gatewayName" . }}
+{{- $namespace := include "nemo.namespace" . }}
+{{- $policyName := .Values.gateway.clientSettingsPolicy.name | default (printf "%s-client-settings" $gatewayName) }}
+apiVersion: gateway.nginx.org/v1alpha1
+kind: ClientSettingsPolicy
+metadata:
+  name: {{ $policyName }}
+  namespace: {{ $namespace }}
+  labels:
+    {{- include "edge.labels" . | nindent 4 }}
+    app.kubernetes.io/component: gateway-policy
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: Gateway
+    name: {{ $gatewayName }}
+  {{- if .Values.gateway.clientSettingsPolicy.body }}
+  body:
+    {{- if .Values.gateway.clientSettingsPolicy.body.maxSize }}
+    maxSize: {{ .Values.gateway.clientSettingsPolicy.body.maxSize | quote }}
+    {{- end }}
+    {{- if .Values.gateway.clientSettingsPolicy.body.timeout }}
+    timeout: {{ .Values.gateway.clientSettingsPolicy.body.timeout | quote }}
+    {{- end }}
+  {{- end }}
+  {{- if .Values.gateway.clientSettingsPolicy.keepAlive }}
+  keepAlive:
+    {{- if .Values.gateway.clientSettingsPolicy.keepAlive.time }}
+    time: {{ .Values.gateway.clientSettingsPolicy.keepAlive.time | quote }}
+    {{- end }}
+    {{- if .Values.gateway.clientSettingsPolicy.keepAlive.timeout }}
+    timeout: {{ .Values.gateway.clientSettingsPolicy.keepAlive.timeout | quote }}
+    {{- end }}
+    {{- if .Values.gateway.clientSettingsPolicy.keepAlive.requests }}
+    requests: {{ .Values.gateway.clientSettingsPolicy.keepAlive.requests }}
+    {{- end }}
+  {{- end }}
+{{- end }}

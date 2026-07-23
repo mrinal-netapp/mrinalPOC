@@ -1,0 +1,16 @@
+# Trident CSI / ONTAP overlay for the nemo chart (Redis, S3 gateway PVCs).
+# Use on multi-node clusters where Trident CSI is the provisioner and you need
+# to set storageClassName explicitly (e.g. no default StorageClass, or ONTAP NAS/SAN).
+#
+# Usage: pass this file after the main values so it overrides storageClass.
+#   make deploy-platform-deps HELM_EXTRA_ARGS="-f deployments/helm/nemo/values-trident.yaml"
+#   make deploy-platform HELM_EXTRA_ARGS="-f deployments/helm/nemo/values-trident.yaml"
+#
+# Use the same StorageClass name as in deployments/helm/database/values-trident.yaml.
+# Redis (Bitnami) uses global.storageClass for master persistence. S3 gateway
+# (default bucket, pvcs-base, metadata) falls back to global.storageClass when
+# component storageClass is unset.
+
+global:
+  # Replace with your Trident StorageClass (e.g. trident-csi, ontap-san). Must support ReadWriteOnce.
+  storageClass: "ontap-nas"

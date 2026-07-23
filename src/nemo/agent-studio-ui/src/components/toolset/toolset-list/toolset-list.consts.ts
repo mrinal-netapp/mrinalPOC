@@ -1,0 +1,18 @@
+export const TOOLSET_STRINGS = {
+  PAGE_TITLE: "Toolsets",
+  PAGE_SUBTITLE: "Add tools for agents to perform actions during execution.",
+  TABLE_ROW_COUNT_LABEL: "Toolsets",
+  PRIMARY_ACTION_LABEL: "Add",
+  LOADING_MESSAGE: "Loading tools...",
+  ERROR_MESSAGE: "Unable to load tools. Please try again.",
+  EMPTY_MESSAGE: "No tools found.",
+  STATUS_SECTION_TITLE: "Tool status",
+  LOCAL_LABEL: "Local",
+  REMOTE_LABEL: "Remote",
+  HEALTHY_LABEL: "Healthy",
+  UNHEALTHY_LABEL: "Unhealthy",
+  UNKNOWN_LABEL: "Unknown",
+  DEPLOYING_LABEL: "Deploying",
+  ACTIONS_ARIA_LABEL_PREFIX: "Tool actions for",
+  DETAILS_LINK_LABEL: "View details.",
+} as const

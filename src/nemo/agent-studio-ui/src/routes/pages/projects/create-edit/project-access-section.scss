@@ -1,0 +1,170 @@
+.project-access-section {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  width: 100%;
+
+  &__intro {
+    margin: 0;
+    color: var(--text-secondary);
+  }
+
+  &__radio-group {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  &__later-info {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    margin: 0;
+    color: var(--text-secondary);
+  }
+
+  &__later-info-icon {
+    flex-shrink: 0;
+    margin-top: 2px;
+    color: var(--text-secondary);
+  }
+
+  &__permissions-hint {
+    margin: 0;
+    color: var(--text-secondary);
+  }
+
+  &__users {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    width: 100%;
+  }
+
+  &__users-header {
+    display: grid;
+    grid-template-columns: 200px minmax(0, 1fr) 40px;
+    gap: 16px;
+    align-items: center;
+    padding: 0 4px;
+  }
+
+  &__column-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--text-secondary);
+  }
+
+  &__user-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  &__user-row {
+    display: grid;
+    grid-template-columns: 200px minmax(0, 1fr) 40px;
+    gap: 16px;
+    align-items: center;
+  }
+
+  &__header-spacer {
+    width: 40px;
+  }
+
+  &__role-field {
+    min-width: 0;
+    max-width: 200px;
+    overflow: hidden;
+
+    .select-dropdown-wrapper {
+      width: 100%;
+      max-width: 100%;
+    }
+  }
+
+  &__email-field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+  }
+
+  &__email-input {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid var(--border-default);
+    border-radius: 8px;
+    background: var(--surface-primary);
+    color: var(--text-primary);
+    font: inherit;
+
+    &:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+
+    &::placeholder {
+      color: var(--text-secondary);
+    }
+  }
+
+  &__remove-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    padding: 0;
+    border: none;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+
+    &:hover:not(:disabled) {
+      background: var(--surface-secondary);
+      color: var(--text-primary);
+    }
+
+    &:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+  }
+
+  &__field-error {
+    color: var(--notification-error);
+  }
+
+  &__loading {
+    display: flex;
+    justify-content: center;
+    padding: 16px 0;
+  }
+
+  &__inline-error {
+    margin: 0;
+  }
+}
+
+@media (max-width: 640px) {
+  .project-access-section {
+    &__users-header,
+    &__user-row {
+      grid-template-columns: 1fr;
+    }
+
+    &__role-field {
+      max-width: none;
+    }
+
+    &__remove-button {
+      justify-self: start;
+    }
+  }
+}

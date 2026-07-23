@@ -1,0 +1,120 @@
+@use '../../../styles/mixins.scss';
+// -- Base
+
+.spinner {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+
+  &.spinner--disabled {
+    opacity: 0.4;
+    pointer-events: none;
+  }
+
+  &.spinner--grey .spinner__circle {
+    stroke: var(--icon-round-border);
+  }
+}
+
+// -- SVG
+
+.spinner__svg {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  animation: spinnerRotate 0.8s linear infinite;
+}
+
+.spinner__circle {
+  fill: none;
+  stroke: var(--loader-wheel-line);
+  stroke-linecap: round;
+}
+
+// -- Size variants
+
+.spinner-size-full-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background-color: rgba(0, 0, 0, 0.05);
+
+  .spinner__svg {
+    width: 88px;
+    height: 88px;
+  }
+
+  .spinner__circle {
+    stroke-width: 4;
+  }
+}
+
+.spinner-size-full-screen.spinner--with-details {
+  .spinner__card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 40px;
+    border-radius: 8px;
+    background-color: var(--background-content);
+    box-shadow: 0 4px 24px var(--border-drop-shadow);
+  }
+}
+
+.spinner-size-inline {
+  .spinner__svg {
+    width: 32px;
+    height: 32px;
+  }
+
+  .spinner__circle {
+    stroke-width: 3;
+  }
+}
+
+.spinner-size-fit-content {
+  .spinner__svg {
+    width: 100%;
+    height: 100%;
+  }
+
+  .spinner__circle {
+    stroke-width: 3;
+  }
+}
+
+.spinner-size-cell {
+  .spinner__svg {
+    width: 16px;
+    height: 16px;
+  }
+
+  .spinner__circle {
+    stroke-width: 3;
+  }
+}
+
+// -- Details (title + description)
+
+.spinner__details {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  margin-top: 24px;
+  text-align: center;
+  @include mixins.fadeIn(0.3s, 0.15s);
+}
+
+// -- Keyframes
+
+@keyframes spinnerRotate {
+  0% {
+    transform: rotate(0deg);
+  }
+
+  100% {
+    transform: rotate(360deg);
+  }
+}

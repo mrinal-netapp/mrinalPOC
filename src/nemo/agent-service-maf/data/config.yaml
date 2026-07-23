@@ -1,0 +1,28 @@
+app:
+  name: acme-platform
+  version: 3.2.1
+  environment: staging
+
+database:
+  host: db-staging.internal.acme.com
+  port: 5432
+  name: acme_staging
+  pool_size: 20
+  max_overflow: 10
+
+cache:
+  provider: redis
+  host: redis-staging.internal.acme.com
+  port: 6379
+  ttl_seconds: 300
+
+feature_flags:
+  new_checkout_flow: true
+  dark_mode: true
+  ai_recommendations: false
+  beta_api_v2: true
+
+monitoring:
+  sentry_enabled: true
+  log_level: INFO
+  metrics_endpoint: /internal/metrics

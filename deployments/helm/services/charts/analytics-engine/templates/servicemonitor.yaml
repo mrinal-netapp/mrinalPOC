@@ -1,0 +1,28 @@
+{{- if and .Values.enabled (default false .Values.metrics.serviceMonitor.enabled) (.Capabilities.APIVersions.Has "monitoring.coreos.com/v1") }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: analytics-engine
+  labels:
+    {{- include "analytics-engine.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "analytics-engine.selectorLabels" . | nindent 6 }}
+  endpoints:
+    - port: {{ default "http" .Values.metrics.port }}
+      path: {{ default "/metrics" .Values.metrics.path }}
+      interval: {{ default "30s" .Values.metrics.serviceMonitor.interval }}
+      relabelings:
+        - sourceLabels: [__meta_kubernetes_service_name]
+          targetLabel: exported_service_name
+      metricRelabelings:
+        - sourceLabels: [__name__]
+          regex: http_server_request_count_ratio_total
+          targetLabel: __name__
+          replacement: http_server_request_count_total
+        - sourceLabels: [__name__]
+          regex: http_server_request_error_count_ratio_total
+          targetLabel: __name__
+          replacement: http_server_request_error_count_total
+{{- end }}

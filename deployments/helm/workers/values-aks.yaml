@@ -1,0 +1,64 @@
+# AKS overlay for the workers tier.
+# azureClientId values are populated by `make wi-fill-client-ids`.
+# ANF NFS storage is required for the shared default-bucket PVC (ReadWriteMany).
+
+global:
+  storageClass: anf-nfs
+  endpoint: "agentstudio.dev.openeng.netapp.com"
+
+endpoint: "agentstudio.dev.openeng.netapp.com"
+# Default-bucket PVC is rendered by the s3gateway subchart
+# (charts/s3gateway/templates/default-bucket-pvc.yaml). The parent-chart copy is
+# disabled to avoid duplicate-PVC conflicts during helm install.
+# To bind to a pre-provisioned ANF volume, pass S3GW_PV_DEFAULT_BUCKET to make
+# (rendered as --set s3gateway.defaultBucket.volumeName=...).
+defaultBucketPvc:
+  create: false
+
+# ANF NFS provides ReadWriteMany; override the parent-chart default of RWO so
+# multiple replicas / cross-node access works.
+# Sizes match the pre-provisioned ANF volumes bound via S3GW_PV_* (PVC.spec.resources.requests.storage cannot shrink below status.capacity).
+s3gateway:
+  storage:
+    accessMode: ReadWriteMany
+  metadata:
+    size: 50Gi
+  defaultBucket:
+    size: 1Ti
+
+# ── Azure Workload Identity ────────────────────────────────────────────────────
+
+dataset-worker:
+  serviceAccount:
+    create: true
+    azureClientId: "83d27bbd-4b2a-4162-97cc-f4a5c7486bb1"
+  workloadIdentity:
+    enabled: true
+
+kb-worker:
+  serviceAccount:
+    create: true
+    azureClientId: "977cad45-54d1-4339-ba66-dd58bd4a247a"
+  workloadIdentity:
+    enabled: true
+
+connector-worker:
+  serviceAccount:
+    create: true
+    azureClientId: "3dc813b0-7494-4cf4-8128-8bb007ae2ec9"
+  workloadIdentity:
+    enabled: true
+
+# eval-worker needs a stable SPIFFE identity (its own ServiceAccount) so the
+# `allow-services-to-bifrost` AuthorizationPolicy (istio-mesh-policies) permits
+# its LLM-as-judge chat-completion calls to Bifrost. Without it the pod runs as
+# the namespace `default` SA, which that allow-list rejects with 403 RBAC:
+# access denied (every judge rubric soft-fails). The SA name MUST be
+# `workers-eval` to match the policy principal
+# (cluster.local/ns/agentstudio-workers/sa/workers-eval). No azureClientId /
+# workloadIdentity: eval-worker reaches Azure only via in-cluster services
+# (config-service, bifrost), same rationale as agent-service-maf.
+eval-worker:
+  serviceAccount:
+    create: true
+    name: workers-eval

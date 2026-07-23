@@ -1,0 +1,83 @@
+enabled: true
+fullnameOverride: "workers-eval"
+
+terminationGracePeriodSeconds: 60
+gracefulShutdownTimeout: "30"
+podSecurityContext: {}
+nodeSelector: {}
+tolerations: []
+deploymentName: "nemo"
+
+temporalHost: "temporal.agentstudio-platform.svc.cluster.local"
+keycloakInternalIssuer: "http://keycloak.agentstudio-identity.svc.cluster.local:8080/realms/nemo"
+defaultBucketPvcName: "s3gateway-default-bucket"
+
+image:
+  repository: eval-worker
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
+replicas: 1
+resources:
+  requests:
+    cpu: "500m"
+    memory: "512Mi"
+  limits:
+    cpu: "2"
+    memory: "2Gi"
+
+env:
+  - name: TEMPORAL_ADDRESS
+    value: "temporal.agentstudio-platform.svc.cluster.local:7233"
+  - name: TEMPORAL_NAMESPACE
+    value: "default"
+  - name: METRICS_PORT
+    value: "9465"
+  - name: LOG_LEVEL
+    value: "info"
+  - name: CONFIG_SERVICE_URL
+    value: "http://config-service.agentstudio-services.svc.cluster.local:3000"
+  - name: AGENT_SERVICE_URL
+    value: "http://agent-service-maf.agentstudio-services.svc.cluster.local:8000"
+  - name: LLM_GATEWAY_URL
+    value: "http://bifrost-proxy.agentstudio-llm-gateway.svc.cluster.local:8080"
+  - name: WORKFLOW_ENGINE_URL
+    value: "http://workflow-engine.agentstudio-services.svc.cluster.local:8080"
+  - name: NEMO_DEFAULT_STORE_ROOT
+    value: "/mnt/pvcs/default-nemo"
+  - name: AGENT_STUDIO_OBSERVABILITY_LOG_FILE_PATH
+    value: "/dev/stdout"
+  - name: OTEL_SERVICE_NAME
+    value: "eval-worker"
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 70
+  customMetric:
+    enabled: false
+    name: "temporal_queue_backlog_eval"
+    target:
+      averageValue: "10"
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 120
+    scaleUp:
+      stabilizationWindowSeconds: 30
+      policies:
+        - type: Pods
+          value: 2
+          periodSeconds: 60
+
+serviceAccount:
+  create: true
+  name: ""
+  azureClientId: ""
+
+workloadIdentity:
+  enabled: false

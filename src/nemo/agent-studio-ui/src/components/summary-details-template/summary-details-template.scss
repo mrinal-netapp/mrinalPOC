@@ -1,0 +1,127 @@
+@use '@/styles/mixins' as *;
+
+.summary-details-template {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.summary-details-template__header {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.summary-details-template__title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  // Let the actions drop below the title instead of colliding with it when
+  // the title is long or the viewport is narrow.
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.summary-details-template__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.summary-details-template__tab-placeholder {
+  margin-top: 16px;
+  padding: 40px;
+  border: 1px dashed var(--border-main);
+  border-radius: 4px;
+  color: var(--text-secondary);
+  font-size: 14px;
+  text-align: center;
+}
+
+// ── Summary strip (inlined from the former SummaryBar component) ───────────
+
+.summary-details-template__summary {
+  padding: 0;
+}
+
+.summary-details-template__summary-grid {
+  display: flex;
+  align-items: stretch;
+  // Wrap so a long set of summary fields never overflows the card (which
+  // would push fields into each other / force horizontal scroll on
+  // narrower viewports). On desktop the row rarely wraps.
+  flex-wrap: wrap;
+  row-gap: 12px;
+  padding: 12px 24px;
+
+  @include tablet {
+    padding: 12px 16px;
+    row-gap: 8px;
+  }
+}
+
+.summary-details-template__summary-grid--split {
+  justify-content: space-between;
+  width: 100%;
+}
+
+.summary-details-template__summary-trailing {
+  display: flex;
+  align-items: stretch;
+  margin-left: auto;
+}
+
+.summary-details-template__summary-group {
+  display: flex;
+  align-items: stretch;
+
+  &:first-child .summary-details-template__summary-field {
+    padding-left: 0;
+  }
+}
+
+.summary-details-template__summary-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 0 24px;
+  min-width: 160px;
+
+  &--leading {
+    padding-left: 0;
+    min-width: 200px;
+  }
+
+  // Tighten the per-field footprint as the viewport shrinks so more fields
+  // fit per row before wrapping, keeping the strip readable without overlap.
+  @include tablet {
+    padding: 0 16px;
+    min-width: 140px;
+
+    &--leading {
+      min-width: 160px;
+    }
+  }
+
+  @include mobile {
+    padding: 0 12px;
+    min-width: 120px;
+
+    &--leading {
+      min-width: 120px;
+    }
+  }
+}
+
+.summary-details-template__summary-value {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.summary-details-template__summary-divider {
+  width: 1px;
+  background: var(--border-main);
+  flex-shrink: 0;
+}

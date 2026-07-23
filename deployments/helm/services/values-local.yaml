@@ -1,0 +1,108 @@
+# Local Kubernetes overlay for the services tier.
+# Works on KIND, Docker Desktop, k3d, minikube.
+#
+# Differences from values-aks.yaml:
+#   - ServiceAccounts created explicitly and bound to the existing local/KIND federated UAMIs
+#   - Uses nemo-local-shared (hostPath) StorageClass for shared default bucket PVC
+#   - workflow-engine uses FQDN for cross-namespace Temporal address
+#   - Gateway / HTTPRoute / TLS now live in the edge tier
+#     (deployments/helm/edge/values-local.yaml)
+#   - No cloud-specific storage class (uses standard / nemo-local-shared hostPath)
+#   - crossNsServices default is already externalName in values.yaml (no override needed)
+#
+# Usage: helm upgrade --install ... -f values.yaml -f values-local.yaml
+
+global:
+  imageRepository: "docker.repo.eng.netapp.com/user/rp29322"
+  storageClass: "standard"
+  gatewayHttpsPort: "8443"   # KIND can't bind <1024; cloud uses 443 default.
+
+# Create the default-bucket PVC in the services namespace.
+# Binds to nemo-default-bucket-services PV (hostPath /tmp/agentstudio/nemo-default-bucket).
+# All namespaces share the same hostPath on the single KIND node.
+#
+# For Trident-backed clusters (e.g. sks6316), compose values-trident.yaml on
+# top to enable cross-namespace ONTAP-volume sharing with workers/s3gateway:
+#   HELM_EXTRA_ARGS='-f deployments/helm/services/values-trident.yaml'
+defaultBucketPvc:
+  create: true
+  accessMode: ReadWriteOnce
+  storageClass: "nemo-local-shared"
+
+agent-service:
+  serviceAccount:
+    create: true
+    azureClientId: "7179d46b-6e0b-4541-ab3d-fc7da78de9a6"
+  workloadIdentity:
+    enabled: true
+
+apigateway-service:
+  serviceAccount:
+    create: true
+    azureClientId: "bddd5b02-2085-4a49-b728-b02d1346c1f2"
+  workloadIdentity:
+    enabled: true
+
+config-service:
+  serviceAccount:
+    create: true
+    azureClientId: "f8b165a0-457b-4fa3-87a2-6e5fd0768228"
+  workloadIdentity:
+    enabled: true
+  # NB: do NOT add a literal `KEYCLOAK_RESOURCE_SERVER_UUID` entry here. The
+  # chart template (config-service/templates/deployment.yaml) unconditionally
+  # emits this env var with a `valueFrom: secretKeyRef:keycloak-oidc-secrets:
+  # resource-server-uuid` reference. A literal entry in `.env` would render a
+  # SECOND env var with the same name; strategic-merge-patch collapses
+  # duplicates by `name`, and the merged result then has BOTH `value` and
+  # `valueFrom` set on the same env var -- Kubernetes rejects with
+  # "Invalid value: \"\": may not be specified when `value` is not empty"
+  # on every helm upgrade after the first install. The Secret already carries
+  # the UUID (populated by realm bootstrap); no override needed.
+
+workflow-engine:
+  # Route Temporal calls across namespace boundary via FQDN
+  namespace: "agentstudio-platform"
+  # Reduced CPU requests for local KIND dev cluster (single node, constrained).
+  resources:
+    requests:
+      cpu: 100m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+  serviceAccount:
+    create: true
+    azureClientId: "94ec08fc-4df5-4ebf-a76c-40f69f89f85c"
+  workloadIdentity:
+    enabled: true
+  # NB: same caveat as config-service above -- the chart template emits
+  # KEYCLOAK_RESOURCE_SERVER_UUID via secretKeyRef, do not duplicate here.
+
+kb-retrieval-service:
+  serviceAccount:
+    create: true
+    azureClientId: "0fde1033-ac78-4470-b2e5-7aa86a15e82a"
+  workloadIdentity:
+    enabled: true
+
+analytics-engine:
+  serviceAccount:
+    create: true
+    azureClientId: "082000a5-d8ca-4cd5-a2a9-28f28c13a65d"
+  workloadIdentity:
+    enabled: true
+
+analytics-mcp-server:
+  serviceAccount:
+    create: true
+    azureClientId: "f31512d2-bcc3-4075-b4cf-21ef965d3e5e"
+  workloadIdentity:
+    enabled: true
+
+artifact-service:
+  serviceAccount:
+    create: true
+    azureClientId: "9cf13ada-61fa-48f8-b3ce-eb08e7ae0159"
+  workloadIdentity:
+    enabled: true

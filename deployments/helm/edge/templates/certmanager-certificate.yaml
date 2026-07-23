@@ -1,0 +1,62 @@
+{{- /*
+cert-manager Certificate fallback path. Off by default; KIND opt-in.
+Issues a leaf cert into Secret `nemo-gateway-tls` in agentstudio-edge so
+the listener's certificateRef resolves same-namespace.
+
+Moved here from the services chart in this PR; the resource shape is
+unchanged except for the new release-namespace target.
+*/ -}}
+{{- if and .Values.gateway.enabled .Values.certManager.enabled .Values.certManager.certificate.enabled -}}
+{{- $issuerRefName := .Values.certManager.issuerRef.name | default .Values.certManager.issuer.name -}}
+{{- $issuerRefKind := .Values.certManager.issuerRef.kind | default (.Values.certManager.issuer.kind | default "ClusterIssuer") -}}
+{{- $issuerRefGroup := .Values.certManager.issuerRef.group | default "cert-manager.io" -}}
+{{- $certificateName := .Values.certManager.certificate.name | default "nemo-gateway-certificate" -}}
+{{- $secretName := .Values.certManager.certificate.secretName -}}
+{{- if not $secretName -}}
+  {{- if and .Values.gateway.tls .Values.gateway.tls.certificateRefs (gt (len .Values.gateway.tls.certificateRefs) 0) -}}
+    {{- $secretName = (index .Values.gateway.tls.certificateRefs 0).name -}}
+  {{- else if and .Values.gateway.tls .Values.gateway.tls.secretName -}}
+    {{- $secretName = .Values.gateway.tls.secretName -}}
+  {{- else -}}
+    {{- $secretName = "nemo-gateway-tls" -}}
+  {{- end -}}
+{{- end -}}
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ $certificateName | quote }}
+  namespace: {{ include "nemo.namespace" . }}
+  labels:
+    {{- include "edge.labels" . | nindent 4 }}
+spec:
+  secretName: {{ $secretName | quote }}
+  issuerRef:
+    name: {{ required "certManager.issuerRef.name (or certManager.issuer.name) must be set when certManager is enabled" $issuerRefName | quote }}
+    kind: {{ $issuerRefKind | quote }}
+    group: {{ $issuerRefGroup | quote }}
+  {{- with .Values.certManager.certificate.commonName }}
+  commonName: {{ . | quote }}
+  {{- end }}
+  dnsNames:
+{{ include "nemo.defaultGatewayHostnames" . | nindent 4 }}
+  {{- with .Values.certManager.certificate.ipAddresses }}
+  ipAddresses:
+    {{- range . }}
+    - {{ . | quote }}
+    {{- end }}
+  {{- end }}
+  {{- with .Values.certManager.certificate.duration }}
+  duration: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.certManager.certificate.renewBefore }}
+  renewBefore: {{ . | quote }}
+  {{- end }}
+  privateKey:
+    algorithm: {{ .Values.certManager.certificate.privateKey.algorithm | default "RSA" | quote }}
+    size: {{ .Values.certManager.certificate.privateKey.size | default 2048 }}
+    rotationPolicy: {{ .Values.certManager.certificate.privateKey.rotationPolicy | default "Always" | quote }}
+  usages:
+    {{- range (.Values.certManager.certificate.usages | default (list "digital signature" "key encipherment" "server auth")) }}
+    - {{ . | quote }}
+    {{- end }}
+{{- end }}

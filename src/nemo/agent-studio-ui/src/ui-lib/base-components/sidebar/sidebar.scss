@@ -1,0 +1,223 @@
+// Sidebar — root container
+// Transitions width on open/close; clips overflow when collapsed
+.sidebar {
+  position: relative;
+  width: var(--sidebar-width);
+  height: calc(100vh - var(--topbar-height));
+  background-color: var(--shell-main-nav-bg);
+  border-right: 1px solid var(--border-drop-shadow);
+  overflow: hidden;
+  flex-shrink: 0;
+  transition: width var(--sidebar-transition-duration) ease;
+
+  &[data-state="collapsed"] {
+    width: var(--sidebar-width-collapsed);
+
+    .sidebar-inner {
+      width: var(--sidebar-width-collapsed);
+    }
+
+    .service-context-tabs {
+      .tab-group--vertical .tab-variant-general {
+        padding: 0;
+        justify-content: center;
+
+        .tab__content {
+          gap: 0;
+          justify-content: center;
+        }
+
+        .tab__label {
+          position: absolute;
+          width: 1px;
+          height: 1px;
+          overflow: hidden;
+          clip: rect(0 0 0 0);
+          white-space: nowrap;
+        }
+
+        &[data-active]::before {
+          width: 4px;
+        }
+      }
+    }
+
+    .sidebar-menu-button {
+      .sidebar-menu-button__btn {
+        padding: 0;
+        gap: 0;
+        justify-content: center;
+
+        .btn-label {
+          position: absolute;
+          width: 1px;
+          height: 1px;
+          overflow: hidden;
+          clip: rect(0 0 0 0);
+          white-space: nowrap;
+        }
+      }
+
+      &[data-active]::before {
+        width: 4px;
+      }
+    }
+  }
+}
+
+// Inner wrapper keeps full sidebar width so content clips rather than reflows
+.sidebar-inner {
+  display: flex;
+  flex-direction: column;
+  width: var(--sidebar-width);
+  height: 100%;
+}
+
+// Header — title area (Typography handles font rendering)
+.sidebar-header {
+  display: flex;
+  align-items: center;
+  padding: 16px 24px;
+  border-bottom: 1px solid var(--border-drop-shadow);
+  flex-shrink: 0;
+}
+
+// Scrollable content area
+.sidebar-content {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: none;
+
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+// Navigation group
+.sidebar-group {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  padding: 8px 0;
+}
+
+// Group label — Typography handles font; color overridden for sidebar context
+.sidebar-group-label {
+  display: flex;
+  align-items: center;
+  height: 32px;
+  padding: 0 24px;
+  white-space: nowrap;
+  overflow: hidden;
+
+  .typography-base {
+    color: var(--shell-main-nav-icon-text-v2);
+  }
+}
+
+// Menu list
+.sidebar-menu {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+// Menu item wrapper
+.sidebar-menu-item {
+  position: relative;
+}
+
+// Menu button — wraps the Button component with sidebar-specific overrides
+// Four visual states: default, hover, selected, selected+hover
+.sidebar-menu-button {
+  position: relative;
+
+  // Override Button(variant="flat", size="large") for sidebar nav context
+  .sidebar-menu-button__btn {
+    width: 100%;
+    height: 56px;
+    padding: 0 24px;
+    gap: 16px;
+    min-width: unset;
+    border-radius: 0;
+    justify-content: flex-start;
+    background-color: var(--shell-main-nav-bg);
+    color: var(--shell-main-nav-icon-text-v2);
+    transition: background-color 150ms ease, color 150ms ease;
+
+    // Hover state
+    &:hover:not(:disabled) {
+      background-color: var(--shell-main-nav-bg-hover);
+      color: var(--shell-main-nav-icon-text-v2);
+    }
+
+    &:focus-visible {
+      box-shadow: inset 0 0 0 2px var(--border-focus-outline);
+    }
+
+    // Suppress Button's default press transform inside sidebar
+    &:active:not(:disabled) {
+      transform: none;
+    }
+
+    .btn-icon svg {
+      width: 20px;
+      height: 20px;
+    }
+  }
+
+  // Selected state — blue left indicator, selected bg & text
+  &[data-active] {
+    .sidebar-menu-button__btn {
+      background-color: var(--shell-main-nav-bg-selected);
+      color: var(--shell-main-nav-icon-text-selected);
+
+      // Selected + hover
+      &:hover:not(:disabled) {
+        background-color: var(--shell-main-nav-bg-hover);
+        color: var(--shell-main-nav-icon-text-selected);
+      }
+    }
+
+    &::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 0;
+      bottom: 0;
+      width: 8px;
+      background-color: var(--shell-main-nav-icon-text-selected);
+      z-index: 1;
+    }
+  }
+}
+
+// Rail — thin edge handle for toggling/resizing
+.sidebar-rail {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: -4px;
+  width: 8px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  z-index: 1;
+  padding: 0;
+
+  &:hover::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 50%;
+    width: 2px;
+    background-color: var(--border-drop-shadow);
+    transform: translateX(-50%);
+  }
+}

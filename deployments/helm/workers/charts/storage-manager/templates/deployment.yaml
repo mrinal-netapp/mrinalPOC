@@ -1,0 +1,218 @@
+{{- if .Values.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "storage-manager.fullname" . }}
+  labels:
+    {{- include "storage-manager.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "storage-manager.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "storage-manager.selectorLabels" . | nindent 8 }}
+        {{- if .Values.workloadIdentity.enabled }}
+        azure.workload.identity/use: "true"
+        {{- end }}
+      annotations:
+        # Native Istio sidecar so the `wait-for-config-service`
+        # initContainer can reach config-service in the STRICT-mTLS
+        # agentstudio-services namespace before iptables interception
+        # would normally be set up by istio-init.
+        sidecar.istio.io/nativeSidecar: "true"
+    spec:
+      serviceAccountName: {{ include "storage-manager.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- if and .Values.initContainer.enabled .Values.initContainer.waitForKeycloakSetup }}
+      volumes:
+        - name: keycloak-oidc-secrets
+          secret:
+            secretName: keycloak-oidc-secrets
+      {{- end }}
+      {{- if and .Values.initContainer.enabled (or .Values.initContainer.waitForKeycloakSetup .Values.initContainer.waitForConfigService) }}
+      initContainers:
+        {{- if and .Values.initContainer.enabled .Values.initContainer.waitForConfigService }}
+        - name: wait-for-config-service
+          image: busybox:1.36
+          imagePullPolicy: {{ .Values.global.imagePullPolicy | default "IfNotPresent" }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Waiting for config-service to be ready..."
+              until wget -qO- http://config-service:3000/health > /dev/null 2>&1; do
+                echo "config-service not ready, retrying in 5s..."
+                sleep 5
+              done
+              echo "config-service is ready!"
+          resources:
+            limits:
+              cpu: 50m
+              memory: 32Mi
+            requests:
+              cpu: 10m
+              memory: 16Mi
+        {{- end }}
+        {{- if and .Values.initContainer.enabled .Values.initContainer.waitForKeycloakSetup }}
+        - name: wait-for-keycloak-setup
+          image: {{ .Values.global.imageRepository }}/init-tools:latest
+          imagePullPolicy: {{ if .Values.global.imagePullPolicy }}{{ .Values.global.imagePullPolicy }}{{ else }}IfNotPresent{{ end }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              MOUNT="/etc/keycloak-oidc-secrets"
+              echo "Waiting for keycloak-oidc-secrets to be populated..."
+              MAX_ATTEMPTS=120
+              ATTEMPT=0
+
+              while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
+                SECRET_VALUE=$(cat "$MOUNT/storage-manager-client-secret" 2>/dev/null || echo "")
+                if [ -n "$SECRET_VALUE" ] && [ "$SECRET_VALUE" != "changeme-storage-manager-secret" ]; then
+                  echo "keycloak-oidc-secrets is populated with actual credentials!"
+                  exit 0
+                fi
+                ATTEMPT=$((ATTEMPT + 1))
+                echo "Waiting for keycloak-oidc-secrets... (attempt $ATTEMPT/$MAX_ATTEMPTS)"
+                sleep 5
+              done
+
+              echo "Timeout waiting for keycloak-oidc-secrets, proceeding with current values..."
+              exit 0
+          volumeMounts:
+            - name: keycloak-oidc-secrets
+              mountPath: /etc/keycloak-oidc-secrets
+              readOnly: true
+          resources:
+            limits:
+              cpu: 50m
+              memory: 32Mi
+            requests:
+              cpu: 10m
+              memory: 16Mi
+        {{- end }}
+      {{- end }}
+      containers:
+        - name: storage-manager
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.global.imageRepository }}/{{ .Values.image.repository }}:{{ .Values.global.imageTag | default .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy | default .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+            {{- if .Values.service.metricsPort }}
+            - name: metrics
+              containerPort: {{ .Values.service.metricsPort }}
+              protocol: TCP
+            {{- end }}
+          env:
+            {{- $root := . }}
+            {{- $keycloakInternalIssuerSet := false }}
+            {{- range .Values.env }}
+            {{- if and (ne .name "K8S_NAMESPACE") (ne .name "DEPLOYMENT_ID") (ne .name "KEYCLOAK_CLIENT_ID") (ne .name "KEYCLOAK_CLIENT_SECRET") }}
+            - name: {{ .name }}
+              {{- if eq .name "KEYCLOAK_INTERNAL_ISSUER" }}
+              {{- $keycloakInternalIssuerSet = true }}
+              value: {{ include "nemo.keycloakInternalIssuer" $root | quote }}
+              {{- else if .value }}
+              value: {{ .value | quote }}
+              {{- else if .valueFrom }}
+              valueFrom:
+                {{- toYaml .valueFrom | nindent 16 }}
+              {{- end }}
+            {{- end }}
+            {{- end }}
+            {{- if not $keycloakInternalIssuerSet }}
+            - name: KEYCLOAK_INTERNAL_ISSUER
+              value: {{ include "nemo.keycloakInternalIssuer" $root | quote }}
+            {{- end }}
+            - name: KEYCLOAK_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-oidc-secrets
+                  key: storage-manager-client-id
+            - name: KEYCLOAK_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-oidc-secrets
+                  key: storage-manager-client-secret
+            - name: K8S_NAMESPACE
+              value: {{ include "nemo.namespace" $root | quote }}
+            - name: DEPLOYMENT_ID
+              value: {{ include "nemo.deploymentName" $root | trim | quote }}
+            # Default REGION for nemo
+            - name: REGION
+              value: {{ .Values.region | default "us-east-1" | quote }}
+            # AgentStudio endpoint URLs for deployment registration
+            - name: DEPLOYMENT_HTTPS_ENDPOINT
+              value: {{ include "nemo.endpointUrl" $root | quote }}
+            - name: DEPLOYMENT_HTTP_ENDPOINT
+              value: {{ include "nemo.endpointUrlHttp" $root | quote }}
+            # Legacy: Keep DEPLOYMENT_ENDPOINT for backward compatibility (maps to HTTP endpoint)
+            - name: DEPLOYMENT_ENDPOINT
+              value: {{ include "nemo.endpointUrlHttp" $root | quote }}
+            {{- if .Values.global.observability.otlpEndpoint }}
+            - name: AGENT_STUDIO_OBSERVABILITY_OTLP_TRACES_ENDPOINT
+              value: {{ .Values.global.observability.otlpEndpoint | quote }}
+            - name: AGENT_STUDIO_OBSERVABILITY_OTLP_LOGS_ENDPOINT
+              value: {{ .Values.global.observability.otlpEndpoint | quote }}
+            {{- end }}
+            - name: AGENT_STUDIO_OBSERVABILITY_LOG_FILE_PATH
+              value: "/dev/stdout"
+            - name: AGENT_STUDIO_OBSERVABILITY_TRACE_FILE_PATH
+              value: "/tmp/App_Logs/trace.jsonl"
+            - name: AGENT_STUDIO_OBSERVABILITY_TRACE_JSONL_FILTER
+              value: "all"
+            - name: NODE_OPTIONS
+              value: "--require /app/node_modules/@agentstudio/observability-client-runtime/dist/preload.js"
+            - name: AGENT_STUDIO_OBSERVABILITY_ENABLE_AUTO_INSTRUMENTATION
+              value: "false"
+            {{- if .Values.service.metricsPort }}
+            - name: AGENT_STUDIO_OBSERVABILITY_PROMETHEUS_METRICS_PORT
+              value: {{ .Values.service.metricsPort | quote }}
+            {{- end }}
+            - name: OTEL_SERVICE_NAME
+              value: "storage-manager"
+            - name: OTEL_METRICS_EXPORTER
+              value: "none"
+            {{- if .Values.tracing.otlpEndpoint }}
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: {{ .Values.tracing.otlpEndpoint | quote }}
+            {{- end }}
+          livenessProbe:
+            {{- toYaml .Values.livenessProbe | nindent 12 }}
+          readinessProbe:
+            {{- toYaml .Values.readinessProbe | nindent 12 }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- range . }}
+        {{- if kindIs "string" . }}
+        - name: {{ . | quote }}
+        {{- else if kindIs "map" . }}
+        - {{- toYaml . | nindent 10 }}
+        {{- else }}
+        - name: {{ . | quote }}
+        {{- end }}
+        {{- end }}
+      {{- end }}
+{{- end }}

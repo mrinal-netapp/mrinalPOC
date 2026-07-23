@@ -1,0 +1,89 @@
+// KB form reuses dataset full-page layout classes from `dataset-form.scss` (imported in `kb-form.tsx`).
+// Add KB-specific tweaks here when designs diverge.
+
+.dset-form__labels-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.dset-form__labels-input-row {
+  display: flex;
+  gap: 16px;
+  align-items: flex-end;
+}
+
+.dset-form__labels-input {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.dset-form__labels-add {
+  flex: 0 0 auto;
+}
+
+.dset-form__labels-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.dset-form__labels-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border: 1px solid var(--border-default);
+  border-radius: 6px;
+  background: var(--surface-secondary);
+  color: var(--text-primary);
+}
+
+.dset-form__labels-tag-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+
+  &:hover {
+    color: var(--text-primary);
+  }
+}
+
+.kb-data-change-threshold__warning-icon {
+  flex-shrink: 0;
+  color: var(--notification-warning);
+  margin-top: 2px;
+}
+
+.kb-estimate-summary__info-icon,
+.kb-text-columns__info-icon {
+  flex-shrink: 0;
+  color: var(--text-secondary);
+  margin-top: 2px;
+}
+
+/* Notice placed directly after a dropdown inside a field wrapper */
+.dset-form__field .dset-form__sync-notice {
+  margin-top: 12px;
+}
+
+/* Align first estimate block with the SelectDropdowns above/below */
+.kb-indexing-estimates .card-block:first-child,
+.kb-estimate-summary .card-block:first-child {
+  padding-inline-start: 0;
+}
+
+.kb-embedding-dimensions {
+  line-height: 24px;
+}
+
+/* Ensure enough space for dropdowns to open downward in indexing config */
+.kb-indexing-section-spacer {
+  min-height: 120px;
+}
+

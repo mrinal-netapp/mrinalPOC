@@ -1,0 +1,6 @@
+apiVersion: v2
+name: storage-manager
+description: A Helm sub-chart for Storage Manager (bucket lifecycle management)
+type: application
+version: 1.0.0
+appVersion: "1.0.0"

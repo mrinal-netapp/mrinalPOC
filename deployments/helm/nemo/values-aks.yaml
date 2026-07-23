@@ -1,0 +1,127 @@
+# AKS overlay — ANF NFS storage + static PIP gateway binding.
+# Binds the NGF data-plane LoadBalancer Service to the pre-allocated static PIP
+# pip-agentstudio-gw-dev-eus2-001 (20.7.45.234) via NGF infrastructure annotations.
+# /etc/hosts does not support wildcards; add each subdomain explicitly, e.g.:
+#   20.7.45.234  agentstudio.local auth.agentstudio.local s3.agentstudio.local \
+#                catalog.agentstudio.local workflows.agentstudio.local ws.agentstudio.local
+#
+# Usage:
+#   make deploy-all OBSERVABILITY=1 \
+#     CONTAINER_IMAGE_REPO=cragentstudiodeveus2001.azurecr.io \
+#     IMAGE_TAG=747346b6 \
+#     ENDPOINT=agentstudio.local \
+#     FORCE_PULL=1 \
+#     HELM_EXTRA_ARGS="-f deployments/helm/nemo/values-aks.yaml"
+
+# All PVCs go on ANF NFS via Trident. global.storageClass is set to anf-nfs so every
+# subchart that honours it uses ANF. The anf-nfs StorageClass is NOT automatically
+# marked as the cluster default — pass MARK_AS_DEFAULT=true to setup-anf-trident.sh
+# if you also want unrelated workloads to land on ANF.
+global:
+  storageClass: anf-nfs
+
+# Bind the NGINX Gateway Fabric data-plane LoadBalancer Service to the pre-created
+# static PIP pip-agentstudio-gw-dev-eus2-001 (20.7.45.234). NGF v2 reads
+# spec.infrastructure.annotations from the Gateway resource and propagates them to
+# the auto-created Service nemo-gateway-nginx, where the Azure cloud-controller
+# uses them to bind the LoadBalancer to our pre-allocated Static PIP.
+gateway:
+  infrastructure:
+    annotations:
+      service.beta.kubernetes.io/azure-load-balancer-resource-group: "MC_rg-agentstudio-dev-eus2-001_aks-agentstudio-dev-eus2-001_eastus2"
+      service.beta.kubernetes.io/azure-pip-name: "pip-agentstudio-gw-dev-eus2-001"
+
+# ─── Storage: why anf-nfs (NetApp Files via Trident) ────────────────────────────────
+#
+# The s3gateway chart provisions two PVCs (default-bucket, metadata) by default;
+# a third PVC (pvcs-base) is gated by pvcsBase.enabled (default false) and is NOT
+# created by this overlay. All enabled PVCs are simultaneously mounted by:
+#   • the s3gateway Deployment itself (read/write the bucket files)
+#   • all three processing-workers Deployments (dataset, kb, connector) — they read the
+#     uploaded objects to ingest/index/transform them
+#   • kb-retrieval-service — reads vectorised content during query time
+#
+# Chart defaults set accessModes: [ReadWriteMany] for exactly this reason — multiple
+# Pods, possibly on different nodes, need shared filesystem access to the same bucket
+# data. (See deployments/helm/nemo/charts/s3gateway/templates/{default-bucket,
+# metadata}-pvc.yaml.)
+#
+# Three storage backends were considered:
+#
+# 1. KIND model — `local-path` provisioner (rancher.io/local-path, hostPath under
+#    /opt/local-path-provisioner).
+#       Works in KIND because the *entire cluster runs on a single node* (KIND container).
+#       A hostPath PV is technically RWO, but every Pod that mounts it lands on the same
+#       node, so multi-mount conflicts never occur.
+#       Fails on AKS because we have a real multi-node nodepool. As soon as s3gateway
+#       lands on node-A and a worker lands on node-B, the worker Pod is stuck in
+#       ContainerCreating with `Multi-Attach error for volume`. The only workaround is
+#       hard podAffinity to pin every consumer to one node — which defeats horizontal
+#       scaling, breaks rolling updates, and turns a single node failure into a full
+#       outage of the data plane. We rejected this.
+#
+# 2. azurefile-csi — Azure Files SMB/CIFS share, natively RWX.
+#       Functionally works (we ran it for several iterations) but has real downsides:
+#         • SMB protocol → POSIX semantics are lossy. Symlinks, hardlinks, fcntl byte-range
+#           locks, atomic rename-into-place, chmod/chown all behave subtly differently
+#           from a real Linux filesystem. s3gateway's metadata layer and worker temp files
+#           hit these edges.
+#         • Latency — every metadata op is an SMB round-trip to the Azure Files endpoint.
+#           Listing buckets with many objects is noticeably slower than NFS.
+#         • Throughput is capped per share (auto vs provisioned tier) and shared across
+#           the whole share, not per-pod.
+#         • It's an Azure-native service — uses Microsoft storage, not NetApp. Since we
+#           are NetApp (and the existing agent-studio-aks-cluster runs on ANF), staying
+#           consistent on NetApp storage is the right architectural choice.
+#
+# 3. anf-nfs — Azure NetApp Files via NetApp Trident CSI (this option, chosen).
+#       • True NFSv3/v4.1 — native POSIX semantics, no SMB translation layer.
+#       • Single-digit-millisecond latency, sub-ms for cached metadata.
+#       • Throughput scales with capacity-pool service level (Standard/Premium/Ultra)
+#           and we own a 4 TiB Standard pool already.
+#       • Real RWX from any node in the cluster, no podAffinity required — workers and
+#           s3gateway can scale independently.
+#       • Mirrors the existing agent-studio-aks-cluster setup exactly, so app behaviour,
+#           performance characteristics, and operational runbooks transfer 1:1.
+#       • NetApp product — gives us snapshots, clones, replication, backup/restore for
+#           free via ANF features when we need them later.
+#
+# Setup is one-time:
+#   1. Senior grants two role assignments to the kubelet identity (see comment block in
+#      scripts/setup-anf-trident.sh).
+#   2. bash scripts/setup-anf-trident.sh — creates the TridentBackendConfig and the
+#      anf-nfs StorageClass.
+# Then a normal `make deploy-all ... HELM_EXTRA_ARGS="-f values-aks.yaml"` picks it up.
+s3gateway:
+  storage:
+    accessMode: ReadWriteMany
+  metadata:
+    storageClass: anf-nfs
+  defaultBucket:
+    storageClass: anf-nfs
+  # KIND uses the public Docker Hub image versity/versitygw, not versitygw/versitygw.
+  # The chart prefixes global.imageRepository so we override the repo path here.
+  image:
+    repository: versity/versitygw
+
+# AKS uses Azure DNS for cluster service discovery; no in-cluster CoreDNS patch needed.
+coredns:
+  enabled: false
+
+# ─── Keycloak setup-job: admin password ──────────────────────────────────────
+# On AKS the Keycloak bootstrap admin password is stored in the
+# `keycloak-bootstrap-admin` K8s Secret (chart-rendered by the identity chart
+# from keycloak.bootstrapAdmin.password in identity/values-aks.yaml).
+# The post-upgrade hook job in templates/keycloak-setup-job.yaml needs the same
+# password to call the Keycloak Admin API, but it runs in SERVICES_NAMESPACE
+# (agentstudio-services) and Kubernetes secretKeyRef is namespace-local.
+# The `sync-shared-secrets` Make target (mk/tier-helm.mk) copies
+# keycloak-bootstrap-admin from HELM_NS_IDENTITY into TARGET_NS, and the
+# per-tier upgrade targets (helm-services-upgrade-aks, etc. in mk/cloud/aks.mk)
+# invoke it before each tier deploy — so by the time this Job runs the Secret
+# is already present in SERVICES_NAMESPACE.
+keycloak:
+  setup:
+    adminPasswordSecretRef:
+      name: keycloak-bootstrap-admin
+      key: password

@@ -1,0 +1,152 @@
+{
+  "_schema_version": "2.0.0",
+  "project_id": "550e8400-e29b-41d4-a716-446655440000",
+  "_description": "Graph flow: DAG-based pipeline. Planner → researcher → analyst → writer → reviewer, with conditional revision edges.",
+  "agent": {
+    "framework": "maf",
+    "model": "azure/gpt-4.1-mini",
+    "temperature": 0.7,
+    "max_tokens": 4096,
+    "timeout_seconds": 600,
+    "metadata": {
+      "project": "agent-studio",
+      "version": "1.0.0",
+      "environment": "development"
+    }
+  },
+  "semantic_kernel": {
+    "agents": [
+      {
+        "name": "planner",
+        "instructions": "You are a planning agent. Break the user's request into a clear step-by-step plan with milestones and success criteria. Output a structured plan.",
+        "description": "Decomposes tasks into executable plans",
+        "model": "azure/gpt-4.1-mini",
+        "temperature": 0.4,
+        "max_tokens": 4096,
+        "tools": [],
+        "mcp_servers": [],
+        "function_choice_behavior": "none"
+      },
+      {
+        "name": "researcher",
+        "instructions": "You are a research agent. Using only your built-in knowledge (no external tools), execute the research steps from the plan. Provide findings with reasoning.",
+        "description": "Gathers information per the plan",
+        "model": "azure/gpt-4.1-mini",
+        "temperature": 0.7,
+        "max_tokens": 4096,
+        "tools": [],
+        "mcp_servers": [],
+        "function_choice_behavior": "none"
+      },
+      {
+        "name": "analyst",
+        "instructions": "You are an analyst. Analyze the research findings and extract key insights, patterns, and recommendations.",
+        "description": "Analyzes research into insights",
+        "model": "azure/gpt-4.1-mini",
+        "temperature": 0.5,
+        "max_tokens": 4096,
+        "tools": [],
+        "mcp_servers": [],
+        "function_choice_behavior": "none"
+      },
+      {
+        "name": "writer",
+        "instructions": "You are a writer. Take the analysis and produce a polished, well-structured report.",
+        "description": "Creates final reports",
+        "model": "azure/gpt-4.1-mini",
+        "temperature": 0.7,
+        "max_tokens": 8000,
+        "tools": [],
+        "mcp_servers": [],
+        "function_choice_behavior": "none"
+      },
+      {
+        "name": "reviewer",
+        "instructions": "You are a quality reviewer. Evaluate the report for accuracy, completeness, and quality. If revisions are needed, say 'REVISION_NEEDED:' followed by specific feedback. If approved, say 'APPROVED:' followed by a brief summary.",
+        "description": "Reviews and approves or requests revisions",
+        "model": "azure/gpt-4.1-mini",
+        "temperature": 0.3,
+        "max_tokens": 4096,
+        "tools": [],
+        "mcp_servers": [],
+        "function_choice_behavior": "none"
+      }
+    ],
+    "orchestration": {
+      "type": "graph",
+      "max_rounds": 6,
+      "edges": [
+        {
+          "source": "planner",
+          "target": "researcher",
+          "condition": ""
+        },
+        {
+          "source": "researcher",
+          "target": "analyst",
+          "condition": ""
+        },
+        {
+          "source": "analyst",
+          "target": "writer",
+          "condition": ""
+        },
+        {
+          "source": "writer",
+          "target": "reviewer",
+          "condition": ""
+        },
+        {
+          "source": "reviewer",
+          "target": "writer",
+          "condition": "REVISION_NEEDED"
+        }
+      ],
+      "termination_strategy": {
+        "type": "keyword",
+        "keywords": ["APPROVED"],
+        "maximum_iterations": 6
+      }
+    },
+    "default_function_choice_behavior": "none",
+    "chat_history_max_messages": 200,
+    "enable_telemetry": false,
+    "session_ttl_seconds": 7200
+  },
+  "gateway": {
+    "url": "http://host.docker.internal:4001/v1",
+    "api_key": "",
+    "default_model": "azure/gpt-4.1-mini",
+    "request_timeout_seconds": 120,
+    "retry_on_timeout": true,
+    "max_retries": 2
+  },
+  "guardrails": {
+    "enabled": false
+  },
+  "mcp": {
+    "connection_timeout_seconds": 30,
+    "lazy_connect": true,
+    "tool_call_timeout_seconds": 60,
+    "max_tool_retries": 1,
+    "retry_on_timeout": true,
+    "discovery_on_connect": true,
+    "tool_name_format": "qualified",
+    "max_concurrent_tool_calls": 5
+  },
+  "mcp_servers": [],
+  "memory": {
+    "enabled": true,
+    "storage_backend": "memory",
+    "buffer_type": "sliding_window",
+    "ttl_seconds": 3600,
+    "max_history_length": 100,
+    "max_tokens_per_session": 0,
+    "max_chars_per_session": 0
+  },
+  "logging": {
+    "level": "INFO",
+    "format": "json",
+    "include_timestamp": true
+  }
+}

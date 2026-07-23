@@ -1,0 +1,296 @@
+[
+  {
+    "id": "s3",
+    "label": "Amazon S3",
+    "scopes": ["resource"],
+    "supportedActions": ["listBuckets", "listPath"],
+    "supportedNodeTypes": ["folder", "file"],
+    "dataAccessModel": {
+      "rootAction": "listBuckets",
+      "selectionMode": "single",
+      "selectableTypes": ["folder"]
+    },
+    "connectorConfigSchema": {
+      "resource": {
+        "required": ["bucket"],
+        "optional": ["prefix", "region", "endpoint"],
+        "properties": {
+          "bucket": { "type": "string", "description": "S3 bucket name" },
+          "prefix": { "type": "string", "description": "Key prefix filter" },
+          "region": { "type": "string", "description": "AWS region" },
+          "endpoint": { "type": "string", "description": "Custom S3 endpoint (for MinIO, etc.)" }
+        }
+      }
+    },
+    "hasAcquisition": true
+  },
+  {
+    "id": "s3_compatible",
+    "label": "Compatible S3",
+    "scopes": ["resource"],
+    "supportedActions": ["listBuckets", "listPath"],
+    "supportedNodeTypes": ["folder", "file"],
+    "dataAccessModel": {
+      "rootAction": "listBuckets",
+      "selectionMode": "single",
+      "selectableTypes": ["folder"]
+    },
+    "connectorConfigSchema": {
+      "resource": {
+        "required": ["endpoint", "bucket"],
+        "optional": ["prefix", "region"],
+        "properties": {
+          "bucket": { "type": "string", "description": "S3 bucket name" },
+          "prefix": { "type": "string", "description": "Key prefix filter" },
+          "region": { "type": "string", "description": "AWS region" },
+          "endpoint": { "type": "string", "description": "Custom S3 endpoint (for MinIO, etc.)" }
+        }
+      }
+    },
+    "hasAcquisition": true
+  },
+  {
+    "id": "gcs",
+    "label": "Google Cloud Storage",
+    "scopes": ["resource"],
+    "supportedActions": ["listBuckets", "listPath"],
+    "supportedNodeTypes": ["folder", "file"],
+    "dataAccessModel": {
+      "rootAction": "listBuckets",
+      "selectionMode": "single",
+      "selectableTypes": ["folder", "file"]
+    },
+    "connectorConfigSchema": {
+      "resource": {
+        "required": [],
+        "optional": ["bucket", "prefix", "project_id"],
+        "properties": {
+          "bucket": { "type": "string", "description": "GCS bucket name" },
+          "prefix": { "type": "string", "description": "Object prefix filter" },
+          "project_id": { "type": "string", "description": "GCP project ID (optional if present in service account JSON)" }
+        }
+      }
+    },
+    "hasAcquisition": true
+  },
+  {
+    "id": "postgresql",
+    "label": "PostgreSQL",
+    "scopes": ["resource"],
+    "supportedActions": ["listDatabases", "listSchemas", "listTables", "describeTable"],
+    "supportedNodeTypes": ["database", "schema", "table", "column"],
+    "dataAccessModel": {
+      "rootAction": "listDatabases",
+      "selectionMode": "single",
+      "selectableTypes": ["table", "view"],
+      "queryEditor": { "language": "sql" }
+    },
+    "connectorConfigSchema": {
+      "resource": {
+        "required": ["host", "port"],
+        "optional": ["database", "schema", "ssl_mode"],
+        "properties": {
+          "host": { "type": "string", "description": "Database host" },
+          "port": { "type": "integer", "description": "Database port" },
+          "database": { "type": "string", "description": "Database name (optional; omit to browse all databases)" },
+          "schema": { "type": "string", "description": "Default schema (defaults to public)" },
+          "ssl_mode": { "type": "string", "description": "SSL mode (disable, require, verify-ca, verify-full)" }
+        }
+      }
+    },
+    "hasAcquisition": true
+  },
+  {
+    "id": "mysql",
+    "label": "MySQL",
+    "scopes": ["resource"],
+    "supportedActions": ["listDatabases", "listSchemas", "listTables", "describeTable"],
+    "supportedNodeTypes": ["database", "schema", "table", "column"],
+    "dataAccessModel": {
+      "rootAction": "listDatabases",
+      "selectionMode": "single",
+      "selectableTypes": ["table", "view"],
+      "queryEditor": { "language": "sql" }
+    },
+    "connectorConfigSchema": {
+      "resource": {
+        "required": ["host", "port"],
+        "optional": ["database", "schema", "ssl_mode"],
+        "properties": {
+          "host": { "type": "string", "description": "Database host" },
+          "port": { "type": "integer", "description": "Database port" },
+          "database": { "type": "string", "description": "Database name (optional; omit to browse all databases)" },
+          "schema": { "type": "string", "description": "Default schema (defaults to the selected database name)" },
+          "ssl_mode": { "type": "string", "description": "SSL mode" }
+        }
+      }
+    },
+    "hasAcquisition": true
+  },
+  {
+    "id": "gcp",
+    "label": "Google Cloud",
+    "scopes": ["account"],
+    "supportedActions": ["listRegions", "listServices", "listResources", "listDatabases", "listInstances", "listVolumes", "listPath", "listMetricCategories"],
+    "supportedNodeTypes": ["service", "resource", "instance", "cluster", "storagePool", "volume", "database", "folder", "file", "metric_category"],
+    "dataAccessModel": {
+      "rootAction": "listServices",
+      "selectionMode": "single",
+      "selectableTypes": ["volume", "database", "instance", "folder", "resource", "file", "metric_category"]
+    },
+    "connectorConfigSchema": {
+      "account": {
+        "required": ["project_id"],
+        "optional": ["default_region"],
+        "properties": {
+          "project_id": { "type": "string", "description": "GCP project ID" },
+          "default_region": { "type": "string", "description": "Default region for resource browsing" }
+        }
+      }
+    },
+    "hasAcquisition": true,
+    "hasRegionSelector": true
+  },
+  {
+    "id": "azure_cloud",
+    "label": "Microsoft Azure",
+    "scopes": ["account"],
+    "supportedActions": ["testConnection", "listServices", "listMetricCategories"],
+    "supportedNodeTypes": ["service", "metric_category"],
+    "dataAccessModel": {
+      "rootAction": "listServices",
+      "selectionMode": "single",
+      "selectableTypes": ["metric_category"]
+    },
+    "connectorConfigSchema": {
+      "account": {
+        "required": ["subscription_id", "default_region"],
+        "optional": ["resource_group"],
+        "properties": {
+          "subscription_id": {
+            "type": "string",
+            "description": "Azure subscription ID containing ANF volumes"
+          },
+          "resource_group": {
+            "type": "string",
+            "description": "Optional resource group filter for metrics queries"
+          },
+          "default_region": {
+            "type": "string",
+            "description": "Azure region where ANF volumes run (e.g. eastus). Required for regional Azure Monitor metrics endpoints."
+          }
+        }
+      }
+    },
+    "hasAcquisition": true,
+    "hasRegionSelector": true
+  },
+  {
+    "id": "ontap",
+    "label": "NetApp ONTAP",
+    "scopes": ["account"],
+    "supportedActions": [
+      "testConnection",
+      "listServices",
+      "listSvms",
+      "listVolumes",
+      "listLuns",
+      "listSnapshots",
+      "listAggregates",
+      "listNetworkInterfaces",
+      "listSvmInterfaces",
+      "testVolumeMount",
+      "testNetworkInterfaceReachability",
+      "resolveBestMountForVolume",
+      "listMetricCategories"
+    ],
+    "supportedNodeTypes": [
+      "service",
+      "svm",
+      "volume",
+      "lun",
+      "snapshot",
+      "aggregate",
+      "networkInterface",
+      "resolution",
+      "probe",
+      "metric_category"
+    ],
+    "dataAccessModel": {
+      "rootAction": "listServices",
+      "selectionMode": "multi",
+      "selectableTypes": ["volume", "metric_category"]
+    },
+    "connectorConfigSchema": {
+      "account": {
+        "required": ["cluster_url"],
+        "optional": ["verify_tls", "default_svm", "client_cidrs"],
+        "properties": {
+          "cluster_url": {
+            "type": "string",
+            "description": "ONTAP cluster management URL, e.g. https://cluster.example.com (port optional)"
+          },
+          "verify_tls": {
+            "type": "boolean",
+            "description": "Verify ONTAP TLS certificate (default true). Disable or supply ca_bundle_pem in the credential for self-signed clusters."
+          },
+          "default_svm": {
+            "type": "string",
+            "description": "Optional default SVM. When set, listServices shows only that SVM's resources and SVM-scoped actions default to it when payload omits svm_uuid."
+          },
+          "client_cidrs": {
+            "type": "array",
+            "format": "cidr",
+            "description": "Optional Kubernetes node CIDRs (e.g. [\"10.0.0.0/16\"]) used to validate export-policy rules; when set, mismatches can block registration."
+          }
+        }
+      }
+    },
+    "hasAcquisition": true
+  },
+  {
+    "id": "redash",
+    "label": "Redash",
+    "scopes": ["account"],
+    "supportedActions": ["testConnection", "listRootFolders", "listQueries", "listDashboards", "listDataSources", "listDataSourceTables", "describeQuery"],
+    "supportedNodeTypes": ["folder", "query", "dashboard", "datasource", "table"],
+    "connectorConfigSchema": {
+      "account": {
+        "required": ["base_url"],
+        "optional": ["verify_tls", "include_query_results", "include_dashboards", "include_data_sources", "max_result_rows"],
+        "properties": {
+          "base_url": {
+            "type": "string",
+            "description": "Redash instance URL (e.g. https://redash.example.com)"
+          },
+          "verify_tls": {
+            "type": "boolean",
+            "description": "Verify TLS certificate (default true). Disable for self-signed or internal CA certificates."
+          },
+          "include_query_results": {
+            "type": "boolean",
+            "description": "Fetch cached query results during acquisition (default true)"
+          },
+          "include_dashboards": {
+            "type": "boolean",
+            "description": "Include dashboard metadata (default true)"
+          },
+          "include_data_sources": {
+            "type": "boolean",
+            "description": "Include data source configurations (default true)"
+          },
+          "max_result_rows": {
+            "type": "integer",
+            "description": "Max rows to fetch per query result (default 10000)"
+          }
+        }
+      }
+    },
+    "hasAcquisition": true,
+    "dataAccessModel": {
+      "rootAction": "listRootFolders",
+      "selectionMode": "single",
+      "selectableTypes": ["query", "dashboard", "table"]
+    }
+  }
+]

@@ -1,0 +1,44 @@
+apiVersion: v2
+name: observability
+description: Observability stack for Agent Studio (Prometheus, Grafana, Loki, Tempo, Arize Phoenix, optional Jaeger)
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+
+dependencies:
+  - name: kube-prometheus-stack
+    version: "65.8.1"
+    repository: https://prometheus-community.github.io/helm-charts
+    condition: kube-prometheus-stack.enabled
+  - name: prometheus-adapter
+    version: "4.11.0"
+    repository: https://prometheus-community.github.io/helm-charts
+    condition: prometheus-adapter.enabled
+  - name: jaeger
+    version: "3.4.1"
+    repository: https://jaegertracing.github.io/helm-charts
+    condition: jaeger.enabled
+  - name: phoenix
+    version: "0.1.0"
+    repository: file://./charts/phoenix
+    condition: phoenix.enabled
+  - name: otel-collector
+    version: "0.1.0"
+    repository: file://./charts/otel-collector
+    condition: otel-collector.enabled
+  - name: loki
+    version: "0.1.0"
+    repository: file://./charts/loki
+    condition: loki.enabled
+  - name: tempo
+    version: "0.1.0"
+    repository: file://./charts/tempo
+    condition: tempo.enabled
+  - name: grafana-proxy
+    version: "0.1.0"
+    repository: file://./charts/grafana-proxy
+    condition: grafana-proxy.enabled
+  - name: prometheus-proxy
+    version: "0.1.0"
+    repository: file://./charts/prometheus-proxy
+    condition: prometheus-proxy.enabled

@@ -1,0 +1,187 @@
+# Reusable Wiz container image vulnerability scan.
+# Called from build-common.yml after images are published to ACR.
+# Pulls the image directly from ACR (no GHA-artifact tarball
+# intermediate), runs wizcli against the local daemon reference, and
+# uploads per-image JSON results as artifacts.
+#
+# Pinned to runner-3 (label: `bds-only`) so Wiz scans share the same
+# isolated pool as BDS and never contend with builds on the netapp pool.
+#
+# Disabled by default in build-common.yml (run_wiz_scan input defaults
+# false). Promote.yml flips it ON for final tag promotions. Wire up
+# WIZ_CLIENT_ID / WIZ_CLIENT_SECRET in the `dev` GitHub Environment
+# (same scope as the build's Azure OIDC vars) and ensure a
+# `bds-only`-labelled self-hosted runner exists before enabling.
+#
+# Image refs come in as a fully-qualified JSON array of ACR paths
+# (e.g. `<acr>/nemo/<svc>:<tag>` for services, `<acr>/<worker>:<tag>`
+# for workers), produced by build-common.yml's build-and-publish job.
+# ACR pull uses Azure OIDC (federated MI with AcrPull on the registry).
+
+name: Wiz container image vulnerability scan
+
+on:
+  workflow_call:
+    inputs:
+      images_to_scan:
+        description: >
+          JSON array of fully-qualified image refs to scan
+          (e.g. '["agentstudioregistry.azurecr.io/nemo/agent-service:1.0.0"]').
+          Produced by build-common.yml's build-and-publish job.
+        required: true
+        type: string
+      tag:
+        description: "Version tag for scan metadata"
+        required: true
+        type: string
+    secrets:
+      WIZ_CLIENT_ID:
+        required: true
+      WIZ_CLIENT_SECRET:
+        required: true
+
+permissions:
+  contents: read
+  id-token: write   # for azure/login OIDC -> ACR pull
+  actions: read
+
+env:
+  ACR_REGISTRY: ${{ vars.ACR_REGISTRY }}
+
+jobs:
+  wiz-scan:
+    name: Wiz Scan – ${{ matrix.image }}
+    runs-on: [self-hosted, bds-only]
+    # When invoked as a reusable workflow, the called workflow does NOT
+    # inherit the caller's job-level environment scope. Declare it here
+    # so vars.AZURE_* + WIZ_* secrets defined in the `dev` GitHub
+    # Environment resolve at run time.
+    environment: dev
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        image: ${{ fromJson(inputs.images_to_scan) }}
+
+    steps:
+      # Pre-flight disk reclaim. wizcli extracts the image under
+      # $TMPDIR (set below to runner.temp); leftover wiz-* dirs from
+      # prior legs and docker images older than 24h are bounded here so
+      # a cold leg starts clean.
+      - name: Reclaim runner disk space
+        shell: bash -e {0}
+        run: |
+          echo "=== Before cleanup ==="
+          df -h / "${{ runner.temp }}" || true
+
+          rm -rf /tmp/wiz-* "${{ runner.temp }}/wiz-tmp" || true
+
+          docker container prune -f || true
+          docker image prune -af --filter "until=24h" || true
+          docker builder prune -af --filter "until=24h" || true
+
+          echo "=== After cleanup ==="
+          df -h / "${{ runner.temp }}" || true
+          docker system df || true
+
+      - name: Azure login (OIDC) for ACR pull
+        uses: azure/login@v2
+        with:
+          client-id:       ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id:       ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: ACR login
+        shell: bash -e {0}
+        run: |
+          ACR_NAME="${ACR_REGISTRY%%.*}"
+          az acr login --name "$ACR_NAME"
+
+      - name: Pull image from ACR
+        shell: bash -e {0}
+        run: docker pull "${{ matrix.image }}"
+
+      - name: Install Wiz CLI
+        shell: bash -e {0}
+        run: |
+          curl -fsSLo wizcli https://wizcli.app.wiz.io/latest/wizcli-linux-amd64
+          chmod +x ./wizcli
+
+      - name: Verify Wiz CLI
+        env:
+          HOME: ${{ runner.temp }}/home
+        shell: bash -e {0}
+        run: |
+          mkdir -p "$HOME"
+          ./wizcli version
+
+      - name: Authenticate with Wiz
+        env:
+          WIZ_CLIENT_ID: ${{ secrets.WIZ_CLIENT_ID }}
+          WIZ_CLIENT_SECRET: ${{ secrets.WIZ_CLIENT_SECRET }}
+          HOME: ${{ runner.temp }}/home
+        shell: bash -e {0}
+        run: |
+          ./wizcli auth --id "$WIZ_CLIENT_ID" --secret "$WIZ_CLIENT_SECRET"
+
+      # Failures here propagate: a Wiz scan error (not a policy
+      # violation surfaced through exit code) should fail the job
+      # rather than be silently swallowed. The upload step below still
+      # runs on failure (`if: always()`), so partial results are
+      # preserved.
+      #
+      # TMPDIR is redirected to runner.temp because wizcli extracts the
+      # image layer-by-layer (typically ~2-5 GB expanded per service
+      # image), and the default `/tmp` on the bds-only host lives on a
+      # small root FS partition that fills quickly after 2-3 legs.
+      - name: Run Wiz container scan
+        env:
+          HOME: ${{ runner.temp }}/home
+          TMPDIR: ${{ runner.temp }}/wiz-tmp
+        shell: bash -e {0}
+        run: |
+          mkdir -p "$TMPDIR"
+          # Derive a stable component tag from the image ref
+          # (strip registry/repo, keep just <name>) for Wiz tagging.
+          COMPONENT="$(echo '${{ matrix.image }}' | awk -F'/' '{print $NF}' | awk -F':' '{print $1}')"
+
+          ./wizcli docker scan \
+            --image "${{ matrix.image }}" \
+            --tag "component=$COMPONENT" \
+            --tag "version=${{ inputs.tag }}" \
+            --tag environment=ci \
+            --format json \
+            --output wiz-results.json,json \
+            --policy-hits-only \
+            --show-vulnerability-details
+
+      - name: Upload scan results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wiz-scan-${{ strategy.job-index }}
+          path: wiz-results.json
+          retention-days: 30
+          if-no-files-found: warn
+
+      - name: Cleanup scan workspace
+        if: always()
+        shell: bash -e {0}
+        run: |
+          rm -f wiz-results.json || true
+          rm -rf "${{ runner.temp }}/wiz-tmp" /tmp/wiz-* || true
+          docker image rm -f "${{ matrix.image }}" || true
+          df -h / "${{ runner.temp }}" || true
+          az logout || true
+          az account clear || true
+
+      # Uncomment when ArmorCode is set up:
+      # - name: Convert to ArmorCode format
+      #   if: always()
+      #   run: |
+      #     python3 wiz_converter.py --in wiz-results.json --out wiz-armorcode.json
+      #
+      # - name: Upload to ArmorCode
+      #   if: always()
+      #   run: |
+      #     ./armorcode_import_wiz.sh ${{ secrets.ARMORCODE_TOKEN }} wiz-armorcode.json

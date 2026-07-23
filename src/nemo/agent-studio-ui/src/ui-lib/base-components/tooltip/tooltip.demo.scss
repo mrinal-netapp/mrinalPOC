@@ -1,0 +1,52 @@
+.tooltip-demo {
+  padding: 32px;
+  font-family: var(--font-family);
+  color: var(--text-primary);
+  background-color: var(--background-main);
+  min-height: 100vh;
+}
+
+.tooltip-demo__title {
+  font-size: 18px;
+  font-weight: 600;
+  margin: 0 0 24px;
+  color: var(--text-primary);
+}
+
+.tooltip-demo__subtitle {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0 0 12px;
+  color: var(--text-secondary);
+}
+
+.tooltip-demo__section {
+  margin-bottom: 32px;
+}
+
+.tooltip-demo__row {
+  display: flex;
+  align-items: flex-end;
+  gap: 24px;
+  margin-bottom: 16px;
+  padding: 16px;
+  background-color: var(--background-content);
+  border: 1px solid var(--border-main);
+  border-radius: 4px;
+}
+
+.tooltip-demo__menu-item-with-tooltip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.tooltip-demo__row--grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: center;
+  justify-content: center;
+  padding: 48px 16px;
+}

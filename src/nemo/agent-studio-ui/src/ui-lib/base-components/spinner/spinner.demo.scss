@@ -1,0 +1,73 @@
+.spinner-demo {
+  padding: 32px;
+  font-family: var(--font-family);
+  color: var(--text-primary);
+  background-color: var(--background-main);
+  min-height: 100vh;
+}
+
+.spinner-demo__title {
+  font-size: 18px;
+  font-weight: 600;
+  margin: 0 0 24px;
+  color: var(--text-primary);
+
+  &:not(:first-child) {
+    margin-top: 40px;
+  }
+}
+
+// 5 columns: label + 4 state columns
+.spinner-demo__grid {
+  display: grid;
+  grid-template-columns: 160px repeat(4, 1fr);
+  gap: 1px;
+  background-color: var(--border-main);
+  border: 1px solid var(--border-main);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.spinner-demo__cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 24px 12px;
+  background-color: var(--background-content);
+  flex-wrap: wrap;
+  min-height: 100px;
+}
+
+.spinner-demo__cell--header {
+  background-color: var(--background-table-header);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 10px 12px;
+  min-height: unset;
+}
+
+.spinner-demo__cell--label {
+  justify-content: flex-start;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  background-color: var(--background-main);
+}
+
+// Full-screen demo: render inline (not fixed) so it stays visible in the grid
+.spinner-demo__cell--full-screen {
+  min-height: 220px;
+
+  .spinner-size-full-screen {
+    position: relative;
+    inset: unset;
+    width: 100%;
+    height: 100%;
+    min-height: 200px;
+    border-radius: 4px;
+  }
+}

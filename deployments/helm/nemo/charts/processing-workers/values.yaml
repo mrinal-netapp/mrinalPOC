@@ -1,0 +1,302 @@
+# Drop nemo-processing- prefix from deployment names (e.g. workers-dataset, workers-kb)
+fullnameOverride: "workers"
+
+# Graceful pod drain: align with terminationGracePeriodSeconds (Temporal worker drains in-flight activities).
+datasetWorker:
+  terminationGracePeriodSeconds: 120
+  gracefulShutdownTimeout: "90"
+  podSecurityContext: {}
+  image:
+    repository: dataset-processor
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  replicas: 1
+  resources:
+    requests:
+      cpu: "1"
+      memory: "2Gi"
+    limits:
+      cpu: "2"
+      memory: "4Gi"
+  env:
+    - name: TEMPORAL_ADDRESS
+      value: "temporal:7233"
+    - name: TEMPORAL_NAMESPACE
+      value: "default"
+    - name: TASK_QUEUE
+      value: "dataset-processing"
+    - name: MAX_CONCURRENT_ACTIVITIES
+      value: "3"
+    - name: WORKFLOW_ENGINE_URL
+      value: "http://workflow-engine:8080"
+    # Target raw bytes per shard for K sizing only; CreateWorkPlanActivity does not cap per-shard totals after assignment.
+    - name: WORK_UNIT_MAX_MB
+      value: "5"
+    # When manifest total_bytes is 0, used only as divisor for K_raw=ceil(n/MAX_FILES_PER_UNIT), not a per-manifest file cap.
+    - name: MAX_FILES_PER_UNIT
+      value: "100"
+    # Hard upper bound on partition count K_clamped (Python default 2000).
+    - name: SCATTER_MAX_UNITS_CEILING
+      value: "2000"
+  autoscaling:
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 5
+    # CPU metric — use ONLY as a standalone fallback when customMetric is disabled.
+    # Enabling both CPU and a custom metric creates a "high-water mark" lock:
+    # autoscaling/v2 takes the MAX across all metrics, so baseline CPU from
+    # Temporal polling can veto scale-down even when the queue is empty.
+    targetCPUUtilizationPercentage: 70
+    customMetric:
+      enabled: false
+      # Supported: Pods or Object (autoscaling/v2).
+      type: Pods
+      name: "temporal_queue_backlog_dataset"
+      target:
+        # For Pods metrics, AverageValue is typical.
+        type: AverageValue
+        averageValue: "10"
+      # For Object metrics only. Example:
+      # describedObject:
+      #   apiVersion: v1
+      #   kind: Service
+      #   name: workflow-engine
+      # metricSelector:
+      #   matchLabels:
+      #     queue: dataset-processing
+    behavior:
+      scaleDown:
+        stabilizationWindowSeconds: 300
+        policies:
+          - type: Pods
+            value: 1
+            periodSeconds: 120
+      scaleUp:
+        stabilizationWindowSeconds: 30
+        policies:
+          - type: Pods
+            value: 2
+            periodSeconds: 60
+
+kbWorker:
+  terminationGracePeriodSeconds: 120
+  gracefulShutdownTimeout: "90"
+  podSecurityContext: {}
+  image:
+    repository: kb-processor
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  replicas: 1
+  resources:
+    requests:
+      cpu: "1"
+      memory: "2Gi"
+    limits:
+      cpu: "2"
+      memory: "4Gi"
+  env:
+    - name: TEMPORAL_ADDRESS
+      value: "temporal:7233"
+    - name: TEMPORAL_NAMESPACE
+      value: "default"
+    - name: TASK_QUEUE
+      value: "kb-processing"
+    - name: MAX_CONCURRENT_ACTIVITIES
+      value: "3"
+    # Used by ProcessKBDocuments to POST progress for live UI updates
+    - name: WORKFLOW_ENGINE_URL
+      value: "http://workflow-engine:8080"
+    # Same CreateWorkPlanActivity semantics as datasetWorker (K sizing + distribution).
+    - name: WORK_UNIT_MAX_MB
+      value: "5"
+    - name: MAX_FILES_PER_UNIT
+      value: "100"
+    - name: SCATTER_MAX_UNITS_CEILING
+      value: "2000"
+  autoscaling:
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 10
+    # CPU fallback metric for safer rollout.
+    targetCPUUtilizationPercentage: 70
+    customMetric:
+      enabled: false
+      # Supported: Pods or Object (autoscaling/v2).
+      type: Pods
+      name: "temporal_queue_backlog_kb"
+      target:
+        # For Pods metrics, AverageValue is typical.
+        type: AverageValue
+        averageValue: "10"
+      # For Object metrics only. Example:
+      # describedObject:
+      #   apiVersion: v1
+      #   kind: Service
+      #   name: workflow-engine
+      # metricSelector:
+      #   matchLabels:
+      #     queue: kb-processing
+    behavior:
+      scaleDown:
+        stabilizationWindowSeconds: 300
+        policies:
+          - type: Pods
+            value: 1
+            periodSeconds: 120
+      scaleUp:
+        stabilizationWindowSeconds: 30
+        policies:
+          - type: Pods
+            value: 2
+            periodSeconds: 60
+
+connectorWorker:
+  terminationGracePeriodSeconds: 120
+  gracefulShutdownTimeout: "90"
+  podSecurityContext: {}
+  # When true (e.g. redis.architecture: standalone), ACQ_REDIS_SENTINEL_* in env are omitted.
+  redisStandalone: false
+  enabled: true
+  # Custom CA certificates for outbound HTTPS (e.g. NetApp internal CAs).
+  # Uses the same netapp-ca-certs-secret as the Bifrost gateway; set enabled: true when
+  # connectors talk to endpoints signed by enterprise/internal CAs.
+  certs:
+    enabled: false
+    secretName: netapp-ca-certs-secret
+    mountPath: /etc/ssl/certs/custom
+    certFileName: netapp-ca-cert.pem
+  image:
+    repository: connector-worker
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  replicas: 1
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "1Gi"
+    limits:
+      cpu: "2"
+      memory: "4Gi"
+  env:
+    - name: TEMPORAL_ADDRESS
+      value: "temporal:7233"
+    - name: TEMPORAL_NAMESPACE
+      value: "default"
+    - name: TASK_QUEUE
+      value: "connector-operations"
+    - name: MAX_CONCURRENT_ACTIVITIES
+      value: "3"
+    - name: CONFIG_SERVICE_URL
+      value: "http://config-service:3000"
+    - name: S3_ENDPOINT
+      value: "http://s3gateway:7070"
+    - name: WORKFLOW_ENGINE_URL
+      value: "http://workflow-engine:8080"
+    # S3_ACCESS_KEY, S3_SECRET_KEY, KEYCLOAK_CLIENT_ID, KEYCLOAK_CLIENT_SECRET,
+    # and KEYCLOAK_TOKEN_URL are injected by the deployment template from secrets
+  autoscaling:
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 5
+    # CPU fallback metric for safer rollout.
+    targetCPUUtilizationPercentage: 70
+    customMetric:
+      enabled: false
+      # Supported: Pods or Object (autoscaling/v2).
+      type: Pods
+      name: "temporal_queue_backlog_connector"
+      target:
+        # For Pods metrics, AverageValue is typical.
+        type: AverageValue
+        averageValue: "10"
+      # For Object metrics only. Example:
+      # describedObject:
+      #   apiVersion: v1
+      #   kind: Service
+      #   name: workflow-engine
+      # metricSelector:
+      #   matchLabels:
+      #     queue: connector-operations
+    behavior:
+      scaleDown:
+        stabilizationWindowSeconds: 300
+        policies:
+          - type: Pods
+            value: 1
+            periodSeconds: 120
+      scaleUp:
+        stabilizationWindowSeconds: 30
+        policies:
+          - type: Pods
+            value: 2
+            periodSeconds: 60
+
+# Evaluation worker (TypeScript, @temporalio/worker). Hosts the single flat
+# AgentEvaluationWorkflow on EVAL_TASK_QUEUE — per-case work runs inline
+# via the runCase() helper (no child workflow). Activities talk to
+# config-service / agent-service / artifact-service / LLM gateway over HTTP.
+evalWorker:
+  enabled: true
+  terminationGracePeriodSeconds: 60
+  gracefulShutdownTimeout: "30"
+  podSecurityContext: {}
+  image:
+    repository: eval-worker
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  replicas: 1
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "512Mi"
+    limits:
+      cpu: "2"
+      memory: "2Gi"
+  env:
+    - name: TEMPORAL_ADDRESS
+      value: "temporal:7233"
+    - name: TEMPORAL_NAMESPACE
+      value: "default"
+    - name: METRICS_PORT
+      value: "9465"
+    - name: LOG_LEVEL
+      value: "info"
+    - name: CONFIG_SERVICE_URL
+      value: "http://config-service:3000"
+    - name: AGENT_SERVICE_URL
+      value: "http://agent-service:8000"
+    - name: LLM_GATEWAY_URL
+      value: "http://bifrost-proxy:4001"
+    - name: WORKFLOW_ENGINE_URL
+      value: "http://workflow-engine:8080"
+    # POSIX-on-PVC storage — eval-worker mounts the s3gateway default bucket
+    # as /mnt/pvcs/default-nemo and writes results under
+    # projects/{projectId}/evaluations/{evalId}/runs/{runId}/. Same convention
+    # as dataset-processor / kb-processor / connector-worker.
+    - name: NEMO_DEFAULT_STORE_ROOT
+      value: "/mnt/pvcs/default-nemo"
+  autoscaling:
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 5
+    targetCPUUtilizationPercentage: 70
+    customMetric:
+      enabled: false
+      type: Pods
+      name: "temporal_queue_backlog_eval"
+      target:
+        type: AverageValue
+        averageValue: "10"
+    behavior:
+      scaleDown:
+        stabilizationWindowSeconds: 300
+        policies:
+          - type: Pods
+            value: 1
+            periodSeconds: 120
+      scaleUp:
+        stabilizationWindowSeconds: 30
+        policies:
+          - type: Pods
+            value: 2
+            periodSeconds: 60

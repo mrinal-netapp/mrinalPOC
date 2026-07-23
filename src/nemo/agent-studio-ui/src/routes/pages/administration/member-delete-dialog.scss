@@ -1,0 +1,13 @@
+.member-delete-dialog {
+  width: min(560px, calc(100vw - 2rem));
+}
+
+.member-delete-dialog__body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.member-delete-dialog__warning {
+  margin: 0;
+}

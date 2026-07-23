@@ -1,0 +1,19 @@
+{{- /*
+  Namespace sidecar injection labelling is handled by the Makefile:
+    make helm-tier-namespaces ISTIO=1
+
+  This runs before any app tier is deployed and adds:
+    istio-injection: enabled
+  to each app namespace via:
+    kubectl label namespace <ns> istio-injection=enabled --overwrite
+
+  A Helm-owned Namespace resource is intentionally NOT rendered here because
+  app namespaces are already owned by their respective Helm releases
+  (console, services, workers, etc.) and Helm's ownership validation would
+  block a second release from patching them.
+
+  Namespaces labelled by helm-tier-namespaces:
+  {{- range .Values.namespaces }}
+  - {{ .name }}
+  {{- end }}
+*/}}

@@ -1,0 +1,117 @@
+{
+  "_schema_version": "2.1.0",
+  "project_id": "550e8400-e29b-41d4-a716-446655440000",
+  "_description": "RFC Search Summarizer: single agent that calls the knowledgeBase function binding and replies with a concise summary of the retrieved chunks (no verbatim passthrough — the synthesis LLM call distils a short answer for the user).",
+  "agent": {
+    "framework": "maf",
+    "model": "azure/gpt-4.1-mini",
+    "temperature": 0.0,
+    "max_tokens": 8192,
+    "timeout_seconds": 180,
+    "metadata": {
+      "project": "agent-studio",
+      "version": "1.0.0",
+      "environment": "development"
+    }
+  },
+  "tool_bindings": [
+    {
+      "name": "knowledgeBase",
+      "type": "function",
+      "function_ref": "kb_retrieve",
+      "description": "Search the IETF RFC knowledge base for protocol questions.",
+      "tags": ["retrieval", "rfc"],
+      "params": {
+        "kbId": "e3c3b018-3294-4069-be8d-0e8efbed4733",
+        "projectId": "550e8400-e29b-41d4-a716-446655440000",
+        "topK": 5,
+        "similarityThreshold": 0.5,
+        "headers": {
+          "x-agent-studio-context": "eyJwcm9qZWN0X2lkIjoiNTUwZTg0MDAtZTI5Yi00MWQ0LWE3MTYtNDQ2NjU1NDQwMDAwIiwidXNlcl9pZCI6InVzZXJAdGVzdC5jb20ifQ=="
+        }
+      }
+    }
+  ],
+  "semantic_kernel": {
+    "agents": [
+      {
+        "name": "rfc_search_function",
+        "instructions": "You are an RFC search assistant. Call `knowledgeBase-kb_retrieve` once with the user's query, then write a concise summary (3-6 sentences) of what the retrieved chunks say, citing RFC numbers from the chunk metadata. If no chunks are returned, say so plainly. Do not paste raw chunk JSON.",
+        "description": "Single agent that invokes the knowledgeBase function binding and summarizes the retrieved chunks for the user",
+        "model": "azure/gpt-4.1-mini",
+        "temperature": 0.0,
+        "max_tokens": 8192,
+        "tool_bindings": ["knowledgeBase"],
+        "function_choice_behavior": "auto"
+      }
+    ],
+    "orchestration": {
+      "type": "single"
+    },
+    "default_function_choice_behavior": "auto",
+    "chat_history_max_messages": 20,
+    "enable_telemetry": false,
+    "session_ttl_seconds": 3600
+  },
+  "gateway": {
+    "url": "http://host.docker.internal:4001/v1",
+    "api_key": "",
+    "default_model": "azure/gpt-4.1-mini",
+    "request_timeout_seconds": 120,
+    "retry_on_timeout": true,
+    "max_retries": 2
+  },
+  "guardrails": {
+    "enabled": true,
+    "fail_open": false,
+    "execution_mode": "pipeline",
+    "input_guardrails": [
+      {
+        "name": "input_validator",
+        "type": "validation",
+        "enabled": true,
+        "priority": 1,
+        "action_on_trigger": "block",
+        "message": "Input does not meet validation requirements.",
+        "config": {
+          "max_length": 4000,
+          "min_length": 2
+        }
+      }
+    ],
+    "output_guardrails": [
+      {
+        "name": "output_length",
+        "type": "validation",
+        "enabled": true,
+        "priority": 1,
+        "action_on_trigger": "truncate",
+        "message": null,
+        "config": {
+          "max_chars": 120000
+        }
+      }
+    ],
+    "tool_guardrails": {
+      "default_policy": {
+        "mode": "allowlist",
+        "tools": ["knowledgeBase-kb_retrieve"],
+        "max_calls_per_request": 1
+      }
+    }
+  },
+  "memory": {
+    "enabled": false,
+    "storage_backend": "memory",
+    "buffer_type": "sliding_window",
+    "ttl_seconds": 3600,
+    "max_history_length": 10,
+    "max_tokens_per_session": 0,
+    "max_chars_per_session": 0
+  },
+  "logging": {
+    "level": "INFO",
+    "format": "json",
+    "include_timestamp": true
+  }
+}

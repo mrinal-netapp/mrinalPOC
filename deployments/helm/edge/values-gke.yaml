@@ -1,0 +1,32 @@
+# GKE overlay for the edge tier.
+#
+# Self-managed Istio 1.30. Dev defaults below pin the live dev regional static
+# address `agentstudio-services-gw-ip` (project agent-studio-netapp, us-east4).
+# Other envs override gateway IP + JWT issuer at deploy time via
+# deployments/gcp/scripts/gke-edge-helm-sets.sh (reads deployments/gcp/envs/<env>.yaml when
+# DEPLOY_ENV_FILE is set; edge.gatewayAddressName + projectId + location).
+#
+# GKE's cloud-controller-manager resolves the address name to the current IP at
+# runtime (Gateway.status.addresses[]).
+#
+# TLS Secret nemo-gateway-tls is expected in $(HELM_NS_EDGE) before deploy
+# (prepare-nemo-gateway.sh self-signed fallback runs from istio-prereq).
+
+gateway:
+  provider: "istio"
+  istio:
+    infrastructure:
+      annotations:
+        # Dev static IP — preprod overrides via gke-edge-helm-sets.sh + edge.gatewayAddressName.
+        networking.gke.io/load-balancer-ip-addresses: "projects/agent-studio-netapp/regions/us-east4/addresses/agentstudio-services-gw-ip"
+    requestAuthentication:
+      # Dev issuer default; non-local ENDPOINT overrides at deploy time
+      # (gke-edge-helm-sets.sh). JWKS stays cluster-internal.
+      issuer: "https://auth.agentstudio-gke.dev.openeng.netapp.com/realms/nemo"
+      jwksUri: "http://keycloak.agentstudio-identity.svc.cluster.local:8080/realms/nemo/protocol/openid-connect/certs"
+      audiences:
+        - agent-studio-api
+      forwardOriginalToken: true
+
+certManager:
+  enabled: false

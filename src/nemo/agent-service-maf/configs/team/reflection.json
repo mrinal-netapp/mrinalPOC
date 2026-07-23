@@ -1,0 +1,104 @@
+{
+  "_schema_version": "2.0.0",
+  "project_id": "550e8400-e29b-41d4-a716-446655440000",
+  "_description": "Reflection pattern (modeled as a graph): generator produces output, critic reviews. Critic emits 'REVISION_NEEDED:' to trigger another generator pass, or 'APPROVED:' to terminate. Capped at 6 rounds.",
+  "agent": {
+    "framework": "maf",
+    "model": "azure/gpt-4.1-mini",
+    "temperature": 0.7,
+    "max_tokens": 4096,
+    "timeout_seconds": 300,
+    "metadata": {
+      "project": "agent-studio",
+      "version": "1.0.0",
+      "environment": "development"
+    }
+  },
+  "semantic_kernel": {
+    "agents": [
+      {
+        "name": "generator",
+        "instructions": "You are a content generator. Produce high-quality output for the given task. When you receive 'REVISION_NEEDED:' feedback from the critic in the prior context, carefully revise your work to address every point raised. Aim for measurable improvement with each iteration. Using only your built-in knowledge — no external tools.",
+        "description": "Generates and revises content based on feedback",
+        "model": "azure/gpt-4.1-mini",
+        "temperature": 0.7,
+        "max_tokens": 4096,
+        "tools": [],
+        "mcp_servers": [],
+        "function_choice_behavior": "none"
+      },
+      {
+        "name": "critic",
+        "instructions": "You are a critical reviewer. Evaluate the generator's output for accuracy, completeness, clarity, and quality. ALWAYS prefix your reply with one of two markers (the orchestration uses these to decide whether to loop):\n- 'REVISION_NEEDED:' followed by specific, actionable feedback when changes are needed.\n- 'APPROVED:' followed by a brief summary when the output meets all quality standards.\nNever start with anything else.",
+        "description": "Reviews output and emits REVISION_NEEDED or APPROVED",
+        "model": "azure/gpt-4.1-mini",
+        "temperature": 0.3,
+        "max_tokens": 2048,
+        "tools": [],
+        "mcp_servers": [],
+        "function_choice_behavior": "none"
+      }
+    ],
+    "orchestration": {
+      "type": "graph",
+      "max_rounds": 6,
+      "edges": [
+        {
+          "source": "generator",
+          "target": "critic",
+          "condition": ""
+        },
+        {
+          "source": "critic",
+          "target": "generator",
+          "condition": "REVISION_NEEDED"
+        }
+      ],
+      "termination_strategy": {
+        "type": "keyword",
+        "keywords": ["APPROVED"],
+        "maximum_iterations": 6
+      }
+    },
+    "default_function_choice_behavior": "none",
+    "chat_history_max_messages": 100,
+    "enable_telemetry": false,
+    "session_ttl_seconds": 3600
+  },
+  "gateway": {
+    "url": "http://host.docker.internal:4001/v1",
+    "api_key": "",
+    "default_model": "azure/gpt-4.1-mini",
+    "request_timeout_seconds": 120,
+    "retry_on_timeout": true,
+    "max_retries": 2
+  },
+  "guardrails": {
+    "enabled": false
+  },
+  "mcp": {
+    "connection_timeout_seconds": 30,
+    "lazy_connect": true,
+    "tool_call_timeout_seconds": 60,
+    "max_tool_retries": 1,
+    "retry_on_timeout": true,
+    "discovery_on_connect": true,
+    "tool_name_format": "qualified",
+    "max_concurrent_tool_calls": 5
+  },
+  "mcp_servers": [],
+  "memory": {
+    "enabled": true,
+    "storage_backend": "memory",
+    "buffer_type": "sliding_window",
+    "ttl_seconds": 3600,
+    "max_history_length": 100,
+    "max_tokens_per_session": 0,
+    "max_chars_per_session": 0
+  },
+  "logging": {
+    "level": "INFO",
+    "format": "json",
+    "include_timestamp": true
+  }
+}

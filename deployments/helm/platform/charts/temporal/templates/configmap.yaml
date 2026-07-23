@@ -1,0 +1,142 @@
+{{- if .Values.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "temporal.fullname" . }}-config
+  labels:
+    {{- include "temporal.labels" . | nindent 4 }}
+data:
+  # Enable Workflow Update API (required for connector explorer session)
+  overrides-dynamicconfig.yaml: |
+    frontend.enableUpdateWorkflowExecution:
+      - value: true
+    frontend.enableUpdateWorkflowExecutionAsyncAccepted:
+      - value: true
+  config.yaml: |
+    log:
+      stdout: true
+      level: {{ .Values.config.logLevel | default "info" }}
+    
+    persistence:
+      defaultStore: default
+      visibilityStore: visibility
+      numHistoryShards: 4
+      datastores:
+        default:
+          sql:
+            pluginName: "postgres12"
+            databaseName: {{ .Values.database.name | quote }}
+            connectAddr: "{{ .Values.database.host }}:{{ .Values.database.port }}"
+            connectProtocol: "tcp"
+            user: {{ .Values.database.user | quote }}
+            password: "${POSTGRES_PWD}"
+            maxConns: {{ .Values.database.defaultMaxConns | default 10 }}
+            maxIdleConns: {{ .Values.database.defaultMaxIdleConns | default 10 }}
+            tls:
+              enabled: false
+        visibility:
+          sql:
+            pluginName: "postgres12"
+            databaseName: "temporal_visibility"
+            connectAddr: "{{ .Values.database.host }}:{{ .Values.database.port }}"
+            connectProtocol: "tcp"
+            user: {{ .Values.database.user | quote }}
+            password: "${POSTGRES_PWD}"
+            maxConns: {{ .Values.database.visibilityMaxConns | default 5 }}
+            maxIdleConns: {{ .Values.database.visibilityMaxIdleConns | default 5 }}
+            tls:
+              enabled: false
+    
+    global:
+      membership:
+        maxJoinDuration: 30s
+        broadcastAddress: "127.0.0.1"
+      pprof:
+        port: 0
+    
+    services:
+      frontend:
+        rpc:
+          grpcPort: 7233
+          membershipPort: 6933
+          bindOnIP: "0.0.0.0"
+        metrics:
+          prometheus:
+            timerType: "histogram"
+            listenAddress: "0.0.0.0:9090"
+        pprof:
+          port: 0
+        maxIDLength: 255
+      matching:
+        rpc:
+          grpcPort: 7235
+          membershipPort: 6935
+          bindOnIP: "0.0.0.0"
+        metrics:
+          prometheus:
+            timerType: "histogram"
+            listenAddress: "0.0.0.0:9090"
+        pprof:
+          port: 0
+      history:
+        rpc:
+          grpcPort: 7234
+          membershipPort: 6934
+          bindOnIP: "0.0.0.0"
+        metrics:
+          prometheus:
+            timerType: "histogram"
+            listenAddress: "0.0.0.0:9090"
+        pprof:
+          port: 0
+      worker:
+        rpc:
+          grpcPort: 7239
+          membershipPort: 6939
+          bindOnIP: "0.0.0.0"
+        metrics:
+          prometheus:
+            timerType: "histogram"
+            listenAddress: "0.0.0.0:9090"
+        pprof:
+          port: 0
+    
+    clusterMetadata:
+      enableGlobalNamespace: false
+      failoverVersionIncrement: 10
+      masterClusterName: "active"
+      currentClusterName: "active"
+      clusterInformation:
+        active:
+          enabled: true
+          initialFailoverVersion: 1
+          rpcName: "frontend"
+          rpcAddress: "127.0.0.1:7233"
+    
+    dcRedirectionPolicy:
+      policy: "noop"
+    
+    archival:
+      history:
+        state: "disabled"
+      visibility:
+        state: "disabled"
+    
+    namespaceDefaults:
+      archival:
+        history:
+          state: "disabled"
+        visibility:
+          state: "disabled"
+      badBinaries:
+        binaries: {}
+    
+    publicClient:
+      hostPort: "temporal.{{ .Values.namespace | default .Release.Namespace }}.svc.cluster.local:7233"
+    
+    # Use our override file next to config so we don't rely on image's dynamicconfig dir
+    dynamicConfigClient:
+      filepath: "/etc/temporal/config/overrides-dynamicconfig.yaml"
+      pollInterval: "10s"
+{{- end }}
+

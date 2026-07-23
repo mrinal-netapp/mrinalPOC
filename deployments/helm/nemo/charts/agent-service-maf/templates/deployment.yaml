@@ -1,0 +1,122 @@
+{{- if .Values.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "agent-service-maf.fullname" . }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "agent-service-maf.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "agent-service-maf.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "agent-service-maf.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- $serviceAccountName := .Values.serviceAccountName }}
+      {{- if not $serviceAccountName }}
+      {{- $chartName := "nemo" }}
+      {{- if contains $chartName .Release.Name }}
+      {{- $serviceAccountName = .Release.Name }}
+      {{- else }}
+      {{- $serviceAccountName = printf "%s-%s" .Release.Name $chartName }}
+      {{- end }}
+      {{- end }}
+      serviceAccountName: {{ $serviceAccountName }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: agent-service-maf
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.global.imageRepository }}/{{ .Values.image.repository }}:{{ .Values.global.imageTag | default .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy | default .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+          env:
+            {{- $root := . }}
+            {{- range .Values.env }}
+            {{- if and $.Values.redisStandalone (or (eq .name "REDIS_SENTINEL_URL") (eq .name "REDIS_SENTINEL_MASTER") (eq .name "AGENT_MEMORY__REDIS_SENTINEL_URL") (eq .name "AGENT_MEMORY__REDIS_SENTINEL_MASTER")) }}
+            {{- /* standalone Redis: omit sentinel; client uses REDIS_URL / AGENT_MEMORY__REDIS_URL */}}
+            {{- else if eq .name "AGENT_GATEWAY__URL" }}
+            {{- /* Bifrost gateway URL — derive from nemo.llmGatewayUrl helper.
+                   MAF passes this as base_url to the OpenAI SDK, which does
+                   NOT prepend /v1, so it must be present in the base URL
+                   for Bifrost's OpenAI-compat chat-completions endpoint.
+                   Idempotent: an operator override that already ends in
+                   ``/v1`` (e.g. an external Bifrost URL like
+                   ``http://my-bifrost.example.com/v1``) is left alone so we
+                   don't render ``.../v1/v1``. */}}
+            {{- $bifrostBase := trimSuffix "/" (include "nemo.llmGatewayUrl" $root) }}
+            - name: {{ .name }}
+              value: {{ ternary $bifrostBase (printf "%s/v1" $bifrostBase) (hasSuffix "/v1" $bifrostBase) | quote }}
+            {{- else if eq .name "KUBERNETES_NAMESPACE" }}
+            - name: {{ .name }}
+              value: {{ include "nemo.namespace" $root | quote }}
+            {{- else }}
+            - name: {{ .name }}
+              {{- if .valueFrom }}
+              valueFrom:
+                {{- toYaml .valueFrom | nindent 16 }}
+              {{- else }}
+              value: {{ tpl (.value | default "") $root | quote }}
+              {{- end }}
+            {{- end }}
+            {{- end }}
+            # --- Injected by chart template (do NOT add to .Values.env) ---
+            - name: CONFIG_SERVICE_URL
+              value: {{ .Values.configServiceUrl | default (include "nemo.configServiceClusterURL" $root) | quote }}
+            - name: KEYCLOAK_INTERNAL_ISSUER
+              value: {{ include "nemo.keycloakInternalIssuer" $root | quote }}
+            - name: KEYCLOAK_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-oidc-secrets
+                  # NOTE: re-uses the existing agent-service client. When MAF
+                  # gets its own dedicated Keycloak client, change this to
+                  # `agent-service-maf-client-id` and update keycloak-oidc-secrets.yaml
+                  # + keycloak-setup-job.yaml accordingly.
+                  key: agent-service-client-id
+            - name: KEYCLOAK_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-oidc-secrets
+                  key: agent-service-client-secret
+          livenessProbe:
+            {{- toYaml .Values.livenessProbe | nindent 12 }}
+          readinessProbe:
+            {{- toYaml .Values.readinessProbe | nindent 12 }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- range . }}
+        {{- if kindIs "string" . }}
+        - name: {{ . | quote }}
+        {{- else if kindIs "map" . }}
+        - {{- toYaml . | nindent 10 }}
+        {{- else }}
+        - name: {{ . | quote }}
+        {{- end }}
+        {{- end }}
+      {{- end }}
+{{- end }}

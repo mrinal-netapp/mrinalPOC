@@ -1,0 +1,676 @@
+# Services tier umbrella values
+# Namespace: agentstudio-services (set via Helm --namespace at install time)
+#
+# Cross-namespace dependencies:
+#   bifrost-proxy   → agentstudio-llm-gateway
+#   keycloak        → agentstudio-identity
+#   temporal        → agentstudio-platform
+#   redis-master    → agentstudio-platform
+#   lakekeeper      → agentstudio-platform
+#   s3gateway       → agentstudio-workers  (moved from agentstudio-platform)
+#   shared-postgresql → database
+#
+# Secrets synced by CI into agentstudio-services:
+#   keycloak-oidc-secrets   (from agentstudio-identity)
+#   nemo-s3gateway-credentials (from agentstudio-platform)
+
+# Keycloak issuer prefix — controls KEYCLOAK_ISSUER across all sub-charts.
+# auth is the current standard. The Keycloak chart creates a dedicated HTTPRoute
+# for auth.* that routes directly to Keycloak, bypassing the apigateway entirely.
+keycloak:
+  authSubdomain: "auth"
+
+createNamespace: true
+namespacePodSecurity:
+  enforce: privileged
+  audit: privileged
+  warn: privileged
+
+deploymentName: "nemo"
+endpoint: "agentstudio.local"
+
+consoleSubdomain: "app"
+workspaceLabelPrefix: "ws-"
+
+# Namespace references used by _helpers.tpl for cross-namespace FQDNs
+keycloakNamespace: "agentstudio-identity"
+platformNamespace: "agentstudio-platform"
+workersNamespace: "agentstudio-workers"
+servicesNamespace: "agentstudio-services"
+llmGatewayNamespace: "agentstudio-llm-gateway"
+
+# Cross-namespace aliases for upstream tiers.
+# mode: externalName (CoreDNS-resolvable, default) or serviceEntry.
+# externalName is required because pre-sidecar init containers (e.g.
+# wait-for-temporal) and nginx upstream resolution perform plain DNS
+# lookups. A ServiceEntry host only resolves via Istio's DNS proxy (DNS
+# capture), which is NOT enabled in this mesh, so serviceEntry mode yields
+# NXDOMAIN and hangs init containers / crashes nginx. ExternalName still
+# works under Istio (Envoy sees the upstream; auto-mTLS falls back to
+# plaintext for non-mesh backends like Temporal).
+crossNsServices:
+  mode: externalName
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+global:
+  platformNamespace: "agentstudio-platform"
+  imageRegistry: ""
+  imageRepository: "docker.repo.eng.netapp.com/user/rp29322"
+  imageTag: ""
+  imagePullSecrets: []
+  storageClass: ""
+  endpoint: "agentstudio.local"
+  consoleSubdomain: "app"
+  workspaceLabelPrefix: "ws-"
+  deploymentName: "nemo"
+  s3gatewayFullname: "s3gateway"
+  # Public HTTPS port. Default 443 (cloud); local overrides to 8443.
+  # Consumed by nemo.gatewayHttpsPort + gui.workspacePublicPort.
+  gatewayHttpsPort: "443"
+  # Image pull policy. Default "" (chart image.pullPolicy governs). EKS overlay
+  # sets Always after ECR manifest-cache fixes. Exposed here so the key is not
+  # treated as orphaned by lint-values-parity.
+  imagePullPolicy: ""
+  lakekeeperCatalogUrl: ""
+  observability:
+    # OTLP HTTP base URL for all services. Used for traces, metrics, and logs export.
+    # Set to "" to omit the OTLP env vars entirely (e.g. when no collector is deployed).
+    otlpEndpoint: "http://observability-otel-collector.monitoring.svc.cluster.local:4318"
+
+# Default-bucket PVC in the services namespace.
+# PVCs are namespace-scoped so the s3gateway PVC in the workers tier is not
+# directly accessible from agentstudio-services (used by artifact-service and
+# kb-retrieval-service).
+#
+# Two ways to share data with the workers/s3gateway-managed bucket:
+#
+#   (a) volumeName: bind this PVC to a pre-provisioned static PV that points
+#       at the same backing storage (works on any CSI / hostPath / NFS).
+#
+#   (b) shareFromPVC: on Trident CSI 24.10+ (incl. ontap-nas), have Trident
+#       bind this PVC to the same underlying ONTAP volume as the workers
+#       PVC, with no static-PV plumbing. Required pieces:
+#         - This PVC names the source via shareFromPVC.{namespace,name}
+#         - The source PVC must have annotation
+#           `trident.netapp.io/shareToNamespace: <this-ns>` (or `*`) — set
+#           via workers values: `s3gateway.defaultBucket.shareToNamespaces`
+#         - storageClass MUST be the Trident-backed class (e.g. ontap-nas)
+#         - A TridentVolumeReference CR is emitted alongside the PVC; it
+#           records consumer intent for Trident's authorization check.
+#       Both sides RWX. Trident binds the same underlying NetApp volume to
+#       both PVCs (one per namespace), so writes from workers/s3gateway are
+#       immediately visible to kb-retrieval-service.
+#
+# Use ONE of volumeName / shareFromPVC; leaving both empty falls back to
+# dynamic provisioning under the configured storageClass (a brand-new
+# volume not shared with anyone).
+defaultBucketPvc:
+  create: false
+  accessMode: ReadWriteMany
+  size: "10Gi"
+  storageClass: ""  # Defaults to global.storageClass when empty
+  volumeName: ""    # Set to bind to a specific pre-provisioned PersistentVolume
+  # Cross-namespace sharing via Trident CSI. Leave name empty to disable.
+  # Example (sks6316):
+  #   shareFromPVC:
+  #     namespace: agentstudio-workers
+  #     name: s3gateway-default-bucket
+  shareFromPVC:
+    namespace: ""
+    name: ""
+
+# Keycloak setup: used by init containers that wait for keycloak
+keycloak:
+  setup:
+    keycloakNamespace: "agentstudio-identity"
+    keycloakUrl: ""  # Default: derived from keycloakNamespace
+
+# Gateway / HTTPRoute / cert-manager moved to the new `edge` Helm chart at
+# deployments/helm/edge/. The services chart no longer ships any
+# Gateway-API resources or the gateway TLS certificate. See
+# docs/design/istio-gateway-migration.md §8.1 for the new layout.
+# (The PR #193 body-size cap revert that previously lived here is now a
+# no-op because the whole `gateway:` and `httproute:` blocks moved out
+# of this chart in main's NGF→Istio migration.)
+
+# agent-service
+agent-service:
+  enabled: true
+  fullnameOverride: "agent-service"
+  replicaCount: 1
+  serviceAccountName: ""
+  image:
+    repository: nemo/agent-service
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 8000
+  resources:
+    limits:
+      cpu: 2000m
+      memory: 4Gi
+    requests:
+      cpu: 500m
+      memory: 1Gi
+  configServiceUrl: ""
+  redisStandalone: true
+  env:
+    - name: REDIS_URL
+      value: "redis://redis-master.{{ .Values.global.platformNamespace | default \"agentstudio-platform\" }}.svc.cluster.local:6379/0"
+    - name: REDIS_DB
+      value: "0"
+    - name: LLM_GATEWAY_URL
+      value: "http://bifrost-proxy.agentstudio-llm-gateway.svc.cluster.local:8080"
+    - name: LLM_GATEWAY_API_KEY
+      value: ""
+    - name: KEYCLOAK_TOKEN_URL
+      value: "http://keycloak.agentstudio-identity.svc.cluster.local:8080/realms/nemo/protocol/openid-connect/token"
+    - name: KB_RETRIEVAL_SERVICE_URL
+      value: "http://kb-retrieval-service:5000"
+    - name: ANALYTICS_ENGINE_URL
+      value: "http://analytics-engine:8080"
+    - name: PHOENIX_API_URL
+      value: ""
+    - name: PHOENIX_PROJECT_NAME
+      value: "default"
+    - name: CONFIG_CACHE_TTL
+      value: "60"
+    - name: TASK_RESULT_TTL
+      value: "3600"
+    - name: SESSION_TTL
+      value: "86400"
+    # Redirect logs to stdout so the OTel DaemonSet can tail /var/log/pods and
+    # forward to Loki. Without this the service writes to an ephemeral /tmp file
+    # that is invisible to the DaemonSet.
+    - name: AGENT_STUDIO_OBSERVABILITY_LOG_FILE_PATH
+      value: "/dev/stdout"
+  database:
+    host: "shared-postgresql.database.svc.cluster.local"
+    port: "5432"
+    name: "nemo"
+    user: "postgres"
+    password: "agentstudio-postgres-password"  # Dev default; use existingSecret for production
+    existingSecret: "shared-postgresql-secret"
+    existingSecretKey: "postgres-password"
+    poolSize: 3
+    maxOverflow: 2
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: 8000
+    initialDelaySeconds: 15
+    periodSeconds: 10
+  readinessProbe:
+    httpGet:
+      path: /health
+      port: 8000
+    initialDelaySeconds: 5
+    periodSeconds: 5
+  metrics:
+    serviceMonitor:
+      # Cloud-shaped default: true. The ServiceMonitor template is additionally
+      # guarded on the Prometheus operator CRD (monitoring.coreos.com/v1), so it
+      # only renders where the operator is installed — every cloud cluster, and
+      # local only with OBSERVABILITY=1. Clusters without the CRD skip it
+      # automatically, so `make deploy-local` (no OBSERVABILITY) never fails on
+      # an unknown ServiceMonitor kind.
+      enabled: true
+  serviceAccount:
+    create: false
+    name: ""
+    azureClientId: ""
+  workloadIdentity:
+    enabled: false
+
+# agent-service-maf
+# Default disabled — flip with `--set agent-service-maf.enabled=true` (and
+# `--set agent-service.enabled=false` if cutting over from legacy agent-service).
+# Shares the same namespace as agent-service (agentstudio-services) via Helm --namespace.
+agent-service-maf:
+  enabled: true
+  fullnameOverride: "agent-service-maf"
+  replicaCount: 1
+  serviceAccountName: ""
+  image:
+    repository: nemo/agent-service-maf
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 8000
+  resources:
+    limits:
+      cpu: 2000m
+      memory: 4Gi
+    requests:
+      cpu: 500m
+      memory: 1Gi
+  configServiceUrl: ""
+  redisStandalone: true
+  env:
+    - name: AGENT_INTERFACE__HOST
+      value: "0.0.0.0"
+    - name: AGENT_INTERFACE__PORT
+      value: "8000"
+    - name: AGENT_GATEWAY__URL
+      value: ""  # Resolved by deployment template via nemo.llmGatewayUrl helper
+    - name: CONFIG_SOURCE
+      value: "remote"
+    - name: CONFIG_CACHE_TTL
+      value: "60"
+    - name: CONFIG_CACHE_MAX_SIZE
+      value: "1000"
+    - name: CONFIG_HTTP_TIMEOUT
+      value: "10.0"
+    - name: CONFIG_STALE_WHILE_ERROR
+      value: "true"
+    - name: KB_ENDPOINT_URL
+      # Path template — MAF's kb_retrieve.py substitutes {projectId}/{kbId}
+      # before the POST. Bare hostname routes to the kb-retrieval-service's
+      # root, which has no handler and returns 404.
+      value: "http://kb-retrieval-service:5000/api/v1/projects/{projectId}/knowledgebases/{kbId}/search"
+    - name: KB_TIMEOUT_SECONDS
+      value: "30"
+    - name: KB_MAX_RESPONSE_BYTES
+      value: "1048576"
+    # Observability — platform-standard AGENT_STUDIO_OBSERVABILITY_* / OTEL_*
+    # vars read by observability_client_runtime (shared with config-service,
+    # kb-retrieval-service, and the workers). Empty global.observability.otlpEndpoint
+    # => the client omits OTLP export and logs to stdout only.
+    - name: LOG_LEVEL
+      value: "INFO"
+    - name: OTEL_SERVICE_NAME
+      value: "agent-service-maf"
+    # Preferred trace export on AKS: app-monitoring rewrites OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+    # to the node-local Azure Monitor receiver; this var is left untouched (legacy agent-service pattern).
+    - name: PHOENIX_COLLECTOR_ENDPOINT
+      value: "{{ .Values.global.observability.otlpEndpoint }}/v1/traces"
+    - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+      value: "{{ .Values.global.observability.otlpEndpoint }}"
+    - name: AGENT_STUDIO_OBSERVABILITY_METRICS_OTLP_ENDPOINT
+      value: "{{ .Values.global.observability.otlpEndpoint }}"
+    - name: AGENT_STUDIO_OBSERVABILITY_OTLP_LOGS_ENDPOINT
+      value: "{{ .Values.global.observability.otlpEndpoint }}"
+    - name: AGENT_STUDIO_OBSERVABILITY_LOG_FILE_PATH
+      value: "/dev/stdout"
+    # Local span JSONL sink (writable tmpfs; primary export is OTLP above).
+    - name: AGENT_STUDIO_OBSERVABILITY_TRACE_FILE_PATH
+      value: "/tmp/App_Logs/trace.jsonl"
+    - name: REDIS_URL
+      value: "redis://redis-master.{{ .Values.global.platformNamespace | default \"agentstudio-platform\" }}.svc.cluster.local:6379/0"
+    - name: REDIS_SENTINEL_URL
+      value: ""
+    - name: REDIS_SENTINEL_MASTER
+      value: ""
+    - name: AGENT_MEMORY__STORAGE_BACKEND
+      value: "redis"
+    - name: AGENT_MEMORY__REDIS_URL
+      value: "redis://redis-master.{{ .Values.global.platformNamespace | default \"agentstudio-platform\" }}.svc.cluster.local:6379/0"
+    - name: AGENT_MEMORY__REDIS_SENTINEL_URL
+      value: ""
+    - name: AGENT_MEMORY__REDIS_SENTINEL_MASTER
+      value: ""
+    - name: AGENT_MCP__STRICT_SCHEMAS
+      value: "true"
+    # Eager-connect MCP servers at team-load so the SK kernel has each plugin
+    # registered before the first LLM tool call. With lazy_connect=true the
+    # LLM is advertised tools that aren't yet attached to the kernel,
+    # surfacing as KernelPluginNotFoundError on dispatch.
+    - name: AGENT_MCP__LAZY_CONNECT
+      value: "false"
+    - name: AGENT_WARM_TEAMS
+      value: ""
+    - name: AGENT_ENVIRONMENT
+      value: "production"
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: 8000
+    initialDelaySeconds: 15
+    periodSeconds: 10
+  readinessProbe:
+    httpGet:
+      path: /ready
+      port: 8000
+    initialDelaySeconds: 10
+    periodSeconds: 5
+  metrics:
+    path: /metrics
+    port: http
+    serviceMonitor:
+      enabled: true
+  serviceAccount:
+    create: false
+    name: ""
+    azureClientId: ""
+  workloadIdentity:
+    enabled: false
+
+# apigateway-service
+apigateway-service:
+  enabled: true
+  fullnameOverride: "apigateway-service"
+  replicaCount: 1
+  serviceAccountName: ""
+  image:
+    repository: nemo/apigateway-service
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 8080
+    httpsPort: 8443
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 200m
+      memory: 128Mi
+  # Post-Istio-migration env footprint -- reverse-proxy URLs and Keycloak
+  # OIDC client secrets dropped (the Istio gateway validates the JWT and
+  # routes directly to backend Services). Only S3 SigV4 + workspace
+  # dynamic backend remain in this pod.
+  env:
+    - name: PORT
+      value: "8080"
+    - name: S3_REGION
+      value: "us-east-1"
+    - name: AGENT_STUDIO_OBSERVABILITY_OTLP_TRACES_ENDPOINT
+      value: "http://observability-otel-collector.monitoring.svc.cluster.local:4318"
+    - name: AGENT_STUDIO_OBSERVABILITY_METRICS_SERVICE_NAME
+      value: "apigateway-service"
+    - name: OTEL_SERVICE_NAME
+      value: "apigateway-service"
+    - name: AGENT_STUDIO_OBSERVABILITY_LOG_FILE_PATH
+      value: "/dev/stdout"
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: 8080
+    initialDelaySeconds: 10
+    periodSeconds: 30
+  readinessProbe:
+    httpGet:
+      path: /ready
+      port: 8080
+    initialDelaySeconds: 5
+    periodSeconds: 10
+  metrics:
+    serviceMonitor:
+      enabled: true
+  serviceAccount:
+    create: false
+    name: ""
+    azureClientId: ""
+  workloadIdentity:
+    enabled: false
+
+# config-service
+config-service:
+  enabled: true
+  fullnameOverride: "config-service"
+  replicaCount: 1
+  serviceAccountName: ""
+  image:
+    repository: nemo/config-service
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 3000
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 2Gi
+    requests:
+      cpu: 500m
+      memory: 1Gi
+  env:
+    - name: PORT
+      value: "3000"
+    - name: DEBUG
+      value: "false"
+    - name: EXPRESS_JSON_BODY_LIMIT
+      value: "64mb"
+    - name: WORKFLOW_ENGINE_URL
+      value: "http://workflow-engine:8080"
+    - name: LAKEKEEPER_URL
+      value: ""
+    - name: KEYCLOAK_ISSUER
+      value: ""
+    - name: LLM_GATEWAY_URL
+      value: "http://bifrost-proxy.agentstudio-llm-gateway.svc.cluster.local:8080"
+    - name: LLM_GATEWAY_API_KEY
+      value: ""
+    - name: ARTIFACT_SERVICE_URL
+      value: ""
+    - name: ANALYTICS_MCP_URL
+      value: ""
+    - name: WEB_SEARCH_MCP_ENABLED
+      value: "true"
+    - name: SEARXNG_WEB_SEARCH_MCP_ENABLED
+      value: "true"
+    - name: SEARXNG_BASE_URL
+      value: "http://searxng:8080"
+    # Auto-attach the shared analytics platform MCP to every project's Bifrost
+    # virtual key at project-init (gateway-setup). Without this flag,
+    # readPlatformMcpAutoAttachFlags() defaults analytics to false and
+    # attachPlatformMcpServersToProjectVirtualKey skips the analytics client,
+    # leaving new project VKs unable to reach analytics tools until manually
+    # added in Bifrost.
+    - name: AUTO_ATTACH_PLATFORM_ANALYTICS_MCP
+      value: "true"
+  # Cloud overlays append here (see values-aks.yaml / values-gke.yaml).
+  extraEnv: []
+  database:
+    host: "shared-postgresql.database.svc.cluster.local"
+    port: "5432"
+    name: "nemo"
+    user: "postgres"
+    password: "agentstudio-postgres-password"
+    existingSecret: ""
+    existingSecretKey: ""
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: 3000
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+  readinessProbe:
+    httpGet:
+      path: /ready
+      port: 3000
+    initialDelaySeconds: 5
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+  initContainer:
+    enabled: true
+    waitForKeycloakSetup: true
+  metrics:
+    serviceMonitor:
+      enabled: true
+  serviceAccount:
+    create: false
+    name: ""
+    azureClientId: ""
+  workloadIdentity:
+    enabled: false
+
+# workflow-engine
+workflow-engine:
+  enabled: true
+  fullnameOverride: "workflow-engine"
+  namespace: "agentstudio-services"
+  replicaCount: 1
+  serviceAccountName: ""
+  redisStandalone: true
+  image:
+    repository: nemo/workflow-engine
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 8080
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 2Gi
+    requests:
+      cpu: 500m
+      memory: 1Gi
+  metrics:
+    serviceMonitor:
+      enabled: true
+  serviceAccount:
+    create: false
+    name: ""
+    azureClientId: ""
+  workloadIdentity:
+    enabled: false
+
+# kb-retrieval-service
+kb-retrieval-service:
+  enabled: true
+  fullnameOverride: "kb-retrieval-service"
+  replicaCount: 1
+  serviceAccountName: ""
+  image:
+    repository: nemo/kb-retrieval-service
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 5000
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 2Gi
+    requests:
+      cpu: 500m
+      memory: 1Gi
+  metrics:
+    serviceMonitor:
+      enabled: true
+  serviceAccount:
+    create: false
+    name: ""
+    azureClientId: ""
+  workloadIdentity:
+    enabled: false
+
+# analytics-engine
+analytics-engine:
+  enabled: true
+  fullnameOverride: "analytics-engine"
+  replicaCount: 1
+  serviceAccountName: ""
+  image:
+    repository: nemo/analytics-engine
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 8080
+  resources:
+    limits:
+      cpu: 2000m
+      memory: 4Gi
+    requests:
+      cpu: 500m
+      memory: 1Gi
+  metrics:
+    serviceMonitor:
+      enabled: true
+  serviceAccount:
+    create: false
+    name: ""
+    azureClientId: ""
+  workloadIdentity:
+    enabled: false
+
+# analytics-mcp-server
+analytics-mcp-server:
+  enabled: true
+  fullnameOverride: "analytics-mcp-server"
+  replicaCount: 1
+  serviceAccountName: ""
+  image:
+    repository: nemo/mcp-server-analytics
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 8080
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+    requests:
+      cpu: 200m
+      memory: 256Mi
+  metrics:
+    serviceMonitor:
+      enabled: true
+  serviceAccount:
+    create: false
+    name: ""
+    azureClientId: ""
+  workloadIdentity:
+    enabled: false
+
+# cert-manager moved to the edge chart with the gateway TLS secret.
+
+# coredns / dns-registration (disabled by default)
+coredns:
+  enabled: false
+
+dns:
+  enabled: false
+
+# artifact-service
+# No Keycloak OIDC client — gateway handles auth (X-User-ID header injection).
+# PVC dependency: mounts <s3gateway-release>-default-bucket PVC from platform tier
+#   (rendered by nemo.defaultBucketPvcName helper in services/_helpers.tpl).
+artifact-service:
+  enabled: true
+  fullnameOverride: "artifact-service"
+  platformNamespace: "agentstudio-platform"
+  replicaCount: 1
+  image:
+    repository: nemo/artifact-service
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  initContainer:
+    enabled: false
+    waitForKeycloakSetup: false
+  service:
+    type: ClusterIP
+    port: 8080
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 2Gi
+    requests:
+      cpu: 250m
+      memory: 512Mi
+  metrics:
+    serviceMonitor:
+      enabled: true
+  serviceAccount:
+    create: true
+    name: "artifact-service"
+    azureClientId: ""
+  workloadIdentity:
+    enabled: false
+  database:
+    existingSecret: ""
+    existingSecretKey: ""

@@ -1,0 +1,85 @@
+# preprod.yaml -- AgentStudio GCP infra config for pre-prod.
+#
+#   make infra CLOUD=gcp ENV=preprod ACTION=plan
+#   make infra CLOUD=gcp ENV=preprod ACTION=apply
+#
+# CI: deploy-preprod-gcp.yml (pinned preprod) or deploy-env.yml (other envs)
+
+env: preprod
+projectId: agent-studio-netapp
+location: us-east4
+deploymentId: agentstudio-preprod
+
+application:
+  endpoint: agentstudio-gke.preprod.openeng.netapp.com
+
+tags:
+  creator: ap99158
+
+# Shared GAR (repo id only — region defaults to `location` above).
+# Deploy: CONTAINER_IMAGE_REPO=us-east4-docker.pkg.dev/agent-studio-netapp/agentstudio
+containerRegistry:
+  mode: shared
+  repositoryId: agentstudio
+
+networking:
+  vpcName: vpc-agentstudio-preprod
+  subnetName: snet-gke-preprod
+  subnetCidr: 10.251.0.0/20
+  podsSecondaryCidr: 10.251.16.0/20
+  servicesSecondaryCidr: 10.251.32.0/24
+  psaRangeName: agentstudio-preprod-psa
+  psaPrefixLength: 20
+
+gke:
+  clusterName: gke-agentstudio-preprod
+  deletionProtection: false
+  releaseChannel: REGULAR
+  nodePools:
+    - name: general
+      machineType: e2-standard-4
+      minCount: 3
+      maxCount: 8
+      diskSizeGiB: 100
+      imageType: COS_CONTAINERD
+      labels:
+        workload-arch: amd64
+    - name: san-ubuntu-pool
+      machineType: e2-standard-4
+      minCount: 1
+      maxCount: 2
+      diskSizeGiB: 100
+      imageType: UBUNTU_CONTAINERD
+      labels:
+        agentstudio.netapp.io/san: "true"
+      taints:
+        - key: agentstudio.netapp.io/san
+          value: "true"
+          effect: NO_SCHEDULE
+
+storage:
+  nasPoolName: sp-agentstudio-preprod-gcnv-nas
+  sanPoolName: sp-agentstudio-preprod-gcnv-san
+  nasCapacityGiB: 4096
+  sanCapacityGiB: 4096
+  trident:
+    helmVersion: "100.2410.0"
+    namespace: trident
+    # Reuse IM/CI GSA — roles/WI on agentstudio-cicd-sa are managed outside repo.
+    # enabled: false skips trident-identity Terraform; make storage patches KSA only.
+    enabled: false
+    gsaName: agentstudio-cicd-sa
+    serviceAccount: trident-controller
+  gcnv:
+    nasBackendName: gcnv-native-nas-backend
+    sanBackendName: gcnv-native-san-backend
+    nasStorageClass: gcnv-nas-rwx
+    sanStorageClass: gcnv-san-rwo
+
+edge:
+  gatewayAddressName: agentstudio-preprod-gw-ip
+
+dns:
+  createZone: false
+  # zoneName: agentstudio-preprod-example-com
+  # dnsName: agentstudio-preprod.example.com.

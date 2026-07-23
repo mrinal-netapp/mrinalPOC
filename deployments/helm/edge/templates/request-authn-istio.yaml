@@ -1,0 +1,59 @@
+{{- /*
+Edge JWT validation. Validates the user JWT against Keycloak's JWKS,
+populates dynamic metadata for the parity-header EnvoyFilter, and
+forwards the original Authorization: Bearer <jwt> unchanged to upstream
+services (`forwardOriginalToken: true` -- the standard Authorization
+header is the in-mesh user-identity carrier).
+
+Lives in agentstudio-edge because RequestAuthentication must sit in the
+same namespace as the workload it selects (the auto-provisioned gateway
+pod).
+
+WHY MULTIPLE jwtRules:
+RequestAuthentication is a workload-selector primitive — Istio doesn't
+let us scope it to a hostname (so it can't be "skipped on auth.*"). The
+gateway sidecar therefore validates EVERY incoming `Authorization:
+Bearer <jwt>` against the configured providers. Tokens whose `iss` claim
+doesn't match any configured provider → 401 "Jwt issuer is not configured".
+
+In practice Keycloak mints tokens from at least two realms during
+normal operation:
+  - `realms/nemo`   — application user tokens (the JWT we actually want
+                       to validate at the edge).
+  - `realms/master` — Keycloak's own admin-console flow. The browser
+                       carries master-realm tokens to /admin/** under
+                       auth.<endpoint> after the operator logs in.
+Listing both as valid jwtRules makes both flows work; Keycloak does its
+own RBAC on top of either token, so there's no security regression.
+
+Custom additional realms (e.g. tenant realms) plug in via
+`gateway.istio.requestAuthentication.extraJwtRules[]` in values — the
+primary block stays driven by the existing single-issuer values keys
+so per-cloud overlays don't need to change shape.
+*/ -}}
+{{- if and .Values.gateway.enabled (eq (.Values.gateway.provider | default "nginx") "istio") -}}
+{{- $issuer := .Values.gateway.istio.requestAuthentication.issuer }}
+{{- $jwksUri := .Values.gateway.istio.requestAuthentication.jwksUri }}
+{{- /* Skip rendering when the per-cloud overlay hasn't supplied issuer/jwksUri yet
+       (e.g. KIND local-dev path on the istio branch). The chart should still
+       render cleanly so render-parity tests pass on every overlay. */ -}}
+{{- if and $issuer $jwksUri }}
+apiVersion: security.istio.io/v1
+kind: RequestAuthentication
+metadata:
+  name: keycloak-jwt-edge
+  namespace: {{ include "nemo.namespace" . }}
+  labels:
+    {{- include "edge.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "nemo.istioGatewaySelector" . | nindent 6 }}
+  jwtRules:
+    {{- /* Primary issuer (application user tokens — `realms/nemo`) + the
+           auto-derived `realms/master` admin-console entry + operator-supplied
+           extraJwtRules. The in-mesh per-hop RequestAuthentication
+           (istio-mesh-policies chart) trusts the same providers. */ -}}
+    {{- include "edge.keycloakJwtRules" . | nindent 4 }}
+{{- end }}
+{{- end }}

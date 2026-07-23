@@ -1,0 +1,34 @@
+{{- /*
+NGF controller ConfigMap. Rendered only on the NGF branch
+(gateway.provider == "nginx").
+
+Lives in the NGF controller's namespace (default `nginx-gateway`), NOT in
+this chart's release namespace -- the controller pod reads the ConfigMap
+from its own namespace at startup. Edge admins running `helm upgrade --install
+edge --namespace agentstudio-edge` therefore need RBAC on the NGF
+controller's namespace too when configMap.enabled=true; in practice this
+flag stays off in prod (the controller's ConfigMap is owned by the
+install-gateway-api.sh bootstrap step) and is opt-in for KIND.
+*/ -}}
+{{- if and .Values.gateway.enabled (eq (.Values.gateway.provider | default "nginx") "nginx") .Values.gateway.configMap.enabled -}}
+{{- $gatewayNamespace := .Values.gateway.namespace | default "nginx-gateway" }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.gateway.configMap.name | default "nginx-gateway-config" }}
+  namespace: {{ $gatewayNamespace }}
+  labels:
+    {{- include "edge.labels" . | nindent 4 }}
+    app.kubernetes.io/component: gateway-config
+data:
+  client-max-body-size: {{ .Values.gateway.configMap.clientMaxBodySize | default "200m" | quote }}
+  proxy-connect-timeout: {{ .Values.gateway.configMap.proxyConnectTimeout | default "10s" | quote }}
+  proxy-send-timeout: {{ .Values.gateway.configMap.proxySendTimeout | default "600s" | quote }}
+  proxy-read-timeout: {{ .Values.gateway.configMap.proxyReadTimeout | default "600s" | quote }}
+  upstream-keepalive-connections: {{ .Values.gateway.configMap.upstreamKeepaliveConnections | default "128" | quote }}
+  upstream-keepalive-timeout: {{ .Values.gateway.configMap.upstreamKeepaliveTimeout | default "60s" | quote }}
+  upstream-keepalive-requests: {{ .Values.gateway.configMap.upstreamKeepaliveRequests | default "1000" | quote }}
+  proxy-buffer-size: {{ .Values.gateway.configMap.proxyBufferSize | default "32k" | quote }}
+  proxy-buffers-number: {{ .Values.gateway.configMap.proxyBuffersNumber | default "16" | quote }}
+  proxy-busy-buffers-size: {{ .Values.gateway.configMap.proxyBusyBuffersSize | default "64k" | quote }}
+{{- end }}

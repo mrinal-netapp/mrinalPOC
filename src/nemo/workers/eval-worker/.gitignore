@@ -1,0 +1,16 @@
+node_modules/
+dist/
+coverage/
+logs/
+tmp/
+*.log
+
+# Stray tsc output. Running `tsc` directly against a .ts file without
+# --noEmit (e.g. the Dockerfile compiles the mock-store .ts in place)
+# emits a sibling .js. Keep these out of the source tree.
+src/**/*.js
+test/**/*.js
+src/**/*.d.ts
+test/**/*.d.ts
+src/**/*.js.map
+test/**/*.js.map

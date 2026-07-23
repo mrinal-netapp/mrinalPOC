@@ -1,0 +1,55 @@
+{{- /*
+Wildcard catch-all -> apigateway-service (workspace dynamic backend selection).
+
+Gateway API's hostname schema only accepts `*.<domain>` wildcards (entire
+leftmost label = `*`). Infix wildcards like `ws-*.<domain>` are rejected
+by the apiserver regex, so we use the broader `*.<endpoint>` and rely on
+two layers of precedence to keep traffic correctly routed:
+
+1. Gateway API spec: more-specific hostnames win over wildcards. The
+   per-subdomain routes (auth.*, catalog.*, workflows.*, phoenix.*, s3.*)
+   and the per-path routes on `app.*` already declare specific hostnames,
+   so they outrank this wildcard automatically -- traffic to those
+   subdomains never reaches this rule.
+
+2. Application-side enforcement: `apigateway-service`'s
+   `proxy.IsWorkspaceSubdomain` Go check requires the leftmost DNS label
+   to start with the configured workspace prefix (default `ws-`). Hosts
+   that match the wildcard but aren't `ws-*` (e.g. a typo'd subdomain)
+   get a 404 from the chi router rather than silently routing to a
+   non-existent workspace.
+
+(The design doc §5.3 listed `ws-*.${ENDPOINT}` as the hostname pattern;
+the upstream Gateway API spec doesn't support that form -- see LD-10 in
+docs/deployment/local-deploy-known-issues.md. Wire-format contract for
+the SPA / browser is unchanged: workspace public hosts remain
+`ws-<id>.<endpoint>` and the wildcard cert / wildcard DNS `*.<endpoint>`
+covers them as before.)
+
+Stays on apigateway-service this PR; PR-C extracts workspace-proxy and
+this backend flips to workspace-proxy:8080.
+*/ -}}
+{{- if and .Values.gateway.enabled (eq (.Values.gateway.provider | default "nginx") "istio") -}}
+{{- $endpoint := include "nemo.endpoint" . }}
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: agentstudio-workspace
+  namespace: {{ include "nemo.namespace" . }}
+  labels:
+    {{- include "edge.labels" . | nindent 4 }}
+spec:
+  parentRefs:
+    - name: {{ include "nemo.gatewayName" . }}
+  hostnames:
+    - {{ printf "*.%s" $endpoint | quote }}
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: apigateway-service
+          namespace: {{ include "nemo.servicesNamespace" . }}
+          port: 8080
+{{- end }}

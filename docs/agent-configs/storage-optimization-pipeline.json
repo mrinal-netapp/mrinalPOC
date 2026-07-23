@@ -1,0 +1,68 @@
+{
+  "name": "Storage Optimization Pipeline",
+  "description": "Daily storage optimization: analyze metrics → generate recommendations → human approval → execute approved actions",
+  "type": "API",
+  "graph": {
+    "nodes": [
+      {
+        "id": "schedule_1",
+        "type": "schedule",
+        "config": {
+          "scheduleType": "custom",
+          "cronExpression": "0 8 * * *",
+          "timezone": "UTC"
+        },
+        "metadata": { "label": "Daily 8 AM UTC" }
+      },
+      {
+        "id": "analysis_1",
+        "type": "agent",
+        "config": {
+          "agentId": "{{ANALYSIS_AGENT_ID}}",
+          "message": "Analyze storage optimization opportunities across all connected ONTAP and GCNV clusters. Identify idle, under-utilized, over-provisioned volumes and tier mismatches. Generate recommendations with cost savings estimates.",
+          "timeoutSeconds": 900
+        },
+        "metadata": { "label": "Analysis Agent" }
+      },
+      {
+        "id": "hil_1",
+        "type": "human_in_the_loop",
+        "config": {
+          "notification": "slack",
+          "timeout": "168h",
+          "message": "Storage optimization recommendations require your approval. Review and approve/reject individual items."
+        },
+        "metadata": { "label": "Human Approval" }
+      },
+      {
+        "id": "executor_1",
+        "type": "agent",
+        "config": {
+          "agentId": "{{EXECUTOR_AGENT_ID}}",
+          "message": "Execute these approved storage optimization recommendations: {{hil_1.approvedItems}}",
+          "timeoutSeconds": 600
+        },
+        "metadata": { "label": "Executor Agent" }
+      },
+      {
+        "id": "response_1",
+        "type": "response",
+        "config": {
+          "schema": "pipeline-output/v1",
+          "template": {
+            "$schema": "https://agentstudio.io/schemas/pipeline-output/v1",
+            "kind": "recommendations",
+            "title": "Storage Optimization Recommendations"
+          }
+        },
+        "metadata": { "label": "Output Report" }
+      }
+    ],
+    "edges": [
+      { "from": "schedule_1", "to": "analysis_1" },
+      { "from": "analysis_1", "to": "hil_1" },
+      { "from": "hil_1", "to": "executor_1" },
+      { "from": "executor_1", "to": "response_1" }
+    ]
+  }
+}

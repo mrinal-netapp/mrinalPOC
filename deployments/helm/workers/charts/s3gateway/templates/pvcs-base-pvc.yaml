@@ -1,0 +1,21 @@
+{{- if and .Values.enabled .Values.pvcsBase.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "s3gateway.fullname" . }}-pvcs-base
+  namespace: {{ include "nemo.namespace" . | default .Release.Namespace }}
+  labels:
+    {{- include "s3gateway.labels" . | nindent 4 }}
+    app.kubernetes.io/component: pvcs-base
+spec:
+  accessModes:
+    - {{ .Values.global.accessMode | default .Values.storage.accessMode | default "ReadWriteMany" }}
+  resources:
+    requests:
+      storage: {{ .Values.pvcsBase.size | default "2Gi" }}
+  {{- if .Values.pvcsBase.storageClass }}
+  storageClassName: {{ .Values.pvcsBase.storageClass }}
+  {{- else if .Values.global.storageClass }}
+  storageClassName: {{ .Values.global.storageClass }}
+  {{- end }}
+{{- end }}

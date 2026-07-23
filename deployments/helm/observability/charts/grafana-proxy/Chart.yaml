@@ -1,0 +1,9 @@
+apiVersion: v2
+name: grafana-proxy
+description: >
+  OIDC auth-code proxy for Grafana.  Performs the Keycloak login flow, fetches
+  per-user project membership from config-service, caches both in an encrypted
+  session cookie, and forwards requests to Grafana with X-WEBAUTH-* headers.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

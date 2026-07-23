@@ -1,0 +1,6 @@
+apiVersion: v2
+name: agent-service
+description: A Helm sub-chart for AgentStudio Agent Service (Python/FastAPI + Agno)
+type: application
+version: 1.0.0
+appVersion: "1.0.0"

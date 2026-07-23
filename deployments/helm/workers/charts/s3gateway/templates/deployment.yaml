@@ -1,0 +1,186 @@
+{{- if .Values.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "s3gateway.fullname" . }}
+  labels:
+    {{- include "s3gateway.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  # `Recreate` (not the default `RollingUpdate`) because s3gateway mounts
+  # several PVCs (default-bucket, metadata, pvcs-base). RWX storage classes
+  # (e.g. ontap-nas / ANF) make RollingUpdate safe, but on RWO storage
+  # classes RollingUpdate deadlocks with `Multi-Attach error`. `Recreate`
+  # is robust regardless of the underlying storage class — single brief
+  # downtime during upgrade beats stuck rollouts. See bifrost / artifact
+  # for the same pattern.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "s3gateway.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "s3gateway.selectorLabels" . | nindent 8 }}
+        {{- if .Values.workloadIdentity.enabled }}
+        azure.workload.identity/use: "true"
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "s3gateway.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: s3gateway
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: {{ if .Values.image.fullImage }}"{{ .Values.image.fullImage }}"{{ else }}"{{ .Values.global.imageRepository }}/{{ .Values.image.repository }}:{{ .Values.image.tag }}"{{ end }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy | default .Values.image.pullPolicy }}
+          ports:
+            - name: s3
+              containerPort: {{ .Values.service.port }}
+              protocol: TCP
+          env:
+            {{- $root := . }}
+            - name: VGW_S3_ENDPOINT
+              value: "0.0.0.0:{{ .Values.service.port }}"
+            - name: VGW_DATA_PATH
+              value: {{ .Values.storage.dataPath | quote }}
+            {{- if .Values.region }}
+            - name: AWS_REGION
+              value: {{ .Values.region | quote }}
+            {{- else }}
+            - name: AWS_REGION
+              value: "us-east-1"
+            {{- end }}
+            - name: VGW_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "nemo.s3gatewayCredentialsName" $root }}
+                  key: access-key
+            - name: VGW_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "nemo.s3gatewayCredentialsName" $root }}
+                  key: secret-key
+            {{- range .Values.env }}
+            - name: {{ .name }}
+              {{- if .value }}
+              value: {{ .value | quote }}
+              {{- else if .valueFrom }}
+              valueFrom:
+                {{- toYaml .valueFrom | nindent 16 }}
+              {{- end }}
+            {{- end }}
+          volumeMounts:
+            - name: pvcs-mount-base
+              mountPath: {{ .Values.pvcsMountPath | default "/mnt/pvcs" }}
+            {{- if and .Values.defaultBucket.enabled .Values.defaultBucket.name }}
+            - name: default-bucket
+              mountPath: {{ .Values.pvcsMountPath | default "/mnt/pvcs" }}/{{ .Values.defaultBucket.name }}
+            {{- end }}
+            {{- if .Values.metadata.enabled }}
+            - name: metadata-volume
+              mountPath: /mnt/metadata
+            {{- end }}
+            {{- $pvcs := (lookup "v1" "PersistentVolumeClaim" .Release.Namespace "").items | default list }}
+            {{- $defaultBucketPVC := printf "%s-default-bucket" (include "s3gateway.fullname" $root) }}
+            {{- $defaultBucketName := .Values.defaultBucket.name | default "" }}
+            {{- range $pvcs }}
+              {{- if and (hasKey .metadata.labels "agentstudio.io/managed-by") (eq (index .metadata.labels "agentstudio.io/managed-by") "storage-manager") }}
+              {{- if ne .metadata.name $defaultBucketPVC }}
+              {{- $bucketName := index .metadata.labels "agentstudio.io/bucket-name" | default .metadata.name }}
+              {{- if ne $bucketName $defaultBucketName }}
+            - name: {{ .metadata.name }}
+              mountPath: {{ $.Values.pvcsMountPath | default "/mnt/pvcs" }}/{{ $bucketName }}
+              {{- end }}
+              {{- end }}
+              {{- end }}
+            {{- end }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.healthEndpoint | default "/health" }}
+              port: {{ .Values.service.port }}
+            {{- if .Values.livenessProbe }}
+            {{- toYaml .Values.livenessProbe | nindent 12 }}
+            {{- else }}
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 3
+            {{- end }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.healthEndpoint | default "/health" }}
+              port: {{ .Values.service.port }}
+            {{- if .Values.readinessProbe }}
+            {{- toYaml .Values.readinessProbe | nindent 12 }}
+            {{- else }}
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 10
+            failureThreshold: 3
+            {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        # Base directory for PVC mounts - PVCs mount as subdirectories under this
+        - name: pvcs-mount-base
+          {{- if .Values.pvcsBase.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "s3gateway.fullname" . }}-pvcs-base
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        {{- if .Values.metadata.enabled }}
+        # Metadata volume for versityGW metadata storage
+        - name: metadata-volume
+          persistentVolumeClaim:
+            claimName: {{ include "s3gateway.fullname" . }}-metadata
+        {{- end }}
+        {{- if and .Values.defaultBucket.enabled .Values.defaultBucket.name }}
+        # Default bucket PVC (pre-created for Lakekeeper default warehouse)
+        - name: default-bucket
+          persistentVolumeClaim:
+            claimName: {{ include "s3gateway.fullname" . }}-default-bucket
+        {{- end }}
+        {{- $pvcs := (lookup "v1" "PersistentVolumeClaim" .Release.Namespace "").items | default list }}
+        {{- $defaultBucketPVC := printf "%s-default-bucket" (include "s3gateway.fullname" .) }}
+        {{- $defaultBucketName := .Values.defaultBucket.name | default "" }}
+        {{- range $pvcs }}
+          {{- if and (hasKey .metadata.labels "agentstudio.io/managed-by") (eq (index .metadata.labels "agentstudio.io/managed-by") "storage-manager") }}
+          {{- if ne .metadata.name $defaultBucketPVC }}
+          {{- $bucketName := index .metadata.labels "agentstudio.io/bucket-name" | default .metadata.name }}
+          {{- if ne $bucketName $defaultBucketName }}
+        - name: {{ .metadata.name }}
+          persistentVolumeClaim:
+            claimName: {{ .metadata.name }}
+          {{- end }}
+          {{- end }}
+          {{- end }}
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- range . }}
+        {{- if kindIs "string" . }}
+        - name: {{ . | quote }}
+        {{- else if kindIs "map" . }}
+        - {{- toYaml . | nindent 10 }}
+        {{- else }}
+        - name: {{ . | quote }}
+        {{- end }}
+        {{- end }}
+      {{- end }}
+{{- end }}

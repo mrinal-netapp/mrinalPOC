@@ -1,0 +1,73 @@
+{{/*
+Cross-namespace aliases for workers tier.
+Default mode is externalName: a CoreDNS-resolvable Service alias that works for
+pre-sidecar init containers and plain DNS clients. Set mode=serviceEntry only
+when Istio DNS capture is enabled mesh-wide (otherwise the ServiceEntry host is
+NXDOMAIN for non-mesh DNS lookups).
+*/}}
+
+{{- $servicesNs := .Values.servicesNamespace | default "agentstudio-services" }}
+{{- $platformNs := .Values.platformNamespace | default "agentstudio-platform" }}
+{{- $identityNs := .Values.keycloakNamespace | default "agentstudio-identity" }}
+{{- $releaseNs := .Release.Namespace }}
+{{- $crossNs := (index .Values "crossNsServices" | default dict) }}
+{{- $mode := (index $crossNs "mode" | default "externalName") }}
+{{- $targets := dict
+    "temporal" (dict "host" (printf "temporal.%s.svc.cluster.local" $platformNs) "port" 7233 "name" "grpc-temporal" "protocol" "GRPC")
+    "lakekeeper" (dict "host" (printf "lakekeeper.%s.svc.cluster.local" $platformNs) "port" 8181 "name" "http-api" "protocol" "HTTP")
+    "config-service" (dict "host" (printf "config-service.%s.svc.cluster.local" $servicesNs) "port" 3000 "name" "http-api" "protocol" "HTTP")
+    "workflow-engine" (dict "host" (printf "workflow-engine.%s.svc.cluster.local" $servicesNs) "port" 8080 "name" "http-api" "protocol" "HTTP")
+    "keycloak" (dict "host" (printf "keycloak.%s.svc.cluster.local" $identityNs) "port" 8080 "name" "http-api" "protocol" "HTTP")
+}}
+{{- range $name, $cfg := $targets }}
+{{- $proto := upper ($cfg.protocol | toString) }}
+{{- /* Istio only permits multiple hosts on a ServiceEntry when every port is
+       L7-routable (HTTP/HTTP2/GRPC/TLS); L4 (TCP/etc.) ports must declare a
+       single host or validation.istio.io rejects the object with
+       "multiple hosts provided with non-HTTP, non-TLS ports". */ -}}
+{{- $l7 := or (eq $proto "HTTP") (eq $proto "HTTP2") (eq $proto "GRPC") (eq $proto "GRPCWEB") (eq $proto "TLS") (eq $proto "HTTPS") }}
+---
+{{- if eq $mode "externalName" }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  namespace: {{ $releaseNs }}
+  labels:
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: cross-namespace-proxy
+spec:
+  type: ExternalName
+  externalName: {{ $cfg.host }}
+  ports:
+    - name: {{ $cfg.name }}
+      port: {{ $cfg.port }}
+      targetPort: {{ $cfg.port }}
+{{- else }}
+apiVersion: networking.istio.io/v1beta1
+kind: ServiceEntry
+metadata:
+  name: {{ $name }}-cross-ns
+  namespace: {{ $releaseNs }}
+  labels:
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: cross-namespace-proxy
+spec:
+  hosts:
+    {{- /* FQDN is what the in-namespace resolver produces for the short name,
+           so it is the single host kept for L4 services; L7 services also keep
+           the bare alias for convenience. */}}
+    {{- if $l7 }}
+    - {{ $name }}
+    {{- end }}
+    - {{ $name }}.{{ $releaseNs }}.svc.cluster.local
+  location: MESH_INTERNAL
+  resolution: DNS
+  endpoints:
+    - address: {{ $cfg.host }}
+  ports:
+    - number: {{ $cfg.port }}
+      name: {{ $cfg.name }}
+      protocol: {{ $cfg.protocol }}
+{{- end }}
+{{- end }}

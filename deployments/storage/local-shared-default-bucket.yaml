@@ -1,0 +1,83 @@
+# Shared hostPath storage for local/KIND deployments.
+#
+# Problem: two separate namespaces (agentstudio-workers, agentstudio-services)
+# each get their own dynamic local-path PVC for the default NeMo bucket.
+# Because local-path provisions separate directories per PVC, a POSIX
+# write by a worker pod is invisible to s3gateway (split-brain).
+#
+# Fix: one static PersistentVolume per namespace, all pointing at the same
+# hostPath directory. On a single-node KIND cluster every pod lands on the same
+# node, so /tmp/agentstudio/nemo-default-bucket is truly shared.
+#
+# Namespaces that need the shared bucket:
+#   agentstudio-workers  — s3gateway (serves S3 API), dataset-worker, kb-worker, connector-worker
+#   agentstudio-services — artifact-service, kb-retrieval-service
+#
+# Usage (called automatically by `make deploy-local-bootstrap-fresh`):
+#   kubectl apply -f deployments/storage/local-shared-default-bucket.yaml
+#
+# Teardown (called automatically by `make undeploy-local`):
+#   make purge-local-shared-default-bucket
+#
+# DO NOT apply on AKS — ANF NFS StorageClass handles cross-namespace sharing there.
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: nemo-local-shared
+  labels:
+    app.kubernetes.io/component: local-shared-storage
+    app.kubernetes.io/managed-by: agentstudio-makefile
+provisioner: kubernetes.io/no-provisioner
+volumeBindingMode: Immediate
+reclaimPolicy: Retain
+---
+# PV for agentstudio-workers (s3gateway, dataset-worker, kb-worker, connector-worker)
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: nemo-default-bucket-workers
+  labels:
+    app.kubernetes.io/component: local-shared-default-bucket
+    app.kubernetes.io/managed-by: agentstudio-makefile
+    agentstudio.io/shared-default-bucket: "true"
+spec:
+  capacity:
+    storage: 20Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: nemo-local-shared
+  hostPath:
+    path: /tmp/agentstudio/nemo-default-bucket
+    type: DirectoryOrCreate
+  claimRef:
+    apiVersion: v1
+    kind: PersistentVolumeClaim
+    namespace: agentstudio-workers
+    name: s3gateway-default-bucket
+---
+# PV for agentstudio-services (artifact-service, kb-retrieval-service)
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: nemo-default-bucket-services
+  labels:
+    app.kubernetes.io/component: local-shared-default-bucket
+    app.kubernetes.io/managed-by: agentstudio-makefile
+    agentstudio.io/shared-default-bucket: "true"
+spec:
+  capacity:
+    storage: 20Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: nemo-local-shared
+  hostPath:
+    path: /tmp/agentstudio/nemo-default-bucket
+    type: DirectoryOrCreate
+  claimRef:
+    apiVersion: v1
+    kind: PersistentVolumeClaim
+    namespace: agentstudio-services
+    name: s3gateway-default-bucket

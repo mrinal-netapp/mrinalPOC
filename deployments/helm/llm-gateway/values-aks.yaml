@@ -1,0 +1,19 @@
+# AKS overlay for the llm-gateway tier.
+# azureClientId values are populated by `make wi-fill-client-ids`.
+
+global:
+  storageClass: anf-nfs
+
+# ── Azure Workload Identity ────────────────────────────────────────────────────
+
+bifrost:
+  serviceAccount:
+    create: true
+    azureClientId: "9d594dfe-3c63-4c5f-874e-13a49262fd7f"
+  workloadIdentity:
+    enabled: true
+  # ANF NFS ignores Pod fsGroup; bifrost runs as UID 1000 and needs /app/data
+  # writable. A root chown init container fixes ownership on first mount.
+  persistence:
+    fixPermissions: true
+    accessMode: ReadWriteMany

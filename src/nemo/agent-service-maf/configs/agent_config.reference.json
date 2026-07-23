@@ -1,0 +1,498 @@
+{
+  "_comment": "Agent Framework — Complete Configuration Reference. See agent_config.reference.yaml for detailed documentation of every field.",
+  "_architecture": "Two layers: (1) 'agent' = top-level HTTP-facing agent selecting the framework adapter; (2) the agent-definition section (key 'semantic_kernel', retained for back-compat; framework-agnostic) = inner agents with their own instructions, models, tools, and orchestration.",
+
+  "project_id": "550e8400-e29b-41d4-a716-446655440000",
+
+  "agent": {
+    "framework": "maf",
+    "model": "anthropic/claude-sonnet-4-20250514",
+    "temperature": 0.7,
+    "max_tokens": 4096,
+    "timeout_seconds": 300
+  },
+
+  "semantic_kernel": {
+    "agents": [
+      {
+        "name": "researcher",
+        "instructions": "You are a research agent. Search for information using available tools and provide detailed, well-sourced findings. Always cite your sources. Focus on accuracy over speed.",
+        "description": "Searches for information using available tools",
+        "model": "openai/gpt-4o",
+        "temperature": 0.9,
+        "max_tokens": 8000,
+        "top_p": 1.0,
+        "top_k": 0,
+        "frequency_penalty": 0.0,
+        "presence_penalty": 0.0,
+        "stop_sequences": [],
+        "tools": [],
+        "mcp_servers": ["web-search", "document-store"],
+        "function_choice_behavior": "auto",
+        "response_format": null,
+        "prompt_template": null
+      },
+      {
+        "name": "analyst",
+        "instructions": "You are an analyst. Analyze research findings and identify key patterns, trends, and insights. Use data analysis tools when available. Present findings with supporting evidence.",
+        "description": "Analyzes data and identifies patterns",
+        "model": "anthropic/claude-sonnet-4-20250514",
+        "temperature": 0.5,
+        "max_tokens": 4096,
+        "tools": ["analyze_data", "create_chart"],
+        "mcp_servers": [],
+        "function_choice_behavior": "auto"
+      },
+      {
+        "name": "synthesizer",
+        "instructions": "You synthesize findings into a clear, actionable report. Combine research and analysis into a coherent narrative. Use professional tone and structured formatting.",
+        "description": "Creates final reports and summaries",
+        "model": "anthropic/claude-opus-4-20250514",
+        "temperature": 0.3,
+        "max_tokens": 16000,
+        "tools": ["write_report"],
+        "mcp_servers": [],
+        "function_choice_behavior": "auto"
+      }
+    ],
+    "orchestration": {
+      "type": "sequential",
+      "max_rounds": 20,
+      "termination_strategy": {
+        "type": "default",
+        "maximum_iterations": 3,
+        "automatic_reset": false,
+        "agents": []
+      },
+      "selection_strategy": {
+        "type": "auto",
+        "initial_agent": null,
+        "function_prompt": null
+      },
+      "handoffs": [],
+      "magentic_manager_model": null,
+      "magentic_manager_temperature": 0.0
+    },
+    "default_function_choice_behavior": "auto",
+    "chat_history_max_messages": 100,
+    "chat_history_reducer": null,
+    "enable_telemetry": false,
+    "use_kernel_filter": true,
+    "max_auto_invoke_attempts": 3,
+    "thread_type": "chat_history"
+  },
+
+  "_crewai_example": {
+    "agents": [
+      {
+        "name": "lead_researcher",
+        "role": "Senior Research Analyst",
+        "goal": "Uncover cutting-edge developments in the topic",
+        "backstory": "You're a seasoned researcher with a knack for finding the most relevant and impactful information.",
+        "model": "openai/gpt-4o",
+        "temperature": 0.7,
+        "max_tokens": 4096,
+        "tools": ["web-search.search", "document-store.query"],
+        "mcp_servers": ["web-search", "document-store"],
+        "allow_delegation": true,
+        "verbose": true
+      },
+      {
+        "name": "writer",
+        "role": "Technical Writer",
+        "goal": "Produce clear, engaging content based on research",
+        "backstory": "You're a skilled writer who transforms complex research into accessible, well-structured documents.",
+        "model": "anthropic/claude-sonnet-4-20250514",
+        "temperature": 0.5,
+        "max_tokens": 8192,
+        "tools": ["write_report"],
+        "mcp_servers": [],
+        "allow_delegation": false,
+        "verbose": true
+      }
+    ],
+    "tasks": [
+      {
+        "name": "research_task",
+        "description": "Research the given topic thoroughly",
+        "agent": "lead_researcher",
+        "expected_output": "Detailed research findings with sources"
+      },
+      {
+        "name": "writing_task",
+        "description": "Write a comprehensive report based on the research",
+        "agent": "writer",
+        "expected_output": "Well-structured report in markdown",
+        "context": ["research_task"]
+      }
+    ],
+    "orchestration": {
+      "process": "sequential",
+      "verbose": false,
+      "max_iterations": 10,
+      "memory": true,
+      "cache": true,
+      "max_rpm": 10
+    }
+  },
+
+  "_langgraph_example": {
+    "agents": [
+      {
+        "name": "planner",
+        "instructions": "You plan the steps needed to answer the user's question.",
+        "model": "anthropic/claude-sonnet-4-20250514",
+        "temperature": 0.3,
+        "max_tokens": 2048,
+        "tools": [],
+        "mcp_servers": []
+      },
+      {
+        "name": "executor",
+        "instructions": "You execute the plan by calling tools and gathering data.",
+        "model": "openai/gpt-4o",
+        "temperature": 0.5,
+        "max_tokens": 4096,
+        "tools": [],
+        "mcp_servers": ["web-search", "filesystem"]
+      },
+      {
+        "name": "reviewer",
+        "instructions": "You review the results and decide if the answer is complete.",
+        "model": "anthropic/claude-sonnet-4-20250514",
+        "temperature": 0.2,
+        "max_tokens": 2048,
+        "tools": [],
+        "mcp_servers": []
+      }
+    ],
+    "orchestration": {
+      "graph_type": "state_graph",
+      "checkpointer": "memory",
+      "max_iterations": 25,
+      "recursion_limit": 50,
+      "interrupt_before": [],
+      "interrupt_after": []
+    },
+    "edges": [
+      { "from": "planner", "to": "executor", "condition": "always" },
+      { "from": "executor", "to": "reviewer", "condition": "always" },
+      { "from": "reviewer", "to": "planner", "condition": "needs_revision" },
+      { "from": "reviewer", "to": "__end__", "condition": "approved" }
+    ]
+  },
+
+  "_orchestration_examples": {
+    "_comment": "Examples of different orchestration patterns for semantic_kernel",
+
+    "single_agent": {
+      "semantic_kernel": {
+        "agents": [
+          {
+            "name": "assistant",
+            "instructions": "You are a helpful general-purpose assistant.",
+            "model": "anthropic/claude-sonnet-4-20250514",
+            "tools": [],
+            "mcp_servers": ["filesystem", "web-search"]
+          }
+        ],
+        "orchestration": {
+          "type": "single"
+        }
+      }
+    },
+
+    "concurrent": {
+      "semantic_kernel": {
+        "agents": [
+          {
+            "name": "sentiment_analyzer",
+            "instructions": "Analyze the sentiment of the given text.",
+            "model": "anthropic/claude-sonnet-4-20250514"
+          },
+          {
+            "name": "entity_extractor",
+            "instructions": "Extract all named entities from the text.",
+            "model": "anthropic/claude-sonnet-4-20250514"
+          },
+          {
+            "name": "topic_classifier",
+            "instructions": "Classify the text into relevant topics.",
+            "model": "anthropic/claude-sonnet-4-20250514"
+          }
+        ],
+        "orchestration": {
+          "type": "concurrent",
+          "termination_strategy": { "type": "default", "maximum_iterations": 1 }
+        }
+      }
+    },
+
+    "handoff": {
+      "semantic_kernel": {
+        "agents": [
+          {
+            "name": "triage",
+            "instructions": "Route customer requests to the right specialist.",
+            "description": "Initial triage agent"
+          },
+          {
+            "name": "billing",
+            "instructions": "Handle billing inquiries, refunds, and charges.",
+            "description": "Billing specialist"
+          },
+          {
+            "name": "technical",
+            "instructions": "Handle technical issues, bugs, and setup help.",
+            "description": "Technical support agent"
+          }
+        ],
+        "orchestration": {
+          "type": "handoff",
+          "handoffs": [
+            {
+              "source": "triage",
+              "target": "billing",
+              "description": "Transfer billing questions to billing agent"
+            },
+            {
+              "source": "triage",
+              "target": "technical",
+              "description": "Transfer tech issues to technical agent"
+            },
+            {
+              "source": "billing",
+              "target": "triage",
+              "description": "Transfer back for re-routing"
+            },
+            {
+              "source": "technical",
+              "target": "triage",
+              "description": "Transfer back for re-routing"
+            }
+          ],
+          "termination_strategy": {
+            "type": "default",
+            "maximum_iterations": 10
+          }
+        }
+      }
+    },
+
+    "group_chat": {
+      "semantic_kernel": {
+        "agents": [
+          {
+            "name": "pm",
+            "instructions": "You are a product manager. Focus on user needs."
+          },
+          {
+            "name": "engineer",
+            "instructions": "You are a senior engineer. Focus on feasibility."
+          },
+          {
+            "name": "designer",
+            "instructions": "You are a UX designer. Focus on usability."
+          }
+        ],
+        "orchestration": {
+          "type": "group_chat",
+          "selection_strategy": {
+            "type": "kernel_function",
+            "function_prompt": "Given the conversation, which agent should speak next? Choose from: {{$_agent_}}."
+          },
+          "termination_strategy": {
+            "type": "keyword",
+            "keywords": ["CONSENSUS REACHED"],
+            "maximum_iterations": 15
+          }
+        }
+      }
+    },
+
+    "magentic": {
+      "semantic_kernel": {
+        "agents": [
+          {
+            "name": "coder",
+            "instructions": "Write and execute code to solve tasks.",
+            "mcp_servers": ["code-executor"]
+          },
+          {
+            "name": "researcher",
+            "instructions": "Search and gather information from the web.",
+            "mcp_servers": ["web-search"]
+          },
+          {
+            "name": "file-handler",
+            "instructions": "Read, write, and manage files.",
+            "mcp_servers": ["filesystem"]
+          }
+        ],
+        "orchestration": {
+          "type": "magentic",
+          "magentic_manager_model": "anthropic/claude-opus-4-20250514",
+          "magentic_manager_temperature": 0.0,
+          "max_rounds": 30
+        }
+      }
+    }
+  },
+
+  "interface": {
+    "host": "0.0.0.0",
+    "port": 8000,
+    "cors_origins": ["*"],
+    "request_timeout_seconds": 300,
+    "max_concurrent_requests": 50,
+    "request_validation": {
+      "max_input_length": 100000,
+      "require_agent_id": false,
+      "validate_json_schema": true
+    },
+    "rate_limiting": {
+      "enabled": false,
+      "requests_per_minute": 60,
+      "requests_per_second": 0,
+      "burst_size": 5,
+      "by_agent_id": true,
+      "by_ip": false
+    }
+  },
+
+  "gateway": {
+    "url": "http://localhost:4000",
+    "api_key": "",
+    "default_model": "anthropic/claude-sonnet-4-20250514",
+    "request_timeout_seconds": 120,
+    "retry_on_timeout": true,
+    "max_retries": 2,
+    "tool_loop": {
+      "max_tool_rounds": 10,
+      "tool_choice": "auto",
+      "allow_parallel_tool_calls": true,
+      "parallel_execution": true
+    },
+    "usage_tracking": {
+      "enabled": true,
+      "track_by_model": true,
+      "track_by_agent": true,
+      "history_size": 1000,
+      "cost_calculation_method": "passthrough"
+    }
+  },
+
+  "guardrails": {
+    "enabled": true,
+    "fail_open": false,
+    "log_blocked_requests": true,
+    "input_guardrails": [
+      {
+        "name": "input_validator",
+        "enabled": true,
+        "action_on_trigger": "block",
+        "config": {
+          "max_length": 10000,
+          "min_length": 1
+        }
+      },
+      {
+        "name": "prompt_injection",
+        "enabled": true,
+        "action_on_trigger": "block",
+        "config": {
+          "patterns": ["ignore previous instructions", "system prompt"]
+        }
+      },
+      {
+        "name": "pii_masker",
+        "enabled": true,
+        "action_on_trigger": "modify",
+        "config": {
+          "mask_email": true,
+          "mask_phone": true,
+          "mask_ssn": true,
+          "mask_cc": true
+        }
+      }
+    ],
+    "output_guardrails": [
+      {
+        "name": "content_filter",
+        "enabled": true,
+        "action_on_trigger": "block",
+        "config": {}
+      },
+      {
+        "name": "pii_masker",
+        "enabled": true,
+        "action_on_trigger": "modify",
+        "config": {
+          "mask_email": true,
+          "mask_phone": true,
+          "mask_ssn": true,
+          "mask_cc": true
+        }
+      },
+      {
+        "name": "output_length",
+        "enabled": true,
+        "action_on_trigger": "block",
+        "config": {
+          "max_chars": 50000
+        }
+      }
+    ],
+    "tool_guardrails": {
+      "mode": "denylist",
+      "tools": [],
+      "max_calls_per_request": 20
+    }
+  },
+
+  "mcp": {
+    "connection_timeout_seconds": 30,
+    "lazy_connect": true,
+    "tool_call_timeout_seconds": 60,
+    "max_tool_retries": 1,
+    "retry_on_timeout": true,
+    "discovery_on_connect": true,
+    "tool_name_format": "qualified",
+    "max_concurrent_tool_calls": 5
+  },
+
+  "mcp_servers": {},
+
+  "streaming": {
+    "enabled": true,
+    "token_chunk_size": 1,
+    "include_usage_in_stream": false,
+    "include_metadata": true
+  },
+
+  "memory": {
+    "enabled": false,
+    "type": "conversation",
+    "max_history_size": 50,
+    "max_context_tokens": 8192,
+    "summarize_after_turns": 0,
+    "persist_to_db": false,
+    "storage_backend": "memory",
+    "ttl_seconds": 3600
+  },
+
+  "error_handling": {
+    "max_retries": 2,
+    "retry_backoff_seconds": 1,
+    "max_backoff_seconds": 60,
+    "timeout_behavior": "fail",
+    "fallback_agent": "",
+    "retry_on_guardrail_block": false
+  },
+
+  "logging": {
+    "level": "INFO",
+    "format": "json",
+    "include_timestamp": true
+  }
+}

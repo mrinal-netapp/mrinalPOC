@@ -1,0 +1,102 @@
+{{/*
+Create the default-bucket PVC in the services namespace.
+
+PVCs are namespace-scoped; the s3gateway chart creates this PVC in the workers
+namespace (agentstudio-workers) which is not accessible from agentstudio-services.
+artifact-service and kb-retrieval-service both mount this PVC.
+
+Three binding modes (mutually exclusive — pick whichever fits the platform):
+
+  (1) volumeName: bind to a pre-provisioned static PV (hostPath, NFS, whatever).
+      Works everywhere; you own the PV YAML out-of-band.
+
+  (2) shareFromPVC: on Trident 24.10+ (sks6316 runs Trident 26.02), have
+      Trident bind this PVC to the SAME underlying ONTAP volume as the
+      workers-namespace source PVC. Renders:
+        - `trident.netapp.io/shareFromPVC: "<src-ns>/<src-pvc>"` annotation on
+          this PVC — instructs the Trident provisioner to skip dynamic
+          allocation and reuse the source's backing volume.
+        - A `TridentVolumeReference` CR — records consumer intent and is what
+          Trident's authorization check consults against the source PVC's
+          `trident.netapp.io/shareToNamespace` annotation. Without this CR,
+          Trident refuses the bind even if both annotations are present.
+      The source PVC (workers/s3gateway-default-bucket) MUST carry the
+      `shareToNamespace` annotation listing this namespace — set via the
+      workers chart's `s3gateway.defaultBucket.shareToNamespaces`. Both
+      sides need accessMode ReadWriteMany; storageClass must be the
+      Trident-backed class (e.g. ontap-nas).
+
+  (3) Default (neither set): Helm provisions a fresh dynamic volume under
+      the configured storageClass. Not shared with anyone — useful for
+      isolated dev clusters where the services tier has its own data.
+*/}}
+{{- if .Values.defaultBucketPvc.create }}
+{{- $defaultBucketPvcName := printf "%s-default-bucket" (.Values.global.s3gatewayFullname | default "s3gateway") -}}
+{{- $effectiveVolumeName := .Values.defaultBucketPvc.volumeName | default "" -}}
+{{- $share := .Values.defaultBucketPvc.shareFromPVC | default dict -}}
+{{- $shareNamespace := $share.namespace | default "" -}}
+{{- $shareName := $share.name | default "" -}}
+{{- $shareEnabled := and (ne $shareNamespace "") (ne $shareName "") -}}
+{{- if $shareEnabled -}}
+  {{- if $effectiveVolumeName -}}
+    {{- fail "services.defaultBucketPvc: set EITHER volumeName OR shareFromPVC, not both" -}}
+  {{- end -}}
+{{- end -}}
+{{- if not (or $effectiveVolumeName $shareEnabled) -}}
+  {{- /* No explicit binding; if a PVC already exists with a volumeName (e.g.
+        from a prior install), preserve that binding so helm upgrade is a
+        no-op rather than racing dynamic provisioning. */}}
+  {{- $existingPvc := lookup "v1" "PersistentVolumeClaim" .Release.Namespace $defaultBucketPvcName -}}
+  {{- if and $existingPvc $existingPvc.spec $existingPvc.spec.volumeName -}}
+    {{- $effectiveVolumeName = $existingPvc.spec.volumeName -}}
+  {{- end -}}
+{{- end -}}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $defaultBucketPvcName }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/component: default-bucket-pvc
+  {{- if $shareEnabled }}
+  annotations:
+    # Tells Trident to bind this PVC to the same ONTAP volume backing
+    # {{ $shareNamespace }}/{{ $shareName }} rather than provisioning a new one.
+    # The source PVC must list this namespace in its shareToNamespace
+    # annotation, and the TridentVolumeReference below must exist.
+    trident.netapp.io/shareFromPVC: "{{ $shareNamespace }}/{{ $shareName }}"
+  {{- end }}
+spec:
+  accessModes:
+    - {{ .Values.global.accessMode | default .Values.defaultBucketPvc.accessMode | default "ReadWriteMany" }}
+  resources:
+    requests:
+      storage: {{ .Values.defaultBucketPvc.size | default "10Gi" | quote }}
+  {{- if .Values.defaultBucketPvc.storageClass }}
+  storageClassName: {{ .Values.defaultBucketPvc.storageClass | quote }}
+  {{- else if .Values.global.storageClass }}
+  storageClassName: {{ .Values.global.storageClass | quote }}
+  {{- end }}
+  {{- if $effectiveVolumeName }}
+  volumeName: {{ $effectiveVolumeName | quote }}
+  {{- end }}
+{{- if $shareEnabled }}
+---
+# Consumer-side authorization for the cross-namespace bind above. Trident
+# matches this CR against the source PVC's shareToNamespace annotation
+# before allowing the bind; both must be in place. The CR's own name is
+# arbitrary — we derive it from the source-pvc name for traceability.
+apiVersion: trident.netapp.io/v1
+kind: TridentVolumeReference
+metadata:
+  name: {{ printf "share-%s" $shareName | trunc 63 | trimSuffix "-" }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/component: default-bucket-pvc-share
+spec:
+  pvcName: {{ $shareName | quote }}
+  pvcNamespace: {{ $shareNamespace | quote }}
+{{- end }}
+{{- end }}

@@ -1,0 +1,90 @@
+# Observability overrides -- enables all ServiceMonitors.
+#
+# Prerequisites:
+#   The Prometheus Operator CRDs must be installed first:
+#     make deploy-observability
+#
+# Usage (automatic -- applied when ServiceMonitor CRD is detected):
+#   make deploy-platform-deps   # auto-detects and applies this overlay
+#   make deploy-platform         # auto-detects and applies this overlay
+#
+# Manual usage:
+#   make deploy-platform HELM_EXTRA_ARGS="-f deployments/helm/nemo/values-enable-observability.yaml"
+#
+# See docs/deployment/deployment-design.md for the full deployment architecture.
+
+# Top-level observability flag (documentation convention)
+observability:
+  metrics:
+    serviceMonitor:
+      enabled: true
+
+# --- AgentStudio application services ---
+
+agent-service:
+  metrics:
+    serviceMonitor:
+      enabled: true
+
+artifact-service:
+  metrics:
+    serviceMonitor:
+      enabled: true
+
+config-service:
+  metrics:
+    serviceMonitor:
+      enabled: true
+
+apigateway-service:
+  metrics:
+    serviceMonitor:
+      enabled: true
+
+analytics-engine:
+  metrics:
+    serviceMonitor:
+      enabled: true
+
+workflow-engine:
+  metrics:
+    serviceMonitor:
+      enabled: true
+
+storage-manager:
+  metrics:
+    serviceMonitor:
+      enabled: true
+
+kb-retrieval-service:
+  metrics:
+    serviceMonitor:
+      enabled: true
+
+# --- Dependency services ---
+
+redis:
+  metrics:
+    serviceMonitor:
+      enabled: true
+
+temporal:
+  metrics:
+    serviceMonitor:
+      enabled: true
+
+# Connector worker HPA: Temporal queue backlog via prometheus-adapter (see
+# docs/observability/worker-hpa-runbook.md). CPU metric is omitted so scale-down
+# is not blocked by polling baseline when the queue is idle.
+processing-workers:
+  connectorWorker:
+    autoscaling:
+      targetCPUUtilizationPercentage: 0
+      customMetric:
+        enabled: true
+
+bifrost:
+  metrics:
+    serviceMonitor:
+      enabled: true
+

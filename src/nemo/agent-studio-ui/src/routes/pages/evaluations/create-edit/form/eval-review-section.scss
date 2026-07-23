@@ -1,0 +1,46 @@
+@use "@/styles/mixins" as *;
+
+.eval-impact-card {
+  margin-top: 8px;
+}
+
+.eval-impact-grid {
+  align-items: stretch;
+}
+
+.eval-impact-cell {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.eval-impact-notice {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  margin-top: 16px;
+  padding: 14px 16px;
+  border-radius: 8px;
+  background-color: var(--surface-secondary);
+  border: 1px solid var(--border-default);
+
+  &__icon {
+    flex-shrink: 0;
+    margin-top: 2px;
+  }
+
+  > p {
+    margin: 0;
+    line-height: 20px;
+  }
+}
+
+@include mobile {
+  .eval-impact-grid {
+    grid-template-columns: 1fr !important;
+  }
+
+  .eval-impact-cell.card-block--side-separator::after {
+    display: none;
+  }
+}

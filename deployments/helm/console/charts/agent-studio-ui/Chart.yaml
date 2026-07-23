@@ -1,0 +1,6 @@
+apiVersion: v2
+name: agent-studio-ui
+description: A Helm sub-chart for the AgentStudio "agent-studio-ui" frontend
+type: application
+version: 1.0.0
+appVersion: "1.0.0"

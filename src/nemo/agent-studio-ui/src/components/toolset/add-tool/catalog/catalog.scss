@@ -1,0 +1,105 @@
+@use '@/styles/mixins' as *;
+@use '../../mcp-config-dialog';
+
+// Catalog table: white header, gray body cells and pagination.
+.catalog-config__form .dt-table .table-header,
+.catalog-config__form .dt-table .dt-header {
+  background: var(--background-content);
+}
+
+.catalog-config__form .dt-table .table-cell {
+  background: var(--background-main, #f5f5f5);
+}
+
+.catalog-config__form .dt-table .dt-pagination {
+  background: var(--background-main, #f5f5f5);
+}
+
+.catalog-config__form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+
+  // Constrain form fields (name, description, labels) to the standard
+  // field width. The RadioGroup (template table) is excluded so it
+  // stretches full card width.
+  > *:not(.radio-group) {
+    max-width: 616px;
+    width: 100%;
+
+    @include tablet {
+      max-width: 100%;
+    }
+  }
+}
+
+// The AddEntityForm constrains each CardBlock direct child to 616px.
+// The toolset details card needs full width so the catalog template
+// table columns are visible. This override has higher specificity
+// than the original rule (.add-entity-form__form-card .card-block > *).
+.add-entity-form__form-card .card-block > .toolset-details-card {
+  max-width: none;
+}
+
+.catalog-config__dialog-content {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-height: 60vh;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+
+.catalog-config__separator {
+  border-top: 1px solid var(--border-main);
+  margin: 4px 0;
+}
+
+.catalog-config__env-toggle {
+  border: 1px solid var(--border-main);
+  border-radius: 4px;
+  padding: 8px 12px;
+  background: transparent;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+  cursor: pointer;
+  align-self: flex-start;
+}
+
+.catalog-config__preset-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px 24px;
+  align-items: center;
+}
+
+.catalog-config__preset-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.catalog-config__credential-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.catalog-config__credential-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 8px;
+  border-radius: 10px;
+  background-color: var(--bg-secondary, #e8eaed);
+  font-size: 12px;
+}
+
+.catalog-config__helper-text {
+  margin-top: 4px;
+}

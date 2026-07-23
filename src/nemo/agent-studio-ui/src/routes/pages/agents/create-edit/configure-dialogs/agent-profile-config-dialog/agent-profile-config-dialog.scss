@@ -1,0 +1,107 @@
+.agent-profile-config-dialog {
+  width: 100%;
+
+  &__content {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    padding: 24px 40px;
+
+    h1, h2, h3, h4, h5, h6,
+    p, dl, dd, label {
+      margin: 0;
+    }
+  }
+
+  &__heading {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  &__field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  &__field-label-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  &__field-tooltip {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    cursor: help;
+    color: var(--text-secondary);
+
+    &::after {
+      content: attr(data-tooltip);
+      position: absolute;
+      bottom: calc(100% + 8px);
+      right: 0;
+      min-width: 200px;
+      max-width: 280px;
+      padding: 8px 12px;
+      background-color: var(--background-inverse, #161616);
+      color: var(--text-on-color, #ffffff);
+      font-size: 13px;
+      line-height: 1.4;
+      border-radius: 4px;
+      white-space: normal;
+      opacity: 0;
+      visibility: hidden;
+      transition: opacity 0.15s ease-in-out, visibility 0.15s ease-in-out;
+      z-index: 10000;
+      pointer-events: none;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+    }
+
+    &:hover::after {
+      opacity: 1;
+      visibility: visible;
+    }
+  }
+
+  // -- Textarea --
+
+  &__textarea-wrapper {
+    position: relative;
+  }
+
+  &__textarea {
+    width: 100%;
+    min-height: 64px;
+    padding: 8px 12px;
+    border: 1px solid var(--border-strong, var(--gray-50, #8d8d8d));
+    border-radius: 2px;
+    background: var(--background-default, #ffffff);
+    font: inherit;
+    color: var(--text-primary);
+    resize: vertical;
+
+    &:focus {
+      outline: none;
+      border-color: var(--interactive-primary, var(--blue-60, #0f62fe));
+    }
+
+    &::placeholder {
+      color: var(--text-secondary);
+    }
+
+    &--tall {
+      min-height: 200px;
+    }
+  }
+
+  &__textarea-meta {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 4px;
+    font-size: 13px;
+    color: var(--text-secondary);
+  }
+}

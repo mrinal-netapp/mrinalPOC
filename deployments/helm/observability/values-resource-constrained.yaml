@@ -1,0 +1,56 @@
+# Resource-constrained overlay for local dev / small clusters.
+# Usage:
+#   make deploy-observability HELM_EXTRA_ARGS="-f deployments/helm/observability/values-resource-constrained.yaml"
+#   make deploy-all OBSERVABILITY=1 HELM_EXTRA_ARGS="-f deployments/helm/observability/values-resource-constrained.yaml"
+
+phoenix:
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: 500m
+      memory: 1Gi
+
+otel-collector:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 250m
+      memory: 128Mi
+
+kube-prometheus-stack:
+  prometheus:
+    prometheusSpec:
+      retention: 3d
+      retentionSize: 2GB
+
+loki:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
+  persistence:
+    size: 10Gi
+  # Reduce retention to save storage on small clusters.
+  retention:
+    period: 72h   # 3 days
+
+tempo:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
+  persistence:
+    size: 5Gi
+  # Reduce retention to save storage on small clusters.
+  retention:
+    blockRetention: 72h   # 3 days

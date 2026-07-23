@@ -1,0 +1,319 @@
+# Pre-prod GCP (GKE): infra -> storage -> deploy.
+#
+# Deploy is self-contained in this workflow (does NOT call deploy-reusable.yml).
+#
+# GitHub Environment `gcp` (OIDC + vars):
+#   GCP_WORKLOAD_IDENTITY_PROVIDER, GCP_SERVICE_ACCOUNT
+#   OIDC subject: repo:<org>/<repo>:environment:gcp
+#
+# Helm deploy settings come from deployments/gcp/envs/preprod.yaml:
+#   application.endpoint, projectId, location, gke.clusterName,
+#   containerRegistry.repositoryId, edge.gatewayAddressName
+#
+# The deploy job assumes GCP OIDC, fetches GKE credentials, runs istio-prereq,
+# then `make deploy CLOUD=gcp ENV=preprod` (env-file mode; gateway IP + issuer
+# overrides via deployments/gcp/scripts/gke-edge-helm-sets.sh).
+#
+# Usage:
+#   gh workflow run deploy-preprod-gcp.yml -f image_tag=1.0.0-rc.1
+#   gh workflow run deploy-preprod-gcp.yml -f image_tag=1.0.0-rc.1 -f skip_infra_storage=false
+
+name: Deploy Pre-Prod GCP
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Container image tag to deploy (e.g. 1.0.0-rc.1)"
+        required: true
+        type: string
+      skip_infra_storage:
+        description: "Skip infra plan/apply and storage (deploy Helm tiers only)"
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: deploy-preprod-gcp
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate (gcp/preprod)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify env yaml exists
+        shell: bash -e {0}
+        run: |
+          python3 -c "import yaml" 2>/dev/null || python3 -m pip install --user pyyaml
+          ENV_FILE="deployments/gcp/envs/preprod.yaml"
+          if [[ ! -f "$ENV_FILE" ]]; then
+            echo "::error::Missing $ENV_FILE" >&2
+            exit 1
+          fi
+          ey() { python3 deployments/_lib/env_yaml.py --file "$ENV_FILE" --path "$1"; }
+          gar_loc="$(ey location)"
+          gar_proj="$(ey projectId)"
+          gar_repo="$(ey containerRegistry.repositoryId)"
+          echo "Using $ENV_FILE (image_tag=${{ inputs.image_tag }})" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "  endpoint             : $(ey application.endpoint)" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "  gke cluster          : $(ey gke.clusterName)" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "  location             : $(ey location)" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "  gateway address name : $(ey edge.gatewayAddressName)" | tee -a "$GITHUB_STEP_SUMMARY"
+          if [[ -n "$gar_loc" && -n "$gar_proj" && -n "$gar_repo" ]]; then
+            echo "  container image repo : ${gar_loc}-docker.pkg.dev/${gar_proj}/${gar_repo}" | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
+
+  infra-plan:
+    name: Infra plan (gcp/preprod)
+    needs: validate
+    if: ${{ !inputs.skip_infra_storage }}
+    runs-on: ubuntu-latest
+    environment: gcp
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: GCP login (OIDC)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account:            ${{ vars.GCP_SERVICE_ACCOUNT }}
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Infra plan
+        env:
+          GCP_SERVICE_ACCOUNT: ${{ vars.GCP_SERVICE_ACCOUNT }}
+        shell: bash -euo pipefail {0}
+        run: |
+          make infra CLOUD=gcp ENV='preprod' ACTION=plan \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+
+  infra-apply:
+    name: Infra apply (gcp/preprod)
+    needs: infra-plan
+    if: ${{ !inputs.skip_infra_storage }}
+    runs-on: ubuntu-latest
+    environment: gcp
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: GCP login (OIDC)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account:            ${{ vars.GCP_SERVICE_ACCOUNT }}
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Infra apply
+        env:
+          GCP_SERVICE_ACCOUNT: ${{ vars.GCP_SERVICE_ACCOUNT }}
+        shell: bash -euo pipefail {0}
+        run: |
+          make infra CLOUD=gcp ENV='preprod' ACTION=apply \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+
+  storage:
+    name: Storage (gcp/preprod)
+    needs: infra-apply
+    if: ${{ !inputs.skip_infra_storage }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: gcp
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: GCP login (OIDC)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account:            ${{ vars.GCP_SERVICE_ACCOUNT }}
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          install_components: gke-gcloud-auth-plugin
+
+      - name: Storage (make storage)
+        shell: bash -euo pipefail {0}
+        run: |
+          python3 -c "import yaml" 2>/dev/null || python3 -m pip install --user pyyaml
+          make storage CLOUD=gcp ENV='preprod' \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+
+  deploy:
+    name: Deploy (gcp/preprod)
+    needs: [validate, infra-plan, infra-apply, storage]
+    if: |
+      always() &&
+      needs.validate.result == 'success' &&
+      (inputs.skip_infra_storage || needs.storage.result == 'success')
+    runs-on: [self-hosted, netapp]
+    environment: gcp
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve cluster from preprod env file
+        shell: bash -euo pipefail {0}
+        run: |
+          python3 -c "import yaml" 2>/dev/null || python3 -m pip install --user pyyaml
+          ENV_FILE="deployments/gcp/envs/preprod.yaml"
+          ey() { python3 deployments/_lib/env_yaml.py --file "$ENV_FILE" --path "$1"; }
+          PROJECT="$(ey projectId)"
+          LOCATION="$(ey location)"
+          CLUSTER="$(ey gke.clusterName)"
+          if [[ -z "$PROJECT" || -z "$LOCATION" || -z "$CLUSTER" ]]; then
+            echo "::error::Missing projectId, location, or gke.clusterName in $ENV_FILE" >&2
+            exit 1
+          fi
+          {
+            echo "GCP_PROJECT_ID=$PROJECT"
+            echo "GKE_CLUSTER_LOCATION=$LOCATION"
+            echo "GKE_CLUSTER_NAME=$CLUSTER"
+          } >> "$GITHUB_ENV"
+          echo "GKE: $CLUSTER ($LOCATION) project=$PROJECT"
+
+      - name: Ensure gcloud is installed
+        shell: bash -e {0}
+        run: |
+          if command -v gcloud >/dev/null 2>&1; then
+            echo "gcloud already installed: $(gcloud --version 2>&1 | head -1)"
+            exit 0
+          fi
+          echo "Installing Google Cloud SDK..."
+          if command -v sudo >/dev/null 2>&1; then SUDO="sudo"; else SUDO=""; fi
+          if command -v apt-get >/dev/null 2>&1; then
+            $SUDO apt-get update -y
+            $SUDO apt-get install -y apt-transport-https ca-certificates gnupg curl
+            curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg \
+              | gpg --dearmor \
+              | $SUDO tee /usr/share/keyrings/cloud.google.gpg >/dev/null
+            echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" \
+              | $SUDO tee /etc/apt/sources.list.d/google-cloud-sdk.list >/dev/null
+            $SUDO apt-get update -y
+            $SUDO apt-get install -y google-cloud-cli google-cloud-cli-gke-gcloud-auth-plugin
+          else
+            echo "::error::gcloud not found and apt-get unavailable on this runner" >&2
+            exit 1
+          fi
+          gcloud --version
+
+      - name: GCP login (OIDC)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account:            ${{ vars.GCP_SERVICE_ACCOUNT }}
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          install_components: gke-gcloud-auth-plugin
+
+      - name: Get GKE credentials
+        uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: ${{ env.GKE_CLUSTER_NAME }}
+          location:     ${{ env.GKE_CLUSTER_LOCATION }}
+          project_id:   ${{ env.GCP_PROJECT_ID }}
+
+      - name: Setup Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v4.2.1
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: v1.30.0
+
+      - name: Verify cluster access
+        shell: bash -e {0}
+        run: |
+          kubectl cluster-info
+          kubectl get nodes -o wide || true
+
+      - name: Install Istio prerequisites
+        shell: bash -e {0}
+        run: |
+          python3 -c "import yaml" 2>/dev/null || python3 -m pip install --user pyyaml
+          endpoint="$(python3 deployments/_lib/env_yaml.py --file deployments/gcp/envs/preprod.yaml --path application.endpoint)"
+          make istio-prereq ENDPOINT="$endpoint"
+
+      - name: Verify Istio prerequisites
+        shell: bash -e {0}
+        run: make verify-istio-gateway
+
+      - name: Verify GKE deploy scripts
+        shell: bash -euo pipefail {0}
+        run: |
+          test -f deployments/gcp/scripts/gke-edge-helm-sets.sh || { echo "::error::Missing deployments/gcp/scripts/gke-edge-helm-sets.sh"; exit 1; }
+
+      - name: Deploy (make deploy)
+        shell: bash -euo pipefail {0}
+        env:
+          IMAGE_TAG: ${{ inputs.image_tag }}
+        run: |
+          # Env-file mode: ENDPOINT, CONTAINER_IMAGE_REPO, KEYCLOAK_HOSTNAME
+          # are read from deployments/gcp/envs/preprod.yaml by make deploy.
+          # Unset Entra-related env vars so partial Entra config does not enable
+          # the GKE broker path (helm-identity-install-gke).
+          unset KEYCLOAK_ENTRA_APP_CLIENT_ID KEYCLOAK_TENANT_ID \
+            KEYCLOAK_ENTRA_GROUP_ADMINS_OBJECTID KEYCLOAK_ENTRA_GROUP_MEMBERS_OBJECTID \
+            KEYCLOAK_HOSTNAME || true
+          make deploy CLOUD=gcp ENV=preprod \
+            IMAGE_TAG="$IMAGE_TAG" \
+            OBSERVABILITY=1
+
+      - name: Show release status
+        if: always()
+        shell: bash -e {0}
+        run: |
+          for ns in database agentstudio-identity agentstudio-platform \
+                    agentstudio-llm-gateway agentstudio-services agentstudio-console \
+                    agentstudio-workers agentstudio-edge monitoring; do
+            echo "--- Releases in $ns ---"
+            helm list -n "$ns" 2>/dev/null || true
+          done
+
+      - name: Cleanup credentials
+        if: always()
+        shell: bash
+        run: |
+          gcloud auth revoke --all 2>/dev/null || true
+          rm -f "${{ runner.temp }}"/kubeconfig* || true
+
+  pipeline-status:
+    name: Pipeline result
+    if: always()
+    needs: [validate, infra-plan, infra-apply, storage, deploy]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail if any stage failed
+        shell: bash -e {0}
+        run: |
+          fail() { echo "::error::$1" >&2; exit 1; }
+          [[ "${{ needs.validate.result }}" == "success" ]] || fail "Validate failed"
+          if [[ "${{ inputs.skip_infra_storage }}" != "true" ]]; then
+            [[ "${{ needs.infra-plan.result }}"  == "success" ]] || fail "Infra plan failed"
+            [[ "${{ needs.infra-apply.result }}" == "success" ]] || fail "Infra apply failed"
+            [[ "${{ needs.storage.result }}"     == "success" ]] || fail "Storage failed"
+          else
+            echo "Skipped infra + storage (skip_infra_storage=true)"
+          fi
+          [[ "${{ needs.deploy.result }}" == "success" ]] || fail "Deploy failed"
+          echo "All stages succeeded."

@@ -1,0 +1,108 @@
+{{- if and .Values.enabled .Values.networkPolicy.enabled }}
+{{- /*
+  Gate ingress so only the Bifrost proxy (for the /mcp endpoint) and
+  the API gateway (for the REST surface) can reach artifact-service.
+  Auth middleware in this service trusts the gateway-injected
+  X-User-ID / X-Agent-ID / X-Project-ID / X-Session-ID headers and
+  does NOT verify the Keycloak JWT itself — that's the gateway's
+  job. Without this policy, any pod that can reach :8080 could spoof
+  any user, so the NetworkPolicy is part of the auth contract, not
+  just a hardening preference.
+
+  Egress: postgres + redis (idempotency dedup, optional) + DNS, plus
+  the shared NFS PVC (mounted as a volume; no network policy needed
+  for that). We do not allow general internet egress.
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "artifact-service.fullname" . }}
+  labels:
+    {{- include "artifact-service.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "artifact-service.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        # Bifrost proxy -> /mcp endpoint (lives in agentstudio-llm-gateway, cross-namespace)
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.llmGatewayNamespace | default "agentstudio-llm-gateway" }}
+          podSelector:
+            matchLabels:
+              component: bifrost
+        # API gateway -> REST surface (catalog, viewer, merge)
+        - podSelector:
+            matchLabels:
+              component: apigateway-service
+        # GUI may make CSR calls in dev clusters
+        - podSelector:
+            matchLabels:
+              component: gui
+        # Workflow-engine defensive HTTP callbacks
+        - podSelector:
+            matchLabels:
+              component: workflow-engine
+      ports:
+        - protocol: TCP
+          port: 8080
+    # Allow Prometheus scrape (uses kubernetes-monitoring namespace
+    # convention; relax/tighten via .Values.networkPolicy.allowMonitoring).
+    {{- if .Values.networkPolicy.allowMonitoring | default true }}
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - protocol: TCP
+          port: 8080
+    {{- end }}
+  egress:
+    # Postgres (shared catalog schema).
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: database
+      ports:
+        - protocol: TCP
+          port: 5432
+    # Redis (idempotency cache, optional).
+    # Redis runs in the platform tier namespace; both namespaceSelector and
+    # podSelector are required for cross-namespace matching.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.platformNamespace | default "agentstudio-platform" }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: redis
+      ports:
+        - protocol: TCP
+          port: 6379
+    # DNS
+    - to: []
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # Istio control plane: pilot-agent (UID 1337) needs to reach istiod for
+    # workload certificate signing (15012) and xDS (15010/15012).
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: istio-system
+      ports:
+        - protocol: TCP
+          port: 15012
+        - protocol: TCP
+          port: 15010
+        - protocol: TCP
+          port: 15014
+        - protocol: TCP
+          port: 15017
+{{- end }}

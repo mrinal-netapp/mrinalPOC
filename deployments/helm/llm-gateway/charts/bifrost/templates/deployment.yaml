@@ -1,0 +1,204 @@
+{{- if .Values.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "bifrost.fullname" . }}
+  labels:
+    {{- include "bifrost.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  {{- with .Values.strategy }}
+  strategy:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "bifrost.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "bifrost.selectorLabels" . | nindent 8 }}
+        app: {{ include "bifrost.fullname" . }}
+        version: {{ .Values.image.tag | quote }}
+        {{- if .Values.workloadIdentity.enabled }}
+        azure.workload.identity/use: "true"
+        {{- end }}
+      annotations:
+        # Opt this pod into Istio native sidecar containers (k8s 1.28+,
+        # Istio 1.20+). With native sidecars, istio-proxy is injected as
+        # an initContainer with restartPolicy=Always, which means it
+        # starts BEFORE the main `bifrost` container and is already
+        # serving mTLS by the time bifrost's startup code dials
+        # shared-postgresql.database:5432. Without this, bifrost's main
+        # races istio-proxy on cold start and the postgres connection
+        # gets RST on a half-built mTLS path (verified on sks6316:
+        # 55 CrashLoopBackOff restarts, "connection reset by peer").
+        sidecar.istio.io/nativeSidecar: "true"
+    spec:
+      serviceAccountName: {{ include "bifrost.serviceAccountName" . }}
+      initContainers:
+        {{- if and .Values.persistence.enabled .Values.persistence.fixPermissions }}
+        - name: fix-perms
+          image: {{ .Values.persistence.fixPermissionsImage | default "busybox:1.36" | quote }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy | default "IfNotPresent" }}
+          securityContext:
+            runAsUser: 0
+            runAsNonRoot: false
+          command:
+            - sh
+            - -c
+            - chown -R 1000:1000 /app/data && chmod -R u+rwX /app/data
+          volumeMounts:
+            - name: bifrost-data
+              mountPath: /app/data
+        {{- end }}
+        - name: create-db
+          image: {{ .Values.initContainer.image.repository | default (printf "%s/init-tools" .Values.global.imageRepository) }}:{{ .Values.initContainer.image.tag | default "latest" }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy | default .Values.initContainer.image.pullPolicy | default "IfNotPresent" }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              until pg_isready -h "$POSTGRES_HOST" -p "$POSTGRES_PORT" -U "$POSTGRES_USER"; do
+                echo "Waiting for PostgreSQL at $POSTGRES_HOST:$POSTGRES_PORT ..."
+                sleep 2
+              done
+              PGPASSWORD="$POSTGRES_PASSWORD" psql -h "$POSTGRES_HOST" -p "$POSTGRES_PORT" -U "$POSTGRES_USER" -d postgres -tc "SELECT 1 FROM pg_database WHERE datname = '$POSTGRES_DB'" | grep -q 1 || \
+              PGPASSWORD="$POSTGRES_PASSWORD" psql -h "$POSTGRES_HOST" -p "$POSTGRES_PORT" -U "$POSTGRES_USER" -d postgres -c "CREATE DATABASE \"$POSTGRES_DB\";"
+              echo "Database '$POSTGRES_DB' ready."
+          env:
+            - name: POSTGRES_HOST
+              value: {{ .Values.database.host | quote }}
+            - name: POSTGRES_PORT
+              value: {{ .Values.database.port | quote }}
+            - name: POSTGRES_USER
+              value: {{ .Values.database.user | quote }}
+            - name: POSTGRES_DB
+              value: {{ .Values.database.name | quote }}
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "bifrost.fullname" . }}-postgresql
+                  key: postgres-password
+      containers:
+        - name: bifrost
+          # Image resolution:
+          #   - If `image.repository` contains a `/` (e.g. `maximhq/bifrost`),
+          #     use it verbatim — escape hatch for operators who want
+          #     stock upstream. The tag comes from `image.tag` only
+          #     (NOT global.imageTag) since upstream image versions are
+          #     independent of AgentStudio's release tag. Operators
+          #     using this escape hatch must also override
+          #     pricing.pricingUrl + pricing.modelParametersUrl to the
+          #     upstream getbifrost.ai URLs because the upstream image
+          #     doesn't ship /app/builtin-pricing/.
+          #   - Otherwise (bare repo name like `bifrost`), prepend the
+          #     AgentStudio registry from `global.imageRepository` —
+          #     the standard chart pattern. The tag respects the
+          #     usual `global.imageTag | default image.tag` cascade.
+          #     This pulls the AgentStudio bifrost mirror that bakes
+          #     in the pricing datasheets at /app/builtin-pricing/.
+          #   - If `global.imageRepository` is empty AND the repo is
+          #     bare, fall back to upstream `maximhq/bifrost` so the
+          #     chart doesn't render an invalid image ref `:/bifrost`.
+          {{- if contains "/" .Values.image.repository }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          {{- else if .Values.global.imageRepository }}
+          image: "{{ .Values.global.imageRepository }}/{{ .Values.image.repository }}:{{ .Values.global.imageTag | default .Values.image.tag }}"
+          {{- else }}
+          image: "maximhq/{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          {{- end }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy | default .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          env:
+            {{- if .Values.certs.enabled }}
+            - name: SSL_CERT_FILE
+              value: "{{ .Values.certs.mountPath }}/{{ .Values.certs.certFileName }}"
+            - name: NODE_EXTRA_CA_CERTS
+              value: "{{ .Values.certs.mountPath }}/{{ .Values.certs.certFileName }}"
+            {{- end }}
+            {{- range .Values.env }}
+            - name: {{ .name }}
+              value: {{ .value | quote }}
+            {{- end }}
+            - name: BIFROST_PORT
+              value: "8080"
+            - name: POSTGRES_HOST
+              value: {{ .Values.database.host | quote }}
+            - name: POSTGRES_PORT
+              value: {{ .Values.database.port | quote }}
+            - name: POSTGRES_USER
+              value: {{ .Values.database.user | quote }}
+            - name: POSTGRES_DB
+              value: {{ .Values.database.name | quote }}
+            - name: POSTGRES_SSL_MODE
+              value: {{ .Values.database.sslMode | quote }}
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "bifrost.fullname" . }}-postgresql
+                  key: postgres-password
+          volumeMounts:
+            - name: bifrost-data
+              mountPath: /app/data
+            - name: bifrost-config-volume
+              mountPath: /app/data/config.json
+              subPath: config.json
+            {{- if .Values.certs.enabled }}
+            - name: custom-ca-certs
+              mountPath: {{ .Values.certs.mountPath }}
+              readOnly: true
+            {{- end }}
+            {{- if or .Values.pricing.localFiles.pricingData .Values.pricing.localFiles.modelParametersData }}
+            # Locally-supplied pricing datasheets for airgapped / MITM-egress
+            # clusters. config.json's `framework.pricing.{pricing_url,
+            # model_parameters_url}` references these via
+            # `file:///app/pricing-data/<name>`. See values.yaml's `pricing`
+            # block for the curl + --set-file flow.
+            - name: bifrost-pricing-data
+              mountPath: /app/pricing-data
+              readOnly: true
+            {{- end }}
+          livenessProbe:
+            {{- toYaml .Values.livenessProbe | nindent 12 }}
+          readinessProbe:
+            {{- toYaml .Values.readinessProbe | nindent 12 }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: bifrost-config-volume
+          configMap:
+            name: {{ include "bifrost.fullname" . }}-config
+        - name: bifrost-data
+          {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "bifrost.fullname" . }}-data
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        {{- if .Values.certs.enabled }}
+        - name: custom-ca-certs
+          secret:
+            secretName: {{ .Values.certs.secretName }}
+        {{- end }}
+        {{- if or .Values.pricing.localFiles.pricingData .Values.pricing.localFiles.modelParametersData }}
+        - name: bifrost-pricing-data
+          configMap:
+            name: {{ include "bifrost.fullname" . }}-pricing-data
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

@@ -1,0 +1,30 @@
+dependencies:
+- name: kube-prometheus-stack
+  repository: https://prometheus-community.github.io/helm-charts
+  version: 65.8.1
+- name: prometheus-adapter
+  repository: https://prometheus-community.github.io/helm-charts
+  version: 4.11.0
+- name: jaeger
+  repository: https://jaegertracing.github.io/helm-charts
+  version: 3.4.1
+- name: phoenix
+  repository: file://./charts/phoenix
+  version: 0.1.0
+- name: otel-collector
+  repository: file://./charts/otel-collector
+  version: 0.1.0
+- name: loki
+  repository: file://./charts/loki
+  version: 0.1.0
+- name: tempo
+  repository: file://./charts/tempo
+  version: 0.1.0
+- name: grafana-proxy
+  repository: file://./charts/grafana-proxy
+  version: 0.1.0
+- name: prometheus-proxy
+  repository: file://./charts/prometheus-proxy
+  version: 0.1.0
+digest: sha256:9fca5af019bbde7510f956f4116550dd37236bc7d383c2492a6abffa1d637c78
+generated: "2026-06-29T19:14:47.815554+05:30"

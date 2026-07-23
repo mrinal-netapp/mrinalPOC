@@ -1,0 +1,30 @@
+{{- /*
+cert-manager Issuer / ClusterIssuer fallback path. Off by default; KIND
+opt-in. Production AKS uses the NetApp internal provisioning service to
+write nemo-gateway-tls into agentstudio-edge directly -- cert-manager is
+not in the loop.
+
+Moved here from the services chart in this PR; the resource shape is
+unchanged.
+*/ -}}
+{{- if and .Values.certManager.enabled .Values.certManager.issuer.create -}}
+{{- $issuerKind := .Values.certManager.issuer.kind | default "ClusterIssuer" -}}
+apiVersion: cert-manager.io/v1
+kind: {{ $issuerKind }}
+metadata:
+  name: {{ .Values.certManager.issuer.name | quote }}
+  {{- if eq $issuerKind "Issuer" }}
+  namespace: {{ include "nemo.namespace" . }}
+  {{- end }}
+  labels:
+    {{- include "edge.labels" . | nindent 4 }}
+spec:
+  {{- if eq (.Values.certManager.issuer.type | default "ca") "ca" }}
+  ca:
+    secretName: {{ required "certManager.issuer.ca.secretName is required when certManager.issuer.create=true and issuer.type=ca" .Values.certManager.issuer.ca.secretName | quote }}
+  {{- else if eq .Values.certManager.issuer.type "selfSigned" }}
+  selfSigned: {}
+  {{- else }}
+  {{- fail "Unsupported certManager.issuer.type. Supported values: ca, selfSigned" }}
+  {{- end }}
+{{- end }}

@@ -1,0 +1,78 @@
+{{- if and .Values.enabled .Values.ui.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "temporal.fullname" . }}-ui
+  labels:
+    {{- include "temporal.labels" . | nindent 4 }}
+    component: temporal-ui
+spec:
+  replicas: {{ .Values.ui.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "temporal.uiSelectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "temporal.uiSelectorLabels" . | nindent 8 }}
+    spec:
+      {{- /*
+      Use the explicit serviceAccountName override when set (AKS/local pin it to
+      "temporal" for workload identity); otherwise fall back to the shared
+      temporal.serviceAccountName helper so this matches the main temporal
+      Deployment. The previous "<release>-nemo" computed name was never created
+      by any chart and left temporal-ui wedged on FailedCreate wherever the
+      override was absent (GKE/EKS).
+      */}}
+      serviceAccountName: {{ .Values.serviceAccountName | default (include "temporal.serviceAccountName" .) }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: temporal-ui
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.global.imageRegistry }}{{ .Values.ui.image.repository }}:{{ .Values.ui.image.tag }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy | default .Values.ui.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.ui.service.targetPort }}
+              protocol: TCP
+          env:
+            - name: TEMPORAL_ADDRESS
+              value: "temporal:7233"
+            # - name: TEMPORAL_CORS_ORIGINS
+            #   value: "*"
+            - name: TEMPORAL_UI_PORT
+              value: {{ .Values.ui.service.targetPort | quote }}
+          livenessProbe:
+            {{- toYaml .Values.ui.livenessProbe | nindent 12 }}
+          readinessProbe:
+            {{- toYaml .Values.ui.readinessProbe | nindent 12 }}
+          resources:
+            {{- toYaml .Values.ui.resources | nindent 12 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- range . }}
+        {{- if kindIs "string" . }}
+        - name: {{ . | quote }}
+        {{- else if kindIs "map" . }}
+        - {{- toYaml . | nindent 10 }}
+        {{- else }}
+        - name: {{ . | quote }}
+        {{- end }}
+        {{- end }}
+      {{- end }}
+{{- end }}
+

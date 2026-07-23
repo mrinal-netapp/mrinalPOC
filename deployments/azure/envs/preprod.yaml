@@ -1,0 +1,122 @@
+# preprod.yaml -- AgentStudio Azure infra config for the pre-prod environment.
+#
+# See envs/_schema.yaml for the shared schema. Provision via the gated CI
+# workflow (.github/workflows/deploy-env.yml, cloud=azure) or locally:
+#   make infra CLOUD=azure ENV=preprod ACTION=plan
+#   make infra CLOUD=azure ENV=preprod ACTION=apply
+#
+# This env is a fresh, stack-managed environment: actionOnUnmanage is
+# deleteResources, so removing a resource from the template deletes it on the
+# next create/update (previewed by plan, gated by CI review). Use
+# UNMANAGE=detachAll for a cautious run.
+
+# ---- Runner-only keys ----
+env: preprod
+subscriptionId: "ae26acbb-72f9-440e-822f-b13ef3e4fec1"
+resourceGroup: rg-agentstudio-preprod-eus2-001
+stackName: agentstudio-preprod
+actionOnUnmanage: deleteResources
+# Public gateway DNS (Helm ENDPOINT / TLS SANs). Not passed to Bicep.
+endpoint: agentstudio.preprod.openeng.netapp.com
+
+# ---- main.bicep parameters ----
+location: eastus2
+tenantId: "8e21f23a-10b9-46fb-9d50-720ef604be98"
+
+networking:
+  vnetName: vnet-agentstudio-preprod-eus2
+  vnetAddressPrefix: 10.1.0.0/16
+  aksSubnetName: snet-aks
+  aksSubnetPrefix: 10.1.0.0/22
+  ilbSubnetName: snet-ilb
+  ilbSubnetPrefix: 10.1.4.0/24
+  anfSubnetName: snet-anf
+  anfSubnetPrefix: 10.1.8.0/24
+
+aks:
+  clusterName: aks-agentstudio-preprod-eus2
+  kubernetesVersion: "1.35"
+  dnsPrefix: agentstudio-preprod
+  nodePools:
+    - name: nodepool1
+      mode: System
+      vmSize: Standard_D16s_v5
+      count: 3
+      enableAutoScaling: true
+      minCount: 2
+      maxCount: 8
+      osDiskSizeGB: 0
+      # eastus2 supports zones 1 and 3 only (not 2) for this SKU/region.
+      availabilityZones: ["1", "3"]
+  # Auto-patch the Kubernetes version and node OS images for pre-prod.
+  autoUpgradeProfile:
+    upgradeChannel: patch
+    nodeOSUpgradeChannel: NodeImage
+  # AKS autoScalerProfile keys must be kebab-case (ARM API), e.g.
+  # scale-down-delay-after-add — not camelCase scaleDownDelayAfterAdd.
+  # {} uses Azure defaults (same as 10m delays + random expander below).
+  autoScalerProfile: {}
+
+anf:
+  anfAccountName: anfagentstudiopreprodeus2
+  pools:
+    - name: pool1
+      serviceLevel: Premium
+      sizeTiB: 4
+      qosType: Auto
+      coolAccessEnabled: false
+
+# Shared ACR for all envs — stack grants AcrPull to pre-prod kubelet only.
+containerRegistry:
+  mode: shared
+  loginServer: cragentstudiodeveus2001.azurecr.io
+  resourceId: /subscriptions/ae26acbb-72f9-440e-822f-b13ef3e4fec1/resourceGroups/rg-agentstudio-dev-eus2-001/providers/Microsoft.ContainerRegistry/registries/cragentstudiodeveus2001
+
+edge:
+  gatewayPipName: pip-agentstudio-gw-preprod-eus2-001
+  # PIP is in the AKS node resource group (not the stack RG).
+  gatewayLbResourceGroup: MC_rg-agentstudio-preprod-eus2-001_aks-agentstudio-preprod-eus2_eastus2
+  sku: Standard
+
+dns:
+  createZone: false                 # set true for a dedicated public zone
+  # zoneName: agentstudio-preprod.example.com
+  # appRecordName: app
+  # authRecordName: auth
+
+keyVault:
+  keyVaultName: kv-as-preprod-eus2
+  purgeProtectionEnabled: true
+  softDeleteRetentionInDays: 90
+
+keycloak:
+  uamiName: id-agentstudio-preprod-keycloak
+
+workloadIdentity:
+  uamiNamePrefix: id-agentstudio-preprod-
+  services:
+    - { name: agent-service,        namespace: agentstudio-services,    resources: [] }
+    - { name: apigateway-service,   namespace: agentstudio-services,    resources: [] }
+    - { name: config-service,       namespace: agentstudio-services,    resources: [] }
+    - { name: storage-manager,      namespace: agentstudio-services,    resources: [] }
+    - { name: workflow-engine,      namespace: agentstudio-services,    resources: [] }
+    - { name: kb-retrieval-service, namespace: agentstudio-services,    resources: [] }
+    - { name: analytics-engine,     namespace: agentstudio-services,    resources: [] }
+    - { name: analytics-mcp-server, namespace: agentstudio-services,    resources: [] }
+    - { name: artifact-service,     namespace: agentstudio-services,    resources: [] }
+    - { name: gui,                  namespace: agentstudio-edge,        resources: [] }
+    - { name: dataset-worker,       namespace: agentstudio-workers,     resources: [] }
+    - { name: kb-worker,            namespace: agentstudio-workers,     resources: [] }
+    - { name: connector-worker,     namespace: agentstudio-workers,     resources: [] }
+    - { name: bifrost,              namespace: agentstudio-llm-gateway, resources: [] }
+    - { name: temporal,             namespace: agentstudio-platform,    resources: [] }
+    - { name: s3gateway,            namespace: agentstudio-platform,    resources: [] }
+
+storage:
+  trident:
+    helmVersion: "100.2410.0"
+    namespace: trident
+  anf:
+    backendName: anf-backend-nfs
+    storageClassName: anf-nfs
+    exportRule: auto

@@ -1,0 +1,53 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "loki.fullname" . }}-config
+  labels:
+    {{- include "loki.labels" . | nindent 4 }}
+data:
+  loki-config.yaml: |
+    auth_enabled: false
+
+    server:
+      http_listen_port: {{ .Values.service.ports.http }}
+
+    common:
+      path_prefix: /loki
+      storage:
+        filesystem:
+          chunks_directory: /loki/chunks
+          rules_directory: /loki/rules
+      replication_factor: 1
+      ring:
+        kvstore:
+          store: inmemory
+
+    schema_config:
+      configs:
+        - from: 2024-01-01
+          store: tsdb
+          object_store: filesystem
+          schema: v13
+          index:
+            prefix: index_
+            period: 24h
+
+    limits_config:
+      retention_period: {{ .Values.retention.period }}
+      ingestion_rate_mb: {{ .Values.ingestion.rateMb }}
+      ingestion_burst_size_mb: {{ .Values.ingestion.burstSizeMb }}
+      allow_structured_metadata: true
+
+    # Compactor is required for retention_period to actually delete chunks.
+    # In Loki v3, retention is a compactor responsibility; limits_config.retention_period
+    # alone only marks streams — the compactor must have retention_enabled: true to purge.
+    compactor:
+      working_directory: /loki/compactor
+      compaction_interval: {{ .Values.compactor.compactionInterval }}
+      retention_enabled: true
+      retention_delete_delay: {{ .Values.compactor.retentionDeleteDelay }}
+      retention_delete_worker_count: {{ .Values.compactor.retentionDeleteWorkerCount }}
+      delete_request_store: filesystem
+      compactor_ring:
+        kvstore:
+          store: inmemory

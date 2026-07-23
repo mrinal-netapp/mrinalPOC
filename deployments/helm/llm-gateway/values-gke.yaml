@@ -1,0 +1,18 @@
+# GKE overlay for the LLM-GATEWAY tier.
+#
+# bifrost persistence falls through to the cluster default StorageClass; the GKE
+# deploy also passes --set bifrost.persistence.fixPermissions=true and
+# --set bifrost.metrics.serviceMonitor.enabled=false via GKE_LLM_GATEWAY_EXTRA
+# (mk/tier-helm.mk). This overlay exists solely to create the dedicated SA.
+#
+# Dedicated ServiceAccount (mirrors the AKS overlay, minus Azure WI/clientId).
+# The bifrost subchart defaults serviceAccount.create=false → the pod runs as
+# the namespace `default` SA. That breaks the mesh policies where bifrost is the
+# SOURCE principal — `allow-bifrost-to-analytics-mcp` and
+# `allow-bifrost-and-config-to-mcp-runners` require
+# `.../agentstudio-llm-gateway/sa/bifrost-proxy` — and trips
+# `admissionPolicies.denyDefaultServiceAccount`. SA name defaults to the
+# fullnameOverride `bifrost-proxy`, exactly what those principals expect.
+bifrost:
+  serviceAccount:
+    create: true

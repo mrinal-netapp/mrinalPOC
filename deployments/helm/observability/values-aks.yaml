@@ -1,0 +1,102 @@
+# ---------------------------------------------------------------------------
+# AKS overlay for the observability stack.
+# Applied automatically by: make helm-observability-upgrade-aks
+# (or manually: make deploy-observability HELM_EXTRA_ARGS="-f deployments/helm/observability/values-aks.yaml")
+#
+# Key differences from the base values.yaml:
+#   - Phoenix uses PostgreSQL (shared-postgresql in the database namespace) instead
+#     of SQLite on a PVC.  PostgreSQL is a durable, replicated backend better suited
+#     to AKS; it also avoids ReadWriteOnce PVC contention during rolling updates.
+#   - database.create: true adds an init container that creates the 'phoenix'
+#     database in PostgreSQL if it does not already exist.
+#   - The migration-guard init container is kept enabled (default) and works for
+#     both SQLite and PostgreSQL backends.
+#   - Loki and Tempo use managed-premium storage class for better IOPS on AKS.
+#     PVC sizes match observability-service Helm production defaults (30 Gi each).
+# ---------------------------------------------------------------------------
+
+phoenix:
+  # Pin to a specific release.  Bump intentionally; the migration-guard init
+  # container will detect incompatible schema revisions and reset the DB
+  # automatically, but explicit version control is still the first line of defence.
+  image:
+    tag: "version-15.12.0"
+
+  # Switch from SQLite-on-PVC to the shared PostgreSQL instance that is already
+  # deployed as part of the foundation tier (make deploy-foundation).
+  database:
+    backend: postgresql
+    # Create the 'phoenix' database if it does not exist yet.
+    create: true
+    host: shared-postgresql.database.svc.cluster.local
+    port: 5432
+    name: phoenix
+    user: postgres
+    password: agentstudio-postgres-password
+
+  env:
+    # Leave PHOENIX_SQL_DATABASE_URL empty — the Helm template constructs it from
+    # the database.* values above (postgresql://user:pass@host:port/name).
+    - name: PHOENIX_SQL_DATABASE_URL
+      value: ""
+    - name: PHOENIX_WORKING_DIR
+      value: "/data"
+    - name: PHOENIX_TELEMETRY_ENABLED
+      value: "false"
+    - name: PHOENIX_DEFAULT_RETENTION_POLICY_DAYS
+      value: "30"
+
+  # PVC is still provisioned as a scratch / working directory for Phoenix
+  # (PHOENIX_WORKING_DIR).  With PostgreSQL as the schema backend there is no
+  # risk of the SQLite-revision mismatch crash, but keep the volume so Phoenix
+  # has a consistent working directory across restarts.
+  persistence:
+    enabled: true
+    size: 10Gi
+    storageClass: ""
+
+# Prometheus — PVC-backed storage with managed-premium for durability on AKS.
+# The base values.yaml already enables a 10 Gi PVC with the default storage
+# class; override storageClassName here to use Azure managed-premium disks.
+kube-prometheus-stack:
+  prometheus:
+    prometheusSpec:
+      storageSpec:
+        volumeClaimTemplate:
+          spec:
+            accessModes: ["ReadWriteOnce"]
+            storageClassName: "managed-premium"
+            resources:
+              requests:
+                storage: 10Gi
+
+# Loki — use managed-premium storage class on AKS for better IOPS.
+# 30 Gi matches the observability-service Helm production default.
+loki:
+  fullnameOverride: "loki"
+  persistence:
+    enabled: true
+    size: 30Gi
+    storageClass: "managed-premium"
+
+# Tempo — use managed-premium storage class on AKS for better IOPS.
+# 30 Gi matches the observability-service Helm production default.
+tempo:
+  fullnameOverride: "tempo"
+  persistence:
+    enabled: true
+    size: 30Gi
+    storageClass: "managed-premium"
+
+# Grafana-proxy session and internal-token secrets.
+# Pre-created by `make aks-keycloak-grafana-proxy-secrets` (random values,
+# stable across pod restarts). Secrets live in the monitoring namespace.
+grafana-proxy:
+  session:
+    existingSecret: "grafana-proxy-session-secret"
+  internalToken:
+    existingSecret: "grafana-proxy-internal-token"
+
+prometheus-proxy:
+  internalToken:
+    existingSecret: "grafana-proxy-internal-token"

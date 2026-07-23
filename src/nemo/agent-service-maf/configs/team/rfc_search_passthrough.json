@@ -1,0 +1,125 @@
+{
+  "_schema_version": "2.1.0",
+  "project_id": "550e8400-e29b-41d4-a716-446655440000",
+  "_description": "RFC Search Passthrough: single agent that calls the knowledgeBase function binding and returns the response array verbatim, with every chunk and field preserved exactly. No relevance scoring, no re-ranking, no transformation.",
+  "agent": {
+    "framework": "maf",
+    "model": "azure/gpt-4.1-mini",
+    "temperature": 0.0,
+    "max_tokens": 8192,
+    "timeout_seconds": 180,
+    "metadata": {
+      "project": "agent-studio",
+      "version": "1.0.0",
+      "environment": "development"
+    }
+  },
+  "tool_bindings": [
+    {
+      "name": "knowledgeBase",
+      "type": "function",
+      "function_ref": "kb_retrieve",
+      "description": "Search the IETF RFC knowledge base. Returns up to top_k chunks with chunkId, content, score, metadata.",
+      "tags": ["retrieval", "rfc"],
+      "params": {
+        "kbId": "e3c3b018-3294-4069-be8d-0e8efbed4733",
+        "projectId": "550e8400-e29b-41d4-a716-446655440000",
+        "topK": 5,
+        "similarityThreshold": 0.5,
+        "headers": {
+          "x-agent-studio-context": "eyJwcm9qZWN0X2lkIjoiNTUwZTg0MDAtZTI5Yi00MWQ0LWE3MTYtNDQ2NjU1NDQwMDAwIiwidXNlcl9pZCI6InVzZXJAdGVzdC5jb20ifQ=="
+        }
+      }
+    }
+  ],
+  "semantic_kernel": {
+    "agents": [
+      {
+        "name": "rfc_search_passthrough",
+        "instructions": "You are an RFC Search Passthrough agent. Your ONLY responsibilities:\n\n1. CALL THE TOOL. Invoke `knowledgeBase-kb_retrieve` exactly once. The only argument you supply is `query` (the user's query verbatim). If the user specifies a top_k, forward it as `top_k`; otherwise let the server default apply. Do NOT supply `kbId` or `projectId` — configuration pins those values.\n\n2. RETURN THE TOOL OUTPUT VERBATIM. Whatever the tool returns, output it byte-for-byte: same array (or whatever shape), same items in the same order, every field on every item preserved exactly as-is. Do not rename, reformat, trim, drop, add, or sanitize any field — including fields you don't recognise. Do not transform values.\n\nHARD RULES:\n- Preserve the response's length and order. Do NOT drop, reorder, merge, or re-rank items.\n- Preserve every field on every item EXACTLY. Do NOT rename, reformat, trim, or omit any field.\n- Do NOT modify any value — not even to fix typos, expand abbreviations, or normalize whitespace.\n- Do NOT invent fields. Do NOT remove fields. The output is whatever shape the tool returned.\n- If the tool returns an empty array, output `[]`. If the tool returns a wrapped envelope (e.g. `{\"chunks\":[...]}`), unwrap to the inner array.\n- Never invent items, RFC numbers, or quotes. Every item in your output corresponds 1:1 to an item the tool returned.\n- Output ONLY the JSON the tool returned. No surrounding object, no `query` echo, no markdown fences, no prose before or after.\n- Do NOT call any other tool. Do NOT call `knowledgeBase-kb_retrieve` more than once.",
+        "description": "Single agent that invokes the knowledgeBase function binding and returns the chunks verbatim, with no scoring or transformation",
+        "model": "azure/gpt-4.1-mini",
+        "temperature": 0.0,
+        "max_tokens": 8192,
+        "top_p": 1.0,
+        "frequency_penalty": 0.0,
+        "presence_penalty": 0.0,
+        "stop_sequences": [],
+        "tools": [],
+        "tool_bindings": ["knowledgeBase"],
+        "function_choice_behavior": "auto",
+        "response_format": null,
+        "prompt_template": null,
+        "skip_post_tool_synthesis": true
+      }
+    ],
+    "orchestration": {
+      "type": "single"
+    },
+    "default_function_choice_behavior": "auto",
+    "chat_history_max_messages": 20,
+    "enable_telemetry": false,
+    "session_ttl_seconds": 3600
+  },
+  "gateway": {
+    "url": "http://host.docker.internal:4001/v1",
+    "api_key": "",
+    "default_model": "azure/gpt-4.1-mini",
+    "request_timeout_seconds": 120,
+    "retry_on_timeout": true,
+    "max_retries": 2
+  },
+  "guardrails": {
+    "enabled": true,
+    "fail_open": false,
+    "execution_mode": "pipeline",
+    "input_guardrails": [
+      {
+        "name": "input_validator",
+        "type": "validation",
+        "enabled": true,
+        "priority": 1,
+        "action_on_trigger": "block",
+        "message": "Input does not meet validation requirements.",
+        "config": {
+          "max_length": 4000,
+          "min_length": 2
+        }
+      }
+    ],
+    "output_guardrails": [
+      {
+        "name": "output_length",
+        "type": "validation",
+        "enabled": true,
+        "priority": 1,
+        "action_on_trigger": "truncate",
+        "message": null,
+        "config": {
+          "max_chars": 120000
+        }
+      }
+    ],
+    "tool_guardrails": {
+      "default_policy": {
+        "mode": "allowlist",
+        "tools": ["knowledgeBase-kb_retrieve"],
+        "max_calls_per_request": 1
+      }
+    }
+  },
+  "memory": {
+    "enabled": false,
+    "storage_backend": "memory",
+    "buffer_type": "sliding_window",
+    "ttl_seconds": 3600,
+    "max_history_length": 10,
+    "max_tokens_per_session": 0,
+    "max_chars_per_session": 0
+  },
+  "logging": {
+    "level": "INFO",
+    "format": "json",
+    "include_timestamp": true
+  }
+}

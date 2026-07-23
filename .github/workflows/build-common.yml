@@ -1,0 +1,1240 @@
+# Reusable build workflow. Called by release.yml (auto, dev/rc tags) and
+# promote.yml (manual, final tags); also dispatchable from the Actions
+# tab for ad-hoc rebuilds.
+#
+# Builds Docker images via the repo Makefile, pushes them to Azure
+# Container Registry, packages Helm charts, attaches them to a GitHub
+# Release, then chains into deploy-aks.yml to roll the new tag onto the
+# `dev` AKS cluster. Optionally runs BlackDuck (repo + image) and Wiz
+# container-image scans -- all default OFF and remain unwired in v1.
+#
+# ─── Image inventory (single source of truth: repo Makefile) ──────────────
+# Four image groups are built and pushed per release tag:
+#   - NEMO_SERVICES           -> <ACR>/nemo/<svc>:<tag>          (make docker-build-push)
+#   - OBSERVABILITY_SERVICES  -> <ACR>/nemo/<svc>:<tag>          (make docker-build-push)
+#   - WORKER_IMAGES           -> <ACR>/<worker>:<tag>            (make workers-build-push)
+#   - ALL_IMAGES              -> <ACR>/<image>:<tag> + :latest   (make images-build-push)
+#                            split into two prefixes:
+#                              * mcp-server-*        -> <ACR>/nemo/<image>
+#                                (matches helm chart values + the
+#                                config-service MCPRuntimeManager catalog)
+#                              * everything else     -> <ACR>/<image>
+#                                (init-tools, job-setup, workspace-jupyterlab
+#                                are pulled by helm as
+#                                `${global.imageRepository}/<image>:...`)
+#                            The :latest tag is also pushed for every
+#                            ALL_IMAGES entry because several helm
+#                            templates pull init-tools / job-setup /
+#                            mcp-server-* as `:latest`.
+# All four lists are exposed by dedicated Make print-* targets so this
+# workflow does not have to scrape Makefile internals.
+#
+# ─── Auth model ──────────────────────────────────────────────────────────
+# ACR auth uses Azure OIDC: a user-assigned Managed Identity with the
+# AcrPush role, federated to the `dev` GitHub Environment subject. One
+# MI handles both build/scan (AcrPush + AcrPull) and deploy (AKS Cluster
+# User + cluster RBAC). No long-lived ACR username/password lives in
+# the repo.
+#
+# ─── Helm chart distribution ────────────────────────────────────────────
+# Helm charts are packaged from deployments/helm/* and attached to the
+# GitHub Release as .tgz assets via `gh release upload`. Consumers
+# download them from the release page. (If an OCI Helm registry is
+# set up on ACR or GHCR later, a parallel push-to-OCI step can be
+# added here.)
+#
+# ─── Security scans ─────────────────────────────────────────────────────
+# BlackDuck (repo + image) and Wiz container scans are wired
+# structurally but default OFF in release.yml and ON in promote.yml.
+# Secrets remain unwired in v1; populate BLACKDUCK_URL /
+# BLACKDUCK_API_TOKEN / WIZ_CLIENT_ID / WIZ_CLIENT_SECRET in the `dev`
+# GitHub Environment before enabling.
+#
+# ─── Required configuration (one-time) ────────────────────────────────────
+# All build, scan, and deploy jobs share a single `dev` GitHub Environment.
+# See deploy-aks.yml header for the deploy-side variables (AKS_*, ENDPOINT, ...).
+# Build/scan-side requirements:
+#
+# `dev` GitHub Environment (Settings -> Environments -> New: `dev`):
+#   Variables:
+#     ACR_REGISTRY              ACR hostname (e.g. agentstudioregistry.azurecr.io)
+#     GAR_REGISTRY              GAR repo path (e.g. us-east1-docker.pkg.dev/<proj>/<repo>)
+#     ECR_REGISTRY              ECR registry host (e.g. <acct>.dkr.ecr.<region>.amazonaws.com)
+#     AZURE_CLIENT_ID           MI client ID (federated to
+#                               subject `repo:NetApp-Nemo/AgentStudio:environment:dev`)
+#     AZURE_TENANT_ID           Entra ID tenant ID
+#     AZURE_SUBSCRIPTION_ID     Subscription containing both the ACR and AKS
+#     GCP_WORKLOAD_IDENTITY_PROVIDER  projects/.../locations/global/workloadIdentityPools/.../providers/...
+#     GCP_SERVICE_ACCOUNT       SA email used for GAR auth
+#     AWS_ROLE_ARN              IAM role assumed via GitHub OIDC for ECR
+#     AWS_REGION                Region of the target ECR registry
+#   Federated Identity Credential on the MI:
+#     issuer   : https://token.actions.githubusercontent.com
+#     subject  : repo:NetApp-Nemo/AgentStudio:environment:dev
+#     audience : api://AzureADTokenExchange
+#   Role assignments on the MI:
+#     - AcrPush  at the ACR scope          (this workflow: image push)
+#     - AcrPull  at the ACR scope          (BDS / Wiz image-scan jobs pull)
+#     - AKS Cluster User Role on the AKS   (deploy-aks.yml uses the same MI)
+#   GCP WIF / AWS OIDC:
+#     - GCP provider trusts `repo:NetApp-Nemo/AgentStudio:environment:dev`
+#     - AWS role trust policy allows `token.actions.githubusercontent.com`
+#       for the same repo/environment subject
+#
+# Optional / future:
+#   BLACKDUCK_URL, BLACKDUCK_API_TOKEN  (when BDS scans are enabled)
+#   WIZ_CLIENT_ID, WIZ_CLIENT_SECRET     (when Wiz scans are enabled)
+#   Add to the same `dev` environment-secrets scope.
+
+name: Build and Publish Images & Release
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: "Version tag for images and the GitHub release"
+        required: true
+        type: string
+      pre_release:
+        description: "True for DEV/RC pre-releases, false for final releases"
+        default: false
+        type: boolean
+      run_bds_repo_scan:
+        description: "Run BlackDuck repo scan (requires BLACKDUCK_* secrets)"
+        default: false
+        type: boolean
+      run_bds_image_scan:
+        description: "Run BlackDuck image scan (requires BLACKDUCK_* secrets)"
+        default: false
+        type: boolean
+      run_wiz_scan:
+        description: "Run Wiz container image vulnerability scan (requires WIZ_* secrets)"
+        default: false
+        type: boolean
+      create_release:
+        description: "Create a GitHub release for the tag"
+        default: true
+        type: boolean
+      package_helm_charts:
+        description: "Package Helm charts under deployments/helm/* and attach to the GitHub Release"
+        default: true
+        type: boolean
+      # Per-cloud fan-out toggles. Defaults are symmetric across all three.
+      deploy_to_aks:
+        description: "Call deploy-aks.yml after images land in ACR."
+        default: true
+        type: boolean
+      deploy_to_gke:
+        description: "Call deploy-gke.yml after images land in GAR."
+        default: true
+        type: boolean
+      deploy_to_eks:
+        description: "Call deploy-eks.yml after images land in ECR."
+        default: true
+        type: boolean
+      run_integration_tests:
+        description: >
+          Run the full-stack integration suite on dev-AKS after its deploy
+          (advisory — does not block dev-GKE/dev-EKS). When true, dev-GKE and
+          dev-EKS fan out after dev-AKS deploy succeeds. When false the three
+          clouds deploy in parallel (legacy behaviour).
+          Default ON: the dev-AKS integration suite runs on every merge/tag;
+          set false for an ad-hoc rebuild that should skip tests and fan out
+          to all three clouds in parallel.
+        default: true
+        type: boolean
+      notify_on_failure:
+        description: >
+          Post failure notifications when an integration-test leg fails
+          (dev-AKS/dev-GKE/dev-EKS advisory). Forwarded to
+          integration-tests-container.yml; active channels are determined by
+          configured secrets. Off by default so only opted-in callers
+          (release.yml) notify; promote.yml leaves it off.
+        default: false
+        type: boolean
+      notify_github_login:
+        description: >
+          PR-author GitHub login (display label for the mention) on the
+          release-on-main path. Empty = no author line.
+        default: ""
+        type: string
+      notify_email:
+        description: >
+          PR-author email (Teams UPN) used as the @-mention id so they are
+          pinged. Empty/noreply = plain-text author line, no ping.
+        default: ""
+        type: string
+    outputs:
+      acr_image_urls:
+        description: "JSON object mapping service names to their ACR image URLs"
+        value: ${{ jobs.build-and-publish.outputs.acr_image_urls }}
+      services_list:
+        description: "Space-separated list of NEMO_SERVICES that were built"
+        value: ${{ jobs.build-and-publish.outputs.services_list }}
+      workers_list:
+        description: "Space-separated list of WORKER_IMAGES that were built"
+        value: ${{ jobs.build-and-publish.outputs.workers_list }}
+      images_to_scan:
+        description: "JSON array of image refs (services + workers) for downstream matrix scans"
+        value: ${{ jobs.build-and-publish.outputs.images_to_scan }}
+  # Allow ad-hoc rebuilds from the Actions tab without going through
+  # release.yml (e.g. to retry a partially failed build for an existing
+  # tag, or to publish a hotfix tag to ACR without re-tagging git).
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Version tag for images and the GitHub release"
+        required: true
+        type: string
+      pre_release:
+        description: "True for DEV/RC pre-releases, false for final releases"
+        default: true
+        type: boolean
+      run_bds_repo_scan:
+        default: false
+        type: boolean
+      run_bds_image_scan:
+        default: false
+        type: boolean
+      run_wiz_scan:
+        default: false
+        type: boolean
+      create_release:
+        default: true
+        type: boolean
+      package_helm_charts:
+        default: true
+        type: boolean
+      deploy_to_aks:
+        default: false
+        type: boolean
+      deploy_to_gke:
+        default: false
+        type: boolean
+      deploy_to_eks:
+        default: false
+        type: boolean
+      run_integration_tests:
+        default: true
+        type: boolean
+      notify_on_failure:
+        default: false
+        type: boolean
+      notify_github_login:
+        default: ""
+        type: string
+      notify_email:
+        default: ""
+        type: string
+
+permissions:
+  contents: write
+  packages: write
+  id-token: write
+  security-events: write
+  actions: read
+
+env:
+  # Used by bds-image-scan (dev environment) and other ACR-scoped jobs.
+  # build-and-publish always builds/pushes to ACR first, then mirrors.
+  ACR_REGISTRY: ${{ vars.ACR_REGISTRY }}
+
+jobs:
+  # ─── BUILD & PUBLISH ────────────────────────────────
+  # Build NEMO_SERVICES + WORKER_IMAGES via the Makefile, push to ACR or GAR.
+  # Image refs are deterministic from CONTAINER_IMAGE_REPO + VERSION:
+  #   <acr>/nemo/<nemo-service>:<tag>     (NEMO_SERVICES)
+  #   <acr>/<worker-image>:<tag>          (WORKER_IMAGES)
+  # Both prefixes match what the per-tier helm charts pull (see
+  # deployments/helm/{services,console,workers}/charts/<svc>/values.yaml).
+  build-and-publish:
+    name: Build and Publish Docker Images
+    runs-on: [self-hosted, netapp, runner-4]
+    # Serialize all Docker builds on the self-hosted runner. The
+    # aggressive `docker image/builder prune -af` steps between build
+    # phases mutate the host-level Docker daemon; running two build
+    # jobs in parallel would let one prune delete layers the other is
+    # actively using. A single concurrency group for the build job
+    # guarantees at most one build occupies /var/lib/docker at a time.
+    concurrency:
+      group: self-hosted-docker-build
+      cancel-in-progress: false
+    environment: dev
+    timeout-minutes: 90
+    outputs:
+      acr_image_urls: ${{ steps.output-urls.outputs.acr_image_urls }}
+      services_list: ${{ steps.resolve-lists.outputs.services_list }}
+      workers_list: ${{ steps.resolve-lists.outputs.workers_list }}
+      images_to_scan: ${{ steps.output-urls.outputs.images_to_scan }}
+    steps:
+      # Preflight disk hygiene. Runs BEFORE actions/checkout so a
+      # previous run that filled /var/lib/docker (e.g. exited mid-build
+      # with `no space left on device`) cannot poison subsequent runs
+      # by leaving the workspace partition full before checkout even
+      # starts. Only the Docker daemon is needed here -- no workspace
+      # files are referenced. Pairs with the post-build "Reclaim runner
+      # disk space" step at the bottom of this job (`if: always()`).
+      # - name: Reclaim runner disk space (preflight)
+      #   shell: bash -e {0}
+      #   run: |
+      #     echo "=== Disk before preflight cleanup ==="
+      #     df -h / /var || true
+      #     docker system df || true
+
+      #     Aggressively reclaim space: the self-hosted runner has only
+      #     40 GB on /var and a full build run produces ~25 GB of images
+      #     + build cache. Pruning only "until=24h" left stale layers
+      #     from the previous run and caused the workers-build phase
+      #     (heavy ML deps: torch, spacy, transformers) to fail with
+      #     ENOSPC. We now remove ALL unused images and ALL build cache
+      #     unconditionally — the ACR is the source of truth for pushed
+      #     images, not the local daemon.
+      #     docker container prune -f || true
+      #     docker image prune -af || true
+      #     docker builder prune -af || true
+
+      #     echo "=== Disk after preflight cleanup ==="
+      #     df -h / /var || true
+      #     docker system df || true
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      # Read the Makefile's NEMO_SERVICES + OBSERVABILITY_SERVICES +
+      # WORKER_IMAGES + ALL_IMAGES lists so they become a single source of
+      # truth for build, ACR push tagging, cross-registry mirror, and
+      # downstream BDS/Wiz matrix scans. The Makefile exposes dedicated
+      # `print-*` targets that just `@echo $(VAR)`, so we don't have to
+      # scrape `make -pn` (which is slow, evaluates every $(shell ...)
+      # helper, and is fragile to whether vars are declared with `:=`, `=`,
+      # or `+=`).
+      - name: Resolve image lists from Makefile
+        id: resolve-lists
+        shell: bash -e {0}
+        run: |
+          NEMO_SERVICES="$(make -s print-nemo-services)"
+          OBSERVABILITY_SERVICES="$(make -s print-observability-services)"
+          WORKER_IMAGES="$(make -s print-worker-images)"
+          ALL_IMAGES="$(make -s print-all-images)"
+
+          if [[ -z "$NEMO_SERVICES" ]]; then
+            echo "::error::make print-nemo-services returned an empty list"
+            exit 1
+          fi
+          if [[ -z "$OBSERVABILITY_SERVICES" ]]; then
+            echo "::error::make print-observability-services returned an empty list"
+            exit 1
+          fi
+          if [[ -z "$WORKER_IMAGES" ]]; then
+            echo "::error::make print-worker-images returned an empty list"
+            exit 1
+          fi
+          if [[ -z "$ALL_IMAGES" ]]; then
+            echo "::error::make print-all-images returned an empty list"
+            exit 1
+          fi
+
+          echo "services_list=$NEMO_SERVICES" >> "$GITHUB_OUTPUT"
+          echo "observability_list=$OBSERVABILITY_SERVICES" >> "$GITHUB_OUTPUT"
+          echo "workers_list=$WORKER_IMAGES"  >> "$GITHUB_OUTPUT"
+          echo "images_list=$ALL_IMAGES"      >> "$GITHUB_OUTPUT"
+          echo "NEMO_SERVICES: $NEMO_SERVICES"
+          echo "OBSERVABILITY_SERVICES: $OBSERVABILITY_SERVICES"
+          echo "WORKER_IMAGES: $WORKER_IMAGES"
+          echo "ALL_IMAGES:    $ALL_IMAGES"
+
+      # Validate config before any docker invocation so a missing
+      # AZURE_* variable fails the run immediately rather than after
+      # ~minutes of building images we can't push.
+      - name: Validate environment configuration
+        shell: bash -e {0}
+        run: |
+          missing=()
+          [[ -n "${{ inputs.tag }}" ]] || missing+=("tag (workflow input)")
+          [[ -n "${{ vars.ACR_REGISTRY }}" ]]          || missing+=("ACR_REGISTRY (variable)")
+          [[ -n "${{ vars.GAR_REGISTRY }}" ]]          || missing+=("GAR_REGISTRY (variable)")
+          [[ -n "${{ vars.ECR_REGISTRY }}" ]]          || missing+=("ECR_REGISTRY (variable)")
+          [[ -n "${{ vars.AZURE_CLIENT_ID }}" ]]       || missing+=("AZURE_CLIENT_ID (variable)")
+          [[ -n "${{ vars.AZURE_TENANT_ID }}" ]]       || missing+=("AZURE_TENANT_ID (variable)")
+          [[ -n "${{ vars.AZURE_SUBSCRIPTION_ID }}" ]] || missing+=("AZURE_SUBSCRIPTION_ID (variable)")
+          [[ -n "${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}" ]]  || missing+=("GCP_WORKLOAD_IDENTITY_PROVIDER (variable)")
+          [[ -n "${{ vars.GCP_SERVICE_ACCOUNT }}" ]]             || missing+=("GCP_SERVICE_ACCOUNT (variable)")
+          [[ -n "${{ vars.AWS_REGION }}" ]]      || missing+=("AWS_REGION (variable)")
+          [[ -n "${{ vars.AWS_ROLE_ARN }}" ]]    || missing+=("AWS_ROLE_ARN (variable)")
+          if (( ${#missing[@]} > 0 )); then
+            echo "::error::Missing required configuration:"
+            printf '  - %s\n' "${missing[@]}"
+            echo "See .github/workflows/build-common.yml header for multi-cloud setup instructions."
+            exit 1
+          fi
+          echo "PRIMARY_IMAGE_REGISTRY=${{ vars.ACR_REGISTRY }}" >> "$GITHUB_ENV"
+          echo "ACR_REGISTRY=${{ vars.ACR_REGISTRY }}" >> "$GITHUB_ENV"
+          echo "GAR_REGISTRY=${{ vars.GAR_REGISTRY }}" >> "$GITHUB_ENV"
+          echo "ECR_REGISTRY=${{ vars.ECR_REGISTRY }}" >> "$GITHUB_ENV"
+          echo "Build configuration:"
+          echo "  ACR registry     : ${{ vars.ACR_REGISTRY }}"
+          echo "  GAR registry     : ${{ vars.GAR_REGISTRY }}"
+          echo "  ECR registry     : ${{ vars.ECR_REGISTRY }}"
+          echo "  Image tag        : ${{ inputs.tag }}"
+
+      - name: Ensure Azure CLI is installed
+        shell: bash -e {0}
+        run: |
+          if command -v az >/dev/null 2>&1; then
+            echo "az already installed: $(az version --only-show-errors --query '"azure-cli"' -o tsv)"
+            exit 0
+          fi
+          echo "Installing Azure CLI via apt (Microsoft repo)..."
+          if command -v sudo >/dev/null 2>&1; then SUDO="sudo"; else SUDO=""; fi
+          $SUDO apt-get update -y
+          $SUDO apt-get install -y ca-certificates curl apt-transport-https lsb-release gnupg
+          # Pre-create /etc/apt/keyrings — minimal Debian/Ubuntu base images
+          # (and pre-22.04) don't ship the directory, and `tee` will not
+          # create parents. Without this, the very first install on a fresh
+          # runner errors with "No such file or directory".
+          $SUDO install -m 0755 -d /etc/apt/keyrings
+          curl -sLS https://packages.microsoft.com/keys/microsoft.asc \
+            | gpg --dearmor \
+            | $SUDO tee /etc/apt/keyrings/microsoft.gpg >/dev/null
+          $SUDO chmod go+r /etc/apt/keyrings/microsoft.gpg
+          AZ_DIST="$(lsb_release -cs)"
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/microsoft.gpg] https://packages.microsoft.com/repos/azure-cli/ ${AZ_DIST} main" \
+            | $SUDO tee /etc/apt/sources.list.d/azure-cli.list >/dev/null
+          $SUDO apt-get update -y
+          $SUDO apt-get install -y azure-cli
+          az version --only-show-errors
+
+      # OIDC login: GitHub mints a short-lived id-token, azure/login
+      # exchanges it for an Azure access token via the federated
+      # credential on the MI (subject
+      # `repo:NetApp-Nemo/AgentStudio:environment:dev`). No client
+      # secret or ACR password lives in the repo.
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id:       ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id:       ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: ACR login
+        shell: bash -e {0}
+        run: |
+          ACR_NAME="${{ vars.ACR_REGISTRY }}"
+          ACR_NAME="${ACR_NAME%%.*}"
+          az acr login --name "$ACR_NAME"
+
+      # Stand up a buildx builder once per job. The docker-container driver
+      # runs builds in a dedicated buildkit container that inherits credentials
+      # from the host's ~/.docker/config.json (populated by `az acr login` /
+      # `gcloud auth configure-docker` / `aws-actions/amazon-ecr-login`), so
+      # `--cache-to/-from type=registry` and `--push` against ACR/GAR/ECR work
+      # without extra auth wiring. install: false leaves `docker build` as the
+      # legacy frontend so non-CI invocations are untouched -- the buildx
+      # build path is opted into via DOCKER_BUILDX_BUILDER on the build steps
+      # below.
+      #
+      # Operator action (one-time, alongside this PR): enable ACR
+      # untagged-manifest retention so orphaned :buildcache manifests
+      # (overwritten on each successful build) get garbage-collected:
+      #   az acr config retention update -r "$ACR_NAME" \
+      #     --type UntaggedManifests --days 7 --status enabled
+      - name: Set up Docker Buildx
+        id: buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver: docker-container
+          driver-opts: network=host
+          install: false
+
+      - name: Ensure gcloud is installed
+        shell: bash -e {0}
+        run: |
+          if ! command -v apt-get >/dev/null 2>&1; then
+            echo "::error::apt-get is required on this self-hosted runner to install/repair gcloud components."
+            exit 1
+          fi
+          if command -v gcloud >/dev/null 2>&1; then
+            echo "gcloud already installed: $(gcloud version 2>/dev/null | head -1)"
+            exit 0
+          fi
+          echo "Installing Google Cloud SDK..."
+          if command -v sudo >/dev/null 2>&1; then SUDO="sudo"; else SUDO=""; fi
+          $SUDO apt-get update -y
+          $SUDO apt-get install -y ca-certificates curl gnupg
+          $SUDO install -m 0755 -d /usr/share/keyrings
+          $SUDO install -m 0755 -d /etc/apt/sources.list.d
+          curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg \
+            | $SUDO gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg
+          echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" \
+            | $SUDO tee /etc/apt/sources.list.d/google-cloud-sdk.list >/dev/null
+          $SUDO apt-get update -y
+          $SUDO apt-get install -y google-cloud-cli
+          gcloud version | head -1
+
+      - name: Google Cloud auth (OIDC / WIF)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+
+      - name: Setup gcloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        shell: bash -e {0}
+        run: |
+          GAR_HOST="${GAR_REGISTRY%%/*}"
+          gcloud auth configure-docker "$GAR_HOST" --quiet
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Ensure AWS CLI is installed
+        shell: bash -e {0}
+        run: |
+          if command -v aws >/dev/null 2>&1; then
+            echo "aws already installed: $(aws --version 2>&1 | head -1)"
+            exit 0
+          fi
+          echo "Installing AWS CLI..."
+          if command -v sudo >/dev/null 2>&1; then SUDO="sudo"; else SUDO=""; fi
+          if command -v apt-get >/dev/null 2>&1; then
+            $SUDO apt-get update -y
+            if $SUDO apt-get install -y awscli; then
+              aws --version
+              exit 0
+            fi
+            echo "apt awscli unavailable; falling back to AWS CLI v2 installer."
+            $SUDO apt-get install -y unzip curl
+          elif ! command -v unzip >/dev/null 2>&1 || ! command -v curl >/dev/null 2>&1; then
+            echo "::error::aws is missing and this runner has no apt-get; install aws CLI v2 (and curl/unzip) on the runner image."
+            exit 1
+          fi
+          tmp_dir="${RUNNER_TEMP}/awscli-installer"
+          rm -rf "$tmp_dir"
+          mkdir -p "$tmp_dir"
+          curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "$tmp_dir/awscliv2.zip"
+          unzip -q "$tmp_dir/awscliv2.zip" -d "$tmp_dir"
+          $SUDO "$tmp_dir/aws/install" --update
+          aws --version
+
+      - name: Ensure ECR repositories exist
+        shell: bash -e {0}
+        run: |
+          if ! command -v aws >/dev/null 2>&1; then
+            echo "::error::aws CLI is required to create/verify ECR repositories."
+            exit 1
+          fi
+          repos=()
+          for svc in ${{ steps.resolve-lists.outputs.services_list }}; do
+            repos+=("nemo/${svc}")
+          done
+          for svc in ${{ steps.resolve-lists.outputs.observability_list }}; do
+            repos+=("nemo/${svc}")
+          done
+          for worker in ${{ steps.resolve-lists.outputs.workers_list }}; do
+            repos+=("${worker}")
+          done
+          for img in ${{ steps.resolve-lists.outputs.images_list }}; do
+            image_name=$(awk -F':=' '/^IMAGE_NAME[[:space:]]*:=/ {gsub(/[[:space:]]/,"",$2); print $2; exit}' "src/images/${img}/Makefile")
+            repos+=("${image_name}")
+          done
+          mapfile -t unique_repos < <(printf "%s\n" "${repos[@]}" | awk 'NF' | sort -u)
+          for repo in "${unique_repos[@]}"; do
+            if aws ecr describe-repositories --repository-names "$repo" >/dev/null 2>&1; then
+              echo "ECR repo exists: $repo"
+            else
+              echo "Creating ECR repo: $repo"
+              aws ecr create-repository \
+                --repository-name "$repo" \
+                --image-scanning-configuration scanOnPush=true \
+                --encryption-configuration encryptionType=AES256 \
+                >/dev/null
+            fi
+          done
+
+      # Buildx env vars route the build through `docker buildx build` with
+      # registry-backed cache import/export against ACR (`<image>:buildcache`,
+      # mode=max), and fold the registry push into the build (--push). The
+      # chained `docker-push` target in mk/build.mk becomes a no-op when
+      # DOCKER_BUILDX_PUSH=1, so `make docker-build-push` here pushes once,
+      # at build time. Same pattern applies to WORKER_IMAGES + ALL_IMAGES below.
+      - name: Build and push NEMO_SERVICES
+        shell: bash -e {0}
+        env:
+          DOCKER_BUILDX_BUILDER: ${{ steps.buildx.outputs.name }}
+          DOCKER_BUILDX_CACHE: "1"
+          DOCKER_BUILDX_PUSH: "1"
+        run: |
+          make docker-build-push \
+            CONTAINER_IMAGE_REPO="$PRIMARY_IMAGE_REGISTRY" \
+            VERSION="${{ inputs.tag }}"
+
+      # Mid-build disk reclaim: NEMO_SERVICES just pushed 8+ images to
+      # ACR. The local copies and their build cache are no longer needed
+      # and occupy ~15-20 GB on /var. Without this prune the subsequent
+      # workers-build (dataset-processor alone pulls torch + spacy +
+      # transformers ≈ 5 GB) runs out of space on the 40 GB /var partition.
+      # - name: Reclaim runner disk space (mid-build)
+      #   shell: bash -e {0}
+      #   run: |
+      #     echo "=== Disk after NEMO_SERVICES build ==="
+      #     df -h / /var || true
+      #     docker system df || true
+
+      #     docker container prune -f || true
+      #     docker image prune -af || true
+      #     docker builder prune -af || true
+
+      #     echo "=== Disk after mid-build cleanup ==="
+      #     df -h / /var || true
+      #     docker system df || true
+
+      # `make workers-build-push` does the same for the Temporal worker
+      # images under src/nemo/workers/<worker>/. These push as
+      # <ACR>/<worker>:<VERSION> (no `nemo/` prefix), matching what the
+      # processing-workers helm chart expects.
+      - name: Build and push WORKER_IMAGES
+        shell: bash -e {0}
+        env:
+          DOCKER_BUILDX_BUILDER: ${{ steps.buildx.outputs.name }}
+          DOCKER_BUILDX_CACHE: "1"
+          DOCKER_BUILDX_PUSH: "1"
+        run: |
+          make workers-build-push \
+            CONTAINER_IMAGE_REPO="$PRIMARY_IMAGE_REGISTRY" \
+            VERSION="${{ inputs.tag }}"
+
+      # Same mid-build reclaim between workers and src/images/*.
+      # - name: Reclaim runner disk space (pre-images)
+      #   shell: bash -e {0}
+      #   run: |
+      #     docker container prune -f || true
+      #     docker image prune -af || true
+      #     docker builder prune -af || true
+      #     echo "=== Disk before ALL_IMAGES build ==="
+      #     df -h / /var || true
+
+      # `make images-build-push` builds every Dockerfile under src/images/
+      # (init-tools, job-setup, workspace-jupyterlab, mcp-server-*) and
+      # pushes each as <ACR>/<image>:<VERSION> AND <ACR>/<image>:latest.
+      # The :latest tag is required because several helm templates
+      # (init containers, setup jobs) hard-pull `<image>:latest`.
+      - name: Build and push ALL_IMAGES (src/images/*)
+        shell: bash -e {0}
+        env:
+          DOCKER_BUILDX_BUILDER: ${{ steps.buildx.outputs.name }}
+          DOCKER_BUILDX_CACHE: "1"
+          DOCKER_BUILDX_PUSH: "1"
+        run: |
+          make images-build-push \
+            CONTAINER_IMAGE_REPO="$PRIMARY_IMAGE_REGISTRY" \
+            VERSION="${{ inputs.tag }}"
+
+      # Server-side cross-registry mirror via `docker buildx imagetools create`.
+      # This is the same mechanism as `regclient`/`crane copy` -- the runner
+      # streams layer blobs from ACR to GAR/ECR via the registry distribution
+      # API without persisting them in /var/lib/docker. Compared to the
+      # previous `docker pull` + `docker tag` + `docker push` loop, this
+      # avoids ~25 GB of host-daemon disk pressure per run and removes the
+      # need for an aggressive `docker image prune` in the post-build cleanup.
+      #
+      # Each image is mirrored with two `imagetools create` calls (one for
+      # the version tag, one for `:latest`); each call fans out to both GAR
+      # and ECR via repeated --tag flags so the source manifest is read once
+      # and written to two destinations in a single invocation.
+      - name: Mirror images from ACR to GAR and ECR
+        shell: bash -e {0}
+        run: |
+          TAG="${{ inputs.tag }}"
+          mirror_image() {
+            local repo_path="$1"   # e.g. nemo/config-service, dataset-processor, nemo/mcp-server-foo
+            local src_tag="${ACR_REGISTRY}/${repo_path}:${TAG}"
+            local src_latest="${ACR_REGISTRY}/${repo_path}:latest"
+            echo "Mirroring ${repo_path} (${TAG} + latest) ACR -> GAR + ECR"
+            docker buildx imagetools create \
+              --tag "${GAR_REGISTRY}/${repo_path}:${TAG}" \
+              --tag "${ECR_REGISTRY}/${repo_path}:${TAG}" \
+              "$src_tag"
+            docker buildx imagetools create \
+              --tag "${GAR_REGISTRY}/${repo_path}:latest" \
+              --tag "${ECR_REGISTRY}/${repo_path}:latest" \
+              "$src_latest"
+          }
+          for svc in ${{ steps.resolve-lists.outputs.services_list }}; do
+            mirror_image "nemo/${svc}"
+          done
+          for svc in ${{ steps.resolve-lists.outputs.observability_list }}; do
+            mirror_image "nemo/${svc}"
+          done
+          for worker in ${{ steps.resolve-lists.outputs.workers_list }}; do
+            mirror_image "${worker}"
+          done
+          for img in ${{ steps.resolve-lists.outputs.images_list }}; do
+            # Per-image Makefile encodes any prefix (e.g. mcp-server-* images
+            # set IMAGE_NAME := nemo/mcp-server-<x>); reuse that as the repo
+            # path so ACR -> GAR/ECR retains identical layout.
+            image_name=$(awk -F':=' '/^IMAGE_NAME[[:space:]]*:=/ {gsub(/[[:space:]]/,"",$2); print $2; exit}' "src/images/${img}/Makefile")
+            mirror_image "${image_name}"
+          done
+
+      - name: Generate image URLs
+        id: output-urls
+        shell: bash -e {0}
+        run: |
+          REGISTRY="$ACR_REGISTRY"
+          ACR_URLS="{"
+          IMAGES_JSON="["
+          first=true
+          for svc in ${{ steps.resolve-lists.outputs.services_list }}; do
+            if [ "$first" = true ]; then first=false; else ACR_URLS+=","; IMAGES_JSON+=","; fi
+            ACR_URLS+="\"${svc}\":\"${REGISTRY}/nemo/${svc}:${{ inputs.tag }}\""
+            IMAGES_JSON+="\"${REGISTRY}/nemo/${svc}:${{ inputs.tag }}\""
+          done
+          for svc in ${{ steps.resolve-lists.outputs.observability_list }}; do
+            ACR_URLS+=",\"${svc}\":\"${REGISTRY}/nemo/${svc}:${{ inputs.tag }}\""
+            IMAGES_JSON+=",\"${REGISTRY}/nemo/${svc}:${{ inputs.tag }}\""
+          done
+          for worker in ${{ steps.resolve-lists.outputs.workers_list }}; do
+            ACR_URLS+=",\"${worker}\":\"${REGISTRY}/${worker}:${{ inputs.tag }}\""
+            IMAGES_JSON+=",\"${REGISTRY}/${worker}:${{ inputs.tag }}\""
+          done
+          for img in ${{ steps.resolve-lists.outputs.images_list }}; do
+            image_name=$(awk -F':=' '/^IMAGE_NAME[[:space:]]*:=/ {gsub(/[[:space:]]/,"",$2); print $2; exit}' "src/images/${img}/Makefile")
+            ACR_URLS+=",\"${img}\":\"${REGISTRY}/${image_name}:${{ inputs.tag }}\""
+            IMAGES_JSON+=",\"${REGISTRY}/${image_name}:${{ inputs.tag }}\""
+          done
+          ACR_URLS+="}"
+          IMAGES_JSON+="]"
+
+          echo "acr_image_urls=$ACR_URLS" >> "$GITHUB_OUTPUT"
+          echo "images_to_scan=$IMAGES_JSON" >> "$GITHUB_OUTPUT"
+
+          echo "Published image URLs:"
+          echo "$ACR_URLS" | python3 -m json.tool 2>/dev/null || echo "$ACR_URLS"
+
+      # The runner only builds images and pushes them to ACR; no service
+      # containers run here. Builds happen inside the BuildKit sidecar
+      # (docker-container driver), and `docker buildx build --push` ships
+      # built images straight to the registry -- nothing lands in the host
+      # daemon. The mirror step now uses `imagetools create` (server-side),
+      # so it doesn't populate the host daemon either. The host docker
+      # daemon's image store is therefore essentially empty across the job;
+      # `docker image prune -af` is safe and reclaims any stragglers.
+      #
+      # The BuildKit sidecar's internal cache IS the cross-build asset.
+      # Cap it at 15 GB (LRU eviction); the durable cross-job cache lives
+      # in ACR via DOCKER_BUILDX_CACHE.
+      - name: Reclaim runner disk space
+        if: always()
+        shell: bash -e {0}
+        run: |
+          echo "=== Before cleanup ==="
+          df -h /var || true
+          docker system df || true
+          docker image prune -af || true
+          docker buildx prune --keep-storage 15GB --force || true
+          echo "=== After cleanup ==="
+          df -h /var || true
+          docker system df || true
+
+      - name: Logout
+        if: always()
+        shell: bash
+        run: |
+          az logout 2>/dev/null || true
+          az account clear 2>/dev/null || true
+          gcloud auth revoke --all 2>/dev/null || true
+
+  # ─── PACKAGE HELM CHARTS ───────────────────────────
+  # Auto-discovers every chart at deployments/helm/*/Chart.yaml,
+  # stamps the Git tag as both `version` and `appVersion`, and uploads
+  # to the GitHub Release as .tgz assets.
+  package-and-publish-charts:
+    name: Package Helm Charts
+    if: ${{ inputs.package_helm_charts }}
+    needs: build-and-publish
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v4.2.1
+
+      - name: Discover charts
+        id: discover
+        shell: bash -e {0}
+        run: |
+          CHARTS=""
+          shopt -s nullglob
+          for chart_yaml in deployments/helm/*/Chart.yaml; do
+            chart_dir="$(dirname "$chart_yaml")"
+            CHARTS+="${chart_dir} "
+          done
+          CHARTS="${CHARTS% }"
+
+          if [[ -z "$CHARTS" ]]; then
+            echo "No Helm charts found under deployments/helm/*/Chart.yaml"
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Discovered chart directories: $CHARTS"
+            echo "found=true" >> "$GITHUB_OUTPUT"
+            echo "chart_dirs=$CHARTS" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Package charts
+        if: steps.discover.outputs.found == 'true'
+        shell: bash -e {0}
+        run: |
+          TAG="${{ inputs.tag }}"
+          mkdir -p helm-packages
+
+          for chart_dir in ${{ steps.discover.outputs.chart_dirs }}; do
+            echo "::group::Packaging $chart_dir as $TAG"
+            if [[ -f "$chart_dir/Chart.lock" || -n "$(grep -l '^dependencies:' "$chart_dir/Chart.yaml" 2>/dev/null)" ]]; then
+              helm dependency update "$chart_dir"
+            fi
+            helm lint "$chart_dir" --with-subcharts || echo "::warning::helm lint surfaced issues for $chart_dir (non-blocking)"
+            helm package "$chart_dir" \
+              --version "$TAG" \
+              --app-version "$TAG" \
+              --destination ./helm-packages
+            echo "::endgroup::"
+          done
+
+          ls -la ./helm-packages
+
+      - name: Upload chart artifacts (workflow artifact)
+        if: steps.discover.outputs.found == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: helm-charts
+          path: helm-packages/*.tgz
+          retention-days: 30
+          if-no-files-found: warn
+
+  # ─── DEPLOY TO DEV (two fan-out modes, selected by run_integration_tests) ──
+  # GitHub Actions `needs` is static (no conditional dependencies), so each
+  # mode is its own pair of GKE/EKS jobs guarded by the flag; exactly one pair
+  # is active per run. AKS always deploys first in both modes.
+  #
+  #  run_integration_tests = FALSE  (opt-in override; legacy parallel fan-out)
+  #    LEGACY PARALLEL FAN-OUT — identical to the pre-gate behaviour:
+  #      build-and-publish ──► deploy-aks-dev
+  #                       └──► deploy-gke-dev            (parallel, independent)
+  #                       └──► deploy-eks-dev            (parallel, independent)
+  #    No cross-cloud dependency: GKE/EKS are unaffected by an AKS failure and
+  #    start immediately off build-and-publish (no extra latency, no new skips).
+  #
+  #  run_integration_tests = TRUE   (default; AKS-first fan-out)
+  #      build-and-publish ──► deploy-aks-dev ──┬──► deploy-gke-dev-gated
+  #                       └──► build-integration-image
+  #                                            ├──► deploy-eks-dev-gated
+  #                                            └──► integration-tests-dev-aks (advisory)
+  #                                        │                               │
+  #                            integration-tests-dev-gke   integration-tests-dev-eks (advisory)
+  #    GKE/EKS fan out after AKS deploy succeeds; integration suites are advisory
+  #    on all three clouds and do not block the fan-out.
+  deploy-aks-dev:
+    name: Deploy to AKS Dev
+    if: ${{ inputs.deploy_to_aks }}
+    needs: build-and-publish
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/deploy-aks.yml
+    with:
+      image_tag: ${{ inputs.tag }}
+    secrets: inherit
+
+  # Build/push the integration-test harness image before the suite runs so the
+  # pinned <ACR>/integration-tests:<tree-hash> tag is present (content-hash
+  # tagging => this self-skips when the harness is unchanged). Runs in parallel
+  # with deploy-aks-dev; the suite waits on both. build-on-miss in the test
+  # workflow remains the safety net.
+  build-integration-image:
+    name: Build integration-test image
+    if: ${{ inputs.deploy_to_aks && inputs.run_integration_tests }}
+    needs: build-and-publish
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/integration-image-build.yml
+    secrets: inherit
+
+  # Advisory post-deploy suite on dev-AKS (AKS-first fan-out mode). Nothing depends
+  # on it, so a failure is visible (and lands in Allure under dev-aks) without
+  # blocking the GKE/EKS fan-out.
+  integration-tests-dev-aks:
+    name: Integration tests (dev-AKS, advisory)
+    if: ${{ inputs.deploy_to_aks && inputs.run_integration_tests }}
+    needs: [deploy-aks-dev, build-integration-image]
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/integration-tests-container.yml
+    with:
+      cloud_environment: dev
+      allure_project: dev-aks
+      image_tag: ${{ inputs.tag }}
+      notify_on_failure: ${{ inputs.notify_on_failure }}
+      notify_github_login: ${{ inputs.notify_github_login }}
+      notify_email: ${{ inputs.notify_email }}
+      severity: advisory
+    secrets: inherit
+
+  # ── LEGACY PARALLEL FAN-OUT (run_integration_tests = false) ──
+  # Mirrors the original behaviour exactly: GKE/EKS deploy in parallel straight
+  # off build-and-publish, with no dependency on AKS or integration tests.
+  deploy-gke-dev:
+    name: Deploy to GKE Dev
+    if: ${{ inputs.deploy_to_gke && !inputs.run_integration_tests }}
+    needs: build-and-publish
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/deploy-gke.yml
+    with:
+      image_tag: ${{ inputs.tag }}
+    secrets: inherit
+
+  deploy-eks-dev:
+    name: Deploy to EKS Dev
+    if: ${{ inputs.deploy_to_eks && !inputs.run_integration_tests }}
+    needs: build-and-publish
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/deploy-eks.yml
+    with:
+      image_tag: ${{ inputs.tag }}
+    secrets: inherit
+
+  # ── GATED FAN-OUT (run_integration_tests = true) ──
+  # Fan out only after AKS deploy succeeds. `always()` lets these evaluate once
+  # their `needs` complete; the explicit result checks enforce the AKS-first
+  # ordering. Integration suites are advisory and do not block this fan-out.
+  deploy-gke-dev-gated:
+    name: Deploy to GKE Dev (gated)
+    if: >-
+      ${{
+        always() && inputs.deploy_to_gke && inputs.run_integration_tests &&
+        needs.build-and-publish.result == 'success' &&
+        needs.deploy-aks-dev.result == 'success'
+      }}
+    needs: [build-and-publish, deploy-aks-dev]
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/deploy-gke.yml
+    with:
+      image_tag: ${{ inputs.tag }}
+    secrets: inherit
+
+  deploy-eks-dev-gated:
+    name: Deploy to EKS Dev (gated)
+    if: >-
+      ${{
+        always() && inputs.deploy_to_eks && inputs.run_integration_tests &&
+        needs.build-and-publish.result == 'success' &&
+        needs.deploy-aks-dev.result == 'success'
+      }}
+    needs: [build-and-publish, deploy-aks-dev]
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/deploy-eks.yml
+    with:
+      image_tag: ${{ inputs.tag }}
+    secrets: inherit
+
+  # Advisory post-deploy suites on the secondary clouds (AKS-first fan-out mode
+  # only). Nothing depends on them, so a failure is visible (and lands in Allure
+  # under dev-gke / dev-eks) without blocking the release.
+  integration-tests-dev-gke:
+    name: Integration tests (dev-GKE, advisory)
+    if: >-
+      ${{
+        always() && inputs.run_integration_tests &&
+        needs.deploy-gke-dev-gated.result == 'success'
+      }}
+    needs: deploy-gke-dev-gated
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/integration-tests-container.yml
+    with:
+      cloud_environment: dev-gke
+      allure_project: dev-gke
+      image_tag: ${{ inputs.tag }}
+      notify_on_failure: ${{ inputs.notify_on_failure }}
+      notify_github_login: ${{ inputs.notify_github_login }}
+      notify_email: ${{ inputs.notify_email }}
+      severity: advisory
+    secrets: inherit
+
+  integration-tests-dev-eks:
+    name: Integration tests (dev-EKS, advisory)
+    if: >-
+      ${{
+        always() && inputs.run_integration_tests &&
+        needs.deploy-eks-dev-gated.result == 'success'
+      }}
+    needs: deploy-eks-dev-gated
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/integration-tests-container.yml
+    with:
+      cloud_environment: dev-eks
+      allure_project: dev-eks
+      image_tag: ${{ inputs.tag }}
+      notify_on_failure: ${{ inputs.notify_on_failure }}
+      notify_github_login: ${{ inputs.notify_github_login }}
+      notify_email: ${{ inputs.notify_email }}
+      severity: advisory
+    secrets: inherit
+
+  # ─── CREATE GITHUB RELEASE ──────────────────────────
+  # Creates the GitHub Release for the tag with auto-generated notes.
+  # Helm chart .tgz artifacts (uploaded by package-and-publish-charts)
+  # are downloaded and attached as release assets here, in a single
+  # job so the release is created exactly once per tag.
+  create-release:
+    name: Create GitHub Release
+    if: ${{ inputs.create_release }}
+    needs: [build-and-publish, package-and-publish-charts]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download chart artifacts
+        if: ${{ inputs.package_helm_charts }}
+        uses: actions/download-artifact@v4
+        with:
+          name: helm-charts
+          path: helm-packages
+        continue-on-error: true
+
+      - name: Create release and attach charts
+        shell: bash -e {0}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ inputs.tag }}"
+
+          if gh release view "$TAG" &>/dev/null; then
+            echo "Release $TAG already exists -- skipping creation, attempting asset upload"
+          else
+            PRERELEASE_FLAG=""
+            if [[ "${{ inputs.pre_release }}" == "true" ]]; then
+              PRERELEASE_FLAG="--prerelease"
+            fi
+
+            if gh release create "$TAG" \
+                --generate-notes \
+                $PRERELEASE_FLAG \
+                --target "${{ github.sha }}"; then
+              echo "Successfully created release $TAG"
+            else
+              if gh release view "$TAG" &>/dev/null; then
+                echo "Release $TAG was created by a concurrent run"
+              else
+                echo "Failed to create release $TAG"
+                exit 1
+              fi
+            fi
+          fi
+
+          # Attach helm chart .tgz files as release assets (clobber so
+          # re-runs replace any prior upload). `helm-packages/` may not
+          # exist if package_helm_charts=false.
+          if compgen -G "helm-packages/*.tgz" > /dev/null; then
+            echo "Uploading helm chart assets to release $TAG..."
+            for tgz in helm-packages/*.tgz; do
+              gh release upload "$TAG" "$tgz" --clobber
+              echo "  + $(basename "$tgz")"
+            done
+          else
+            echo "No helm chart .tgz files to attach (package_helm_charts likely off or job skipped)."
+          fi
+
+  # ─── BLACKDUCK REPO SCAN ───────────────────────────
+  # Disabled by default in v1. When you flip run_bds_repo_scan=true in
+  # release.yml or promote.yml, populate the BLACKDUCK_URL +
+  # BLACKDUCK_API_TOKEN secrets in the `dev` GitHub Environment (same
+  # scope as the build's Azure OIDC vars so all CD-time credentials
+  # live in one place) and ensure a self-hosted runner with the
+  # `bds-only` label exists. Uses the OpenLab Detect 10 bootstrap.
+  bds-repo-scan:
+    name: BDS Repo Scan
+    if: ${{ inputs.run_bds_repo_scan }}
+    needs: build-and-publish
+    runs-on: [self-hosted, bds-only]
+    # Sibling-job environment scope is NOT inherited from
+    # build-and-publish; declare it here so BLACKDUCK_* secrets
+    # resolve.
+    environment: dev
+    env:
+      BLACKDUCK_PROJECT_NAME: "AgentStudio"
+      # Bump in the same PR that cuts a new minor.
+      BLACKDUCK_PROJECT_VERSION: "1.0"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run BlackDuck Repo Scan
+        env:
+          BLACKDUCK_URL: ${{ secrets.BLACKDUCK_URL }}
+          BLACKDUCK_API_TOKEN: ${{ secrets.BLACKDUCK_API_TOKEN }}
+          HOME: ${{ runner.temp }}/home
+        shell: bash -e {0}
+        run: |
+          DETECT_DIR="${{ runner.temp }}/blackduck"
+          mkdir -p "$HOME" "$DETECT_DIR"
+
+          # `-f` makes curl exit non-zero on >=400 (so a 404/500 fails
+          # here rather than being silently piped into bash).
+          curl -fsSL https://detect.blackduck.com/detect10.sh \
+            -o "$DETECT_DIR/detect10.sh"
+          bash "$DETECT_DIR/detect10.sh" \
+            --blackduck.url="${BLACKDUCK_URL}" \
+            --blackduck.api.token="${BLACKDUCK_API_TOKEN}" \
+            --blackduck.trust.cert=true \
+            --detect.project.name="${BLACKDUCK_PROJECT_NAME}" \
+            --detect.project.version.name="${BLACKDUCK_PROJECT_VERSION}" \
+            --detect.cleanup=false \
+            --detect.tools=DETECTOR,SIGNATURE_SCAN \
+            --detect.source.path="${GITHUB_WORKSPACE}" \
+            --detect.blackduck.signature.scanner.paths="${GITHUB_WORKSPACE}" \
+            --detect.code.location.name=agentstudio_repo_code \
+            --detect.detector.search.depth=50 \
+            --detect.detector.search.continue=true \
+            --detect.blackduck.signature.scanner.snippet.matching=SNIPPET_MATCHING \
+            --detect.blackduck.signature.scanner.upload.source.mode=true \
+            --detect.accuracy.required=NONE \
+            --detect.blackduck.signature.scanner.auto.update=false \
+            --detect.output.path="$DETECT_DIR" \
+            --logging.level.detect=INFO
+
+      - name: Upload repo scan logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bds-repo-scan-logs
+          path: ${{ runner.temp }}/blackduck/
+          retention-days: 30
+
+  # ─── BLACKDUCK IMAGE SCAN ──────────────────────────
+  # Disabled by default. Matrix legs run serially today (one bds-only
+  # runner); max-parallel: 2 keeps the option open if a second is added.
+  bds-image-scan:
+    name: BDS Image Scan - ${{ matrix.image }}
+    if: ${{ inputs.run_bds_image_scan }}
+    needs: build-and-publish
+    runs-on: [self-hosted, bds-only]
+    # Sibling-job environment scope is NOT inherited from
+    # build-and-publish; declare it here so vars.AZURE_* (used by the
+    # ACR-pull step's azure/login) and BLACKDUCK_* secrets resolve.
+    environment: dev
+    env:
+      BLACKDUCK_PROJECT_NAME: "AgentStudio"
+      BLACKDUCK_PROJECT_VERSION: "1.0"
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        image: ${{ fromJson(needs.build-and-publish.outputs.images_to_scan) }}
+    steps:
+      - name: Azure login (OIDC) for ACR pull
+        uses: azure/login@v2
+        with:
+          client-id:       ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id:       ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: ACR login
+        shell: bash -e {0}
+        run: |
+          ACR_NAME="${{ vars.ACR_REGISTRY }}"
+          ACR_NAME="${ACR_NAME%%.*}"
+          az acr login --name "$ACR_NAME"
+
+      - name: Pull image from ACR
+        shell: bash -e {0}
+        run: docker pull "${{ matrix.image }}"
+
+      - name: Run BlackDuck Image Scan
+        env:
+          BLACKDUCK_URL: ${{ secrets.BLACKDUCK_URL }}
+          BLACKDUCK_API_TOKEN: ${{ secrets.BLACKDUCK_API_TOKEN }}
+          HOME: ${{ runner.temp }}/home
+        shell: bash -e {0}
+        run: |
+          DETECT_DIR="${{ runner.temp }}/blackduck"
+          mkdir -p "$HOME" "$DETECT_DIR"
+
+          # Derive a stable, BD-friendly code-location name from the
+          # image ref (strip registry / repo, keep just <name>).
+          IMAGE_BASENAME="$(echo '${{ matrix.image }}' | awk -F'/' '{print $NF}' | awk -F':' '{print $1}')"
+
+          curl -fsSL https://detect.blackduck.com/detect10.sh \
+            -o "$DETECT_DIR/detect10.sh"
+          bash "$DETECT_DIR/detect10.sh" \
+            --blackduck.url="${BLACKDUCK_URL}" \
+            --blackduck.api.token="${BLACKDUCK_API_TOKEN}" \
+            --blackduck.trust.cert=true \
+            --detect.project.name="${BLACKDUCK_PROJECT_NAME}" \
+            --detect.project.version.name="${BLACKDUCK_PROJECT_VERSION}" \
+            --detect.code.location.name="agentstudio_docker_${IMAGE_BASENAME}_code" \
+            --detect.cleanup=false \
+            --detect.tools=DOCKER \
+            --detect.docker.path="$(which docker)" \
+            --detect.docker.image="${{ matrix.image }}" \
+            --detect.output.path="$DETECT_DIR" \
+            --logging.level.detect=INFO
+
+      - name: Upload image scan logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bds-image-scan-logs-${{ strategy.job-index }}
+          path: ${{ runner.temp }}/blackduck/
+          retention-days: 30
+
+      - name: Cleanup scan workspace
+        if: always()
+        shell: bash -e {0}
+        run: |
+          rm -rf "${{ runner.temp }}/blackduck" || true
+          docker image rm -f "${{ matrix.image }}" || true
+          df -h "${{ runner.temp }}" || true
+
+  # ─── WIZ IMAGE SCAN ───────────────────────────────
+  # Disabled by default. Delegates to the reusable wiz-image-scan.yml.
+  wiz-image-scan:
+    name: Wiz container image vulnerability scan
+    if: ${{ inputs.run_wiz_scan }}
+    needs: build-and-publish
+    uses: ./.github/workflows/wiz-image-scan.yml
+    secrets: inherit
+    with:
+      images_to_scan: ${{ needs.build-and-publish.outputs.images_to_scan }}
+      tag: ${{ inputs.tag }}

@@ -1,0 +1,206 @@
+# Build + push the integration-test harness image to ACR.
+#
+# Packages tests/integration/ (pytest + allure-pytest) as a container so CI can
+# `docker run` the suite instead of `make setup` + pytest on the runner. See
+# integration-tests-container.yml (the runner) and docs/testing/integration-cicd.md.
+#
+# ─── Content-hash tagging (rebuild only when necessary) ───────────────────────
+# The image tag is the git tree hash of tests/integration/
+# (scripts/integration-image-tag.sh). Because the tag is a pure function of the
+# tracked content in that directory, an unchanged harness => identical tag =>
+# this workflow SKIPS the build (the tag already exists in ACR). The Dockerfile
+# lives under tests/integration/, so Dockerfile edits change the tag too.
+#   <ACR>/integration-tests:<tree-hash>   pinned, content-addressed (what runs)
+#   <ACR>/integration-tests:<git-sha>     traceability only
+#   <ACR>/integration-tests:latest        traceability only
+# integration-tests-container.yml recomputes the same tree-hash and runs exactly
+# that tag (build-on-miss if absent), so there is no tag variable to maintain.
+#
+# ─── Auth model (reused from build-common.yml) ────────────────────────────────
+# ACR auth uses Azure OIDC: the same user-assigned Managed Identity with AcrPush,
+# federated to the `dev` GitHub Environment subject. No long-lived ACR creds.
+#
+# ─── Required configuration (dev GitHub Environment) ──────────────────────────
+#   Variables: ACR_REGISTRY, AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID
+#   (identical to build-common.yml's ACR-side requirements).
+#
+# ─── Base image (ACR-mirrored; avoids Artifactory auth on the builder) ────────
+# The harness Dockerfile FROMs BASE_IMAGE, which this workflow points at an
+# ACR-mirrored python (the registry it already `az acr login`s to). The isolated
+# docker-container buildx builder therefore never needs credentials for the
+# internal Artifactory mirror (docker.repo.eng.netapp.com) to pull the base.
+# One-time operator step to mirror the base into ACR (idempotent):
+#   az acr import --name <acr-name> \
+#     --source docker.repo.eng.netapp.com/python:3.12-slim \
+#     --image python:3.12-slim
+# Override the resolved base per-environment with the INTEGRATION_BASE_IMAGE
+# variable; it defaults to "<ACR_REGISTRY>/python:3.12-slim".
+
+name: Build integration-test image
+
+on:
+  # Rebuild automatically when the harness (or how it is packaged) changes on
+  # main. Content-hash tagging means an unchanged harness => identical tag =>
+  # the build self-skips, so this is cheap to leave enabled.
+  push:
+    branches: [main]
+    paths:
+      - "tests/integration/**"
+      - ".github/workflows/integration-image-build.yml"
+      - "scripts/integration-image-tag.sh"
+  # Invoked by build-common.yml before the dev-AKS integration gate so the
+  # pinned harness image is guaranteed present (build-on-miss remains the
+  # safety net in the test workflow either way).
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  # Share the build-common.yml group so at most one job mutates the self-hosted
+  # runner's Docker daemon / build cache at a time.
+  group: self-hosted-docker-build
+  cancel-in-progress: false
+
+env:
+  ACR_REGISTRY: ${{ vars.ACR_REGISTRY }}
+  IMAGE_REPO: integration-tests
+
+jobs:
+  build-integration-image:
+    name: Build + push integration-test image
+    runs-on: [self-hosted, netapp]
+    environment: dev
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate environment configuration
+        shell: bash -e {0}
+        run: |
+          missing=()
+          [[ -n "${{ vars.ACR_REGISTRY }}" ]]          || missing+=("ACR_REGISTRY (variable)")
+          [[ -n "${{ vars.AZURE_CLIENT_ID }}" ]]       || missing+=("AZURE_CLIENT_ID (variable)")
+          [[ -n "${{ vars.AZURE_TENANT_ID }}" ]]       || missing+=("AZURE_TENANT_ID (variable)")
+          [[ -n "${{ vars.AZURE_SUBSCRIPTION_ID }}" ]] || missing+=("AZURE_SUBSCRIPTION_ID (variable)")
+          if (( ${#missing[@]} > 0 )); then
+            echo "::error::Missing required configuration:"
+            printf '  - %s\n' "${missing[@]}"
+            echo "See .github/workflows/build-common.yml header for the dev environment ACR/OIDC setup."
+            exit 1
+          fi
+
+      - name: Compute image tag (git tree hash)
+        id: tag
+        shell: bash -e {0}
+        run: |
+          TAG="$(scripts/integration-image-tag.sh)"
+          SHA="$(git rev-parse --short=12 HEAD)"
+          IMAGE="${ACR_REGISTRY}/${IMAGE_REPO}"
+          echo "tag=$TAG"     >> "$GITHUB_OUTPUT"
+          echo "sha=$SHA"     >> "$GITHUB_OUTPUT"
+          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+          echo "Integration-test image: ${IMAGE}:${TAG} (sha=${SHA})"
+
+      - name: Ensure Azure CLI is installed
+        shell: bash -e {0}
+        run: |
+          if command -v az >/dev/null 2>&1; then
+            echo "az already installed: $(az version --only-show-errors --query '"azure-cli"' -o tsv)"
+            exit 0
+          fi
+          echo "Installing Azure CLI via apt (Microsoft repo)..."
+          if command -v sudo >/dev/null 2>&1; then SUDO="sudo"; else SUDO=""; fi
+          $SUDO apt-get update -y
+          $SUDO apt-get install -y ca-certificates curl apt-transport-https lsb-release gnupg
+          $SUDO install -m 0755 -d /etc/apt/keyrings
+          curl -sLS https://packages.microsoft.com/keys/microsoft.asc \
+            | gpg --dearmor \
+            | $SUDO tee /etc/apt/keyrings/microsoft.gpg >/dev/null
+          $SUDO chmod go+r /etc/apt/keyrings/microsoft.gpg
+          AZ_DIST="$(lsb_release -cs)"
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/microsoft.gpg] https://packages.microsoft.com/repos/azure-cli/ ${AZ_DIST} main" \
+            | $SUDO tee /etc/apt/sources.list.d/azure-cli.list >/dev/null
+          $SUDO apt-get update -y
+          $SUDO apt-get install -y azure-cli
+          az version --only-show-errors
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id:       ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id:       ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: ACR login
+        shell: bash -e {0}
+        run: |
+          ACR_NAME="${ACR_REGISTRY%%.*}"
+          az acr login --name "$ACR_NAME"
+
+      - name: Check whether tag already exists in ACR
+        id: exists
+        shell: bash -e {0}
+        run: |
+          ACR_NAME="${ACR_REGISTRY%%.*}"
+          TAG="${{ steps.tag.outputs.tag }}"
+          # show-tags returns non-zero if the repo doesn't exist yet -> treat as
+          # "not present" so the first build for a new harness proceeds.
+          if az acr repository show-tags \
+               --name "$ACR_NAME" --repository "$IMAGE_REPO" -o tsv 2>/dev/null \
+               | grep -qx "$TAG"; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+            echo "Image ${{ steps.tag.outputs.image }}:${TAG} already in ACR -- skipping build."
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "Image ${{ steps.tag.outputs.image }}:${TAG} not found -- will build + push."
+          fi
+
+      - name: Set up Docker Buildx
+        if: steps.exists.outputs.present != 'true'
+        id: buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver: docker-container
+          driver-opts: network=host
+          install: false
+
+      - name: Build and push integration-test image
+        if: steps.exists.outputs.present != 'true'
+        shell: bash -e {0}
+        env:
+          IMAGE: ${{ steps.tag.outputs.image }}
+          TAG: ${{ steps.tag.outputs.tag }}
+          SHA: ${{ steps.tag.outputs.sha }}
+          BUILDER: ${{ steps.buildx.outputs.name }}
+          # Base image the harness FROMs. Overridden to an ACR-mirrored python
+          # (the registry this job already `az acr login`s to) so the isolated
+          # docker-container builder never needs credentials for the internal
+          # Artifactory mirror. See the "Required configuration" header block for
+          # the one-time `az acr import` that mirrors python:3.12-slim into ACR.
+          BASE_IMAGE: ${{ vars.INTEGRATION_BASE_IMAGE || format('{0}/python:3.12-slim', vars.ACR_REGISTRY) }}
+        run: |
+          docker buildx build \
+            --builder "$BUILDER" \
+            --build-arg BASE_IMAGE="$BASE_IMAGE" \
+            --cache-from "type=registry,ref=${IMAGE}:buildcache" \
+            --cache-to   "type=registry,ref=${IMAGE}:buildcache,mode=max" \
+            --tag "${IMAGE}:${TAG}" \
+            --tag "${IMAGE}:${SHA}" \
+            --tag "${IMAGE}:latest" \
+            --push \
+            tests/integration
+          echo "Pushed:"
+          echo "  ${IMAGE}:${TAG} (pinned, content-addressed)"
+          echo "  ${IMAGE}:${SHA} (traceability)"
+          echo "  ${IMAGE}:latest (traceability)"
+
+      - name: Logout
+        if: always()
+        shell: bash
+        run: |
+          az logout 2>/dev/null || true
+          az account clear 2>/dev/null || true

@@ -1,0 +1,50 @@
+# AKS overlay for the edge tier.
+#
+# Flips the data plane to self-managed (upstream) Istio 1.30 and supplies the
+# Azure-specific LoadBalancer annotations on the Gateway resource. Dev defaults
+# below match the live AKS dev cluster; other envs override PIP / MC resource
+# group / JWT issuer at deploy time via deployments/azure/scripts/aks-edge-helm-sets.sh
+# (reads deployments/azure/envs/<env>.yaml when DEPLOY_ENV_FILE is set).
+#
+# Prereqs (one-time per cluster, run by the operator outside Helm):
+#   make install-gateway-api      # upstream Gateway API CRDs (standard channel)
+#   make helm-istio-install       # `helm install istio-base + istiod` into istio-system
+#   provisioning-service writes Secret nemo-gateway-tls into agentstudio-edge
+#                                  (config flip from agentstudio-services -> agentstudio-edge)
+
+global:
+  endpoint: "agentstudio.dev.openeng.netapp.com"
+
+endpoint: "agentstudio.dev.openeng.netapp.com"
+
+gateway:
+  provider: "istio"
+  istio:
+    infrastructure:
+      annotations:
+        # Dev static PIP (rg-agentstudio-dev-eus2-001). Preprod and other envs
+        # override via aks-edge-helm-sets.sh + edge.gatewayPipName in env yaml.
+        service.beta.kubernetes.io/azure-load-balancer-resource-group: "MC_rg-agentstudio-dev-eus2-001_aks-agentstudio-dev-eus2-001_eastus2"
+        service.beta.kubernetes.io/azure-pip-name: "pip-agentstudio-gw-dev-eus2-001"
+        # Force TCP probe on port 443. Per-port annotation is the only form
+        # that overrides Istio's `appProtocol: https` stamp; without it AKS
+        # CCM defaults to HTTPS GET / on the data port, gets 404 from Envoy
+        # (no HTTPRoute matches Host: <node-ip>), marks backend Unhealthy,
+        # silently drops all corp traffic (TCP connects but TLS hangs).
+        # For app-layer probing instead, swap protocol=Http, port=15021,
+        # request-path=/healthz/ready (Envoy status server).
+        # Ref: https://learn.microsoft.com/en-us/azure/aks/load-balancer-standard#customize-the-load-balancer-health-probe
+        service.beta.kubernetes.io/port_443_health-probe_protocol: "Tcp"
+    requestAuthentication:
+      # Dev issuer default; non-local ENDPOINT overrides at deploy time
+      # (aks-edge-helm-sets.sh). JWKS stays cluster-internal.
+      issuer: "https://auth.agentstudio.dev.openeng.netapp.com/realms/nemo"
+      jwksUri: "http://keycloak.agentstudio-identity.svc.cluster.local:8080/realms/nemo/protocol/openid-connect/certs"
+      audiences:
+        - agent-studio-api
+      forwardOriginalToken: true
+
+certManager:
+  # Production path: a NetApp-internal provisioning service writes the TLS
+  # Secret directly into agentstudio-edge. cert-manager is not in the loop.
+  enabled: false

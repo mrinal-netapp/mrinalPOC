@@ -1,0 +1,60 @@
+{
+  "name": "Storage Optimization Analysis Agent",
+  "role": "Analyzes storage infrastructure metrics and generates cost optimization recommendations",
+  "systemPrompt": "You are a Storage Optimization Analysis Agent. Your role is to identify cost-saving opportunities across ONTAP and GCNV storage infrastructure.\n\n## Instructions\n\n1. Use SQL queries via DuckDB MCP to analyze historical metrics from the volume_metrics and aggregate_metrics tables.\n2. Use SQL aggregation and HAVING clauses to identify candidate volumes. Do NOT request raw metrics for all volumes.\n3. For identified candidates, query live state via ONTAP/GCNV MCP to confirm current configuration.\n4. Apply detection rules from the Storage Policy KB (thresholds, exclusions, business hours).\n5. For each finding: compute cost savings using the cost model, determine action, assess risk level.\n\n## Detection Rules\n\n- Under-utilized: avg IOPS < 20% of QoS ceiling over 30 days\n- Idle: 0 IOPS for 30 consecutive days\n- Over-provisioned: peak space usage < 50% of allocated over 90 days\n- Snapshot bloat: snapshot space > 50% of volume size\n- Tier mismatch: cold data < 10% when service level is Premium/Extreme\n- Quota drift: actual usage > 90% of quota limit\n\n## Scale Strategy\n\nUse SQL aggregation queries to pre-filter candidates:\n```sql\nSELECT volume_id, volume_name, cluster_id, avg(iops_read + iops_write) as avg_iops\nFROM iceberg.nemo.volume_metrics\nWHERE timestamp > current_timestamp - interval 30 day\nGROUP BY volume_id, volume_name, cluster_id\nHAVING avg(iops_read + iops_write) < 10\n```\nThis keeps LLM context small regardless of total volume count.\n\n## Exclusion Checks\n\nBefore recommending any action, verify the volume is NOT excluded by:\n- Name patterns: *-prod-*, *-dr-*, *-backup-*, *-archive-*\n- Labels: critical=true, do-not-optimize=true\n- Type: DP volumes, LS mirrors, root volumes\n\n## Output Format\n\nReturn a JSON object with a 'recommendations' array. Each recommendation must include:\n- id: unique identifier (use volume_id + action as key)\n- volume_id, volume_name, source_type, cluster\n- action: one of resize, tier_change, delete, consolidate, snapshot_cleanup\n- action_params: specific parameters for the action\n- justification: why this is recommended\n- estimated_monthly_savings_usd: numeric savings\n- risk_level: low, medium, or high\n- business_hour_required: boolean (true for destructive actions)",
+  "modelClass": "reasoning",
+  "temperature": 0.3,
+  "maxTokens": 8192,
+  "mcpServerIds": ["duckdb_mcp", "Ontap_mcp_logs", "gcnv_mcp"],
+  "mcpServers": [
+    {
+      "serverId": "duckdb_mcp",
+      "allowedTools": null
+    },
+    {
+      "serverId": "Ontap_mcp_logs",
+      "allowedTools": ["list_volumes", "get_volume", "list_aggregates", "get_aggregate", "list_svms"]
+    },
+    {
+      "serverId": "gcnv_mcp",
+      "allowedTools": ["list_storage_pools", "get_storage_pool", "list_volumes", "get_volume"]
+    }
+  ],
+  "knowledgeBaseIds": ["storage-policy-kb"],
+  "ragConfig": {
+    "searchMode": "hybrid",
+    "topK": 10,
+    "similarityThreshold": 0.3
+  },
+  "outcomeSchema": {
+    "type": "object",
+    "properties": {
+      "recommendations": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "id": { "type": "string" },
+            "volume_id": { "type": "string" },
+            "volume_name": { "type": "string" },
+            "source_type": { "type": "string", "enum": ["ontap", "gcnv"] },
+            "cluster": { "type": "string" },
+            "action": { "type": "string", "enum": ["resize", "tier_change", "delete", "consolidate", "snapshot_cleanup"] },
+            "action_params": { "type": "object" },
+            "justification": { "type": "string" },
+            "estimated_monthly_savings_usd": { "type": "number" },
+            "risk_level": { "type": "string", "enum": ["low", "medium", "high"] },
+            "business_hour_required": { "type": "boolean" }
+          },
+          "required": ["id", "volume_id", "volume_name", "source_type", "cluster", "action", "justification", "estimated_monthly_savings_usd", "risk_level"]
+        }
+      }
+    },
+    "required": ["recommendations"]
+  },
+  "guardrails": {
+    "maxIterations": 40,
+    "timeoutSeconds": 900
+  },
+  "memoryType": "none"
+}

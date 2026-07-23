@@ -1,0 +1,19 @@
+{{- if and .Values.enabled .Values.metrics.serviceMonitor.enabled (.Capabilities.APIVersions.Has "monitoring.coreos.com/v1") }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "artifact-service.fullname" . }}
+  labels:
+    {{- include "artifact-service.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "artifact-service.selectorLabels" . | nindent 6 }}
+  endpoints:
+    - port: {{ .Values.metrics.port | default "http" }}
+      path: {{ .Values.metrics.path | default "/metrics" }}
+      interval: {{ .Values.metrics.serviceMonitor.interval | default "30s" }}
+      relabelings:
+        - sourceLabels: [__meta_kubernetes_service_name]
+          targetLabel: exported_service_name
+{{- end }}

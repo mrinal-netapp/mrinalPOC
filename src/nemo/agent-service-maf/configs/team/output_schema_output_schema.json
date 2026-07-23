@@ -1,0 +1,66 @@
+{
+  "_schema_version": "2.0.0",
+  "project_id": "550e8400-e29b-41d4-a716-446655440000",
+  "_team_id": "output_schema_output_schema",
+  "_team_name": "Output Schema — output_schema only",
+  "_description": "Agent has output_schema declared and validates each invocation against it. response_format is unset.",
+  "agent": {
+    "framework": "maf",
+    "model": "azure/gpt-5.4",
+    "temperature": 0.0,
+    "max_tokens": 256,
+    "timeout_seconds": 30
+  },
+  "semantic_kernel": {
+    "agents": [
+      {
+        "name": "assistant",
+        "instructions": "Return a JSON object with fields customerId (string) and amount (number). Do not wrap in code fences. Reply with the JSON object only.",
+        "description": "Agent that returns invoice data validated against a schema.",
+        "model": "azure/gpt-5.4",
+        "temperature": 0.0,
+        "max_tokens": 256,
+        "tools": [],
+        "mcp_servers": [],
+        "function_choice_behavior": "auto",
+        "output_schema": {
+          "type": "object",
+          "properties": {
+            "customerId": {"type": "string"},
+            "amount": {"type": "number"}
+          },
+          "required": ["customerId", "amount"]
+        }
+      }
+    ],
+    "orchestration": {
+      "type": "single"
+    },
+    "default_function_choice_behavior": "auto",
+    "chat_history_max_messages": 100,
+    "enable_telemetry": false,
+    "session_ttl_seconds": 3600
+  },
+  "gateway": {
+    "url": "http://host.docker.internal:4001/v1",
+    "api_key": "",
+    "default_model": "azure/gpt-5.4",
+    "request_timeout_seconds": 60,
+    "retry_on_timeout": true,
+    "max_retries": 2
+  },
+  "guardrails": {
+    "enabled": false
+  },
+  "mcp": {
+    "lazy_connect": true
+  },
+  "mcp_servers": [],
+  "memory": {
+    "enabled": false
+  },
+  "logging": {
+    "level": "INFO",
+    "format": "json"
+  }
+}

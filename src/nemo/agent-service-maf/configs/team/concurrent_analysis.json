@@ -1,0 +1,101 @@
+{
+  "_schema_version": "2.0.0",
+  "project_id": "550e8400-e29b-41d4-a716-446655440000",
+  "_description": "Concurrent analysis: multiple specialist agents analyze the same input in parallel, results are merged.",
+  "agent": {
+    "framework": "maf",
+    "model": "azure/gpt-4.1-mini",
+    "temperature": 0.7,
+    "max_tokens": 4096,
+    "timeout_seconds": 300,
+    "metadata": {
+      "project": "agent-studio",
+      "version": "1.0.0",
+      "environment": "development"
+    }
+  },
+  "semantic_kernel": {
+    "agents": [
+      {
+        "name": "sentiment_analyzer",
+        "instructions": "You are a sentiment analysis specialist. Analyze the sentiment of the given text. Classify as positive, negative, or neutral with a confidence score. Explain your reasoning.",
+        "description": "Analyzes text sentiment",
+        "model": "azure/gpt-4.1-mini",
+        "temperature": 0.3,
+        "max_tokens": 2048,
+        "tools": [],
+        "mcp_servers": [],
+        "function_choice_behavior": "auto"
+      },
+      {
+        "name": "entity_extractor",
+        "instructions": "You are a named entity recognition specialist. Extract all named entities (people, organizations, locations, dates, products) from the given text. Return them in a structured format.",
+        "description": "Extracts named entities from text",
+        "model": "azure/gpt-4.1-mini",
+        "temperature": 0.2,
+        "max_tokens": 2048,
+        "tools": [],
+        "mcp_servers": [],
+        "function_choice_behavior": "auto"
+      },
+      {
+        "name": "topic_classifier",
+        "instructions": "You are a topic classification specialist. Classify the given text into relevant topics and categories. Provide primary and secondary topic labels with confidence scores.",
+        "description": "Classifies text into topics",
+        "model": "azure/gpt-4.1-mini",
+        "temperature": 0.2,
+        "max_tokens": 2048,
+        "tools": [],
+        "mcp_servers": [],
+        "function_choice_behavior": "auto"
+      }
+    ],
+    "orchestration": {
+      "type": "concurrent",
+      "termination_strategy": {
+        "type": "default",
+        "maximum_iterations": 1
+      }
+    },
+    "default_function_choice_behavior": "auto",
+    "chat_history_max_messages": 50,
+    "enable_telemetry": false,
+    "session_ttl_seconds": 3600
+  },
+  "gateway": {
+    "url": "http://host.docker.internal:4001/v1",
+    "api_key": "",
+    "default_model": "azure/gpt-4.1-mini",
+    "request_timeout_seconds": 120,
+    "retry_on_timeout": true,
+    "max_retries": 2
+  },
+  "guardrails": {
+    "enabled": false
+  },
+  "mcp": {
+    "connection_timeout_seconds": 30,
+    "lazy_connect": true,
+    "tool_call_timeout_seconds": 60,
+    "max_tool_retries": 1,
+    "retry_on_timeout": true,
+    "discovery_on_connect": true,
+    "tool_name_format": "qualified",
+    "max_concurrent_tool_calls": 5
+  },
+  "mcp_servers": [],
+  "memory": {
+    "enabled": true,
+    "storage_backend": "memory",
+    "buffer_type": "sliding_window",
+    "ttl_seconds": 3600,
+    "max_history_length": 100,
+    "max_tokens_per_session": 0,
+    "max_chars_per_session": 0
+  },
+  "logging": {
+    "level": "INFO",
+    "format": "json",
+    "include_timestamp": true
+  }
+}

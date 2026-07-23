@@ -1,0 +1,20 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "anfAccountName": {
+      "value": "REPLACE_WITH_anf_account_name"
+    },
+    "pools": {
+      "value": [
+        {
+          "name": "REPLACE_WITH_capacity_pool_name",
+          "serviceLevel": "REPLACE_WITH_Standard_Premium_or_Ultra",
+          "sizeTiB": 1,
+          "qosType": "REPLACE_WITH_Auto_or_Manual",
+          "coolAccessEnabled": false
+        }
+      ]
+    }
+  }
+}

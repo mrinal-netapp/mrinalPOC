@@ -1,0 +1,23 @@
+# AKS overlay for the console tier.
+# azureClientId values are populated by `make wi-fill-client-ids`.
+
+global:
+  storageClass: anf-nfs
+  endpoint: "agentstudio.dev.openeng.netapp.com"
+
+endpoint: "agentstudio.dev.openeng.netapp.com"
+# ── Azure Workload Identity ────────────────────────────────────────────────────
+
+gui:
+  serviceAccount:
+    create: true
+    azureClientId: "0c179cc4-2d2d-405b-8d07-6528e5ecfd1b"
+  workloadIdentity:
+    enabled: true
+
+agent-studio-ui:
+  serviceAccount:
+    create: true
+    azureClientId: ""
+  workloadIdentity:
+    enabled: false

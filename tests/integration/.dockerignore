@@ -1,0 +1,27 @@
+# Keep the build context (and the git tree-hash tag) deterministic and small.
+# Anything gitignored under tests/integration/ that could leak into the image
+# or perturb the content hash is excluded here.
+
+# Python virtualenv & caches
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Generated test reports (recreated at runtime under the bind-mounted /work/reports)
+reports/
+
+# Local secrets / env — never bake credentials into image layers
+.env
+.env.local
+.env.*
+
+# The image itself / build tooling
+Dockerfile
+.dockerignore
+
+# OS / editor
+.DS_Store

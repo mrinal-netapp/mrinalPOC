@@ -1,0 +1,47 @@
+@use "@fontsource-variable/inter/index.css";
+@use "./styles/colors";
+@use "./styles/variables";
+
+// Base styles (replaces the former `@layer base` + `@apply` usage)
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  border-color: var(--border-main);
+  outline-color: color-mix(in oklch, var(--border-focus-outline) 50%, transparent);
+}
+
+html,
+body {
+  height: 100%;
+}
+
+html {
+  font-family: var(--font-family);
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-family);
+  background: var(--background-main);
+  color: var(--text-primary);
+}
+
+.no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+// TEMP lock for the Deploy action (Save-and-deploy / Deploy menu items).
+// Greyed + non-interactive. The JS guard (isDeployActivationLocked) keys off
+// this class, so to re-enable a control for testing you must REMOVE the
+// `--locked` class in devtools (overriding pointer-events/opacity alone will
+// not work — the guard still blocks activation while the class is present).
+.agent-deploy-action--locked {
+  opacity: 0.5;
+  pointer-events: none;
+}

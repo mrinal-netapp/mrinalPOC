@@ -1,0 +1,8 @@
+apiVersion: v2
+name: identity
+description: AgentStudio identity tier — Keycloak 26 OIDC provider with realm bootstrap, OIDC clients, and oidc-secrets. Backed by shared PostgreSQL in the `database` namespace. Optional Azure Workload Identity + SecretProviderClass for AKS.
+type: application
+version: 0.1.0
+# appVersion is the upstream Keycloak version. Keep in sync with
+# values.yaml `image.tag` and the Makefile `KEYCLOAK_TAG` variable.
+appVersion: "26.6.0"

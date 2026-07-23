@@ -1,0 +1,108 @@
+.zod-demo {
+  padding: 32px;
+  font-family: var(--font-family);
+  color: var(--text-primary);
+  background-color: var(--background-main);
+  min-height: 100vh;
+}
+
+.zod-demo__title {
+  margin: 0 0 4px;
+}
+
+.zod-demo__subtitle {
+  margin: 0 0 28px;
+}
+
+.zod-demo__mode-toggle {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.zod-demo__divider {
+  border: none;
+  border-top: 1px solid var(--border-main);
+  margin: 32px 0 24px;
+}
+
+.zod-demo__body {
+  display: flex;
+  gap: 40px;
+  align-items: flex-start;
+}
+
+.zod-demo__form {
+  flex: 1;
+  max-width: 640px;
+}
+
+.zod-demo__section {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding-bottom: 8px;
+}
+
+.zod-demo__section-title {
+  margin: 0;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border-main);
+}
+
+.zod-demo__row {
+  display: flex;
+  gap: 24px;
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+
+.zod-demo__field {
+  flex: 1;
+  min-width: 240px;
+  max-width: 300px;
+}
+
+.zod-demo__field--wide {
+  max-width: 100%;
+}
+
+.zod-demo__actions {
+  display: flex;
+  gap: 12px;
+  padding-top: 8px;
+}
+
+.zod-demo__output {
+  flex-shrink: 0;
+  width: 320px;
+  position: sticky;
+  top: 32px;
+}
+
+.zod-demo__pre {
+  margin: 8px 0 0;
+  padding: 16px;
+  background-color: var(--background-content);
+  border: 1px solid var(--border-main);
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+  overflow: auto;
+  max-height: 480px;
+}
+
+.zod-demo__schema {
+  margin: 0;
+  padding: 20px;
+  background-color: var(--background-content);
+  border: 1px solid var(--border-main);
+  border-radius: 6px;
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  max-width: 640px;
+  overflow: auto;
+}

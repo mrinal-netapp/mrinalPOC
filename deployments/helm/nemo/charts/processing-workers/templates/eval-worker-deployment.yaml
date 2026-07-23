@@ -1,0 +1,80 @@
+{{- if .Values.evalWorker.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "processing-workers.fullname" . }}-eval
+  labels:
+    {{- include "processing-workers.labels" . | nindent 4 }}
+    {{- include "processing-workers.evalWorker.selectorLabels" . | nindent 4 }}
+spec:
+  {{- if not .Values.evalWorker.autoscaling.enabled }}
+  replicas: {{ .Values.evalWorker.replicas }}
+  {{- end }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      {{- include "processing-workers.evalWorker.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "processing-workers.evalWorker.selectorLabels" . | nindent 8 }}
+      annotations:
+        # Native Istio sidecar so the `wait-for-temporal` initContainer
+        # (`nc -z temporal 7233`) can reach temporal in the STRICT-mTLS
+        # agentstudio-platform namespace.
+        sidecar.istio.io/nativeSidecar: "true"
+    spec:
+      terminationGracePeriodSeconds: {{ .Values.evalWorker.terminationGracePeriodSeconds | default 60 }}
+      {{- with .Values.evalWorker.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      volumes:
+        - name: nemo-default-bucket
+          persistentVolumeClaim:
+            claimName: {{ include "nemo.defaultBucketPvcName" . }}
+      initContainers:
+        - name: wait-for-temporal
+          image: {{ .Values.global.imageRepository }}/init-tools:latest
+          command: ['sh', '-c', 'until nc -z temporal 7233; do echo waiting for temporal; sleep 2; done']
+      containers:
+        - name: eval-worker
+          image: "{{ .Values.global.imageRepository }}/{{ .Values.evalWorker.image.repository }}:{{ .Values.global.imageTag | default .Values.evalWorker.image.tag }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy | default .Values.evalWorker.image.pullPolicy }}
+          resources:
+            {{- toYaml .Values.evalWorker.resources | nindent 12 }}
+          volumeMounts:
+            - name: nemo-default-bucket
+              mountPath: /mnt/pvcs/default-nemo
+          env:
+            {{- toYaml .Values.evalWorker.env | nindent 12 }}
+            {{- $root := . }}
+            {{- /* Service-account auth: lets src/lib/auth.ts mint Bearer
+                   tokens for config-service via client-credentials. */}}
+            - name: KEYCLOAK_INTERNAL_ISSUER
+              value: {{ include "nemo.keycloakInternalIssuer" $root | quote }}
+            - name: KEYCLOAK_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-oidc-secrets
+                  key: eval-worker-client-id
+            - name: KEYCLOAK_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-oidc-secrets
+                  key: eval-worker-client-secret
+            - name: TEMPORAL_GRACEFUL_SHUTDOWN_TIMEOUT
+              value: {{ .Values.evalWorker.gracefulShutdownTimeout | default "30" | quote }}
+          ports:
+            - name: metrics
+              containerPort: 9465
+              protocol: TCP
+{{- end }}

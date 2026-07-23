@@ -1,0 +1,249 @@
+@use "@/styles/mixins" as *;
+
+.agent-playground-chat {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  height: 100%;
+  overflow: hidden;
+
+  &__body {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+    padding: 16px 24px;
+
+    @include standard-scroll;
+  }
+
+  &__message {
+    max-width: 85%;
+    line-height: 1.5;
+
+    &--user {
+      align-self: flex-end;
+      max-width: 85%;
+      padding: 8px 12px;
+      border-radius: 8px;
+      background: var(--chart-background, #e8eefd);
+    }
+
+    &--assistant {
+      align-self: flex-start;
+      max-width: 100%;
+      width: 100%;
+    }
+  }
+
+  &__assistant {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    width: 100%;
+  }
+
+  &__assistant-content {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    color: var(--text-primary);
+    font-size: 14px;
+    line-height: 24px;
+  }
+
+  &__assistant-line {
+    margin: 0;
+
+    strong {
+      font-weight: 600;
+    }
+
+    &--bullet {
+      padding-left: 0;
+    }
+  }
+
+  &__assistant-json,
+  &__assistant-code {
+    margin: 0;
+    padding: 12px;
+    border-radius: 8px;
+    background: var(--surface-secondary, #f5f5f7);
+    color: var(--text-primary);
+    font-family: var(--font-mono, ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace);
+    font-size: 12px;
+    line-height: 18px;
+    white-space: pre;
+    overflow-x: auto;
+  }
+
+  &__assistant-inline-code {
+    padding: 1px 5px;
+    border-radius: 4px;
+    background: var(--surface-secondary, #f5f5f7);
+    font-family: var(--font-mono, ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace);
+    font-size: 0.9em;
+  }
+
+  &__message-metadata {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  &__legends {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 24px;
+  }
+
+  &__legend {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--text-primary);
+  }
+
+  &__legend-swatch {
+    width: 10px;
+    height: 10px;
+    border-radius: 2px;
+    flex-shrink: 0;
+
+    &--latency {
+      background: #3b82f6;
+    }
+
+    &--tokens {
+      background: #c2e812;
+    }
+
+    &--model {
+      background: #9333ea;
+    }
+  }
+
+  &__sources {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  &__sources-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    color: var(--text-primary);
+
+    &:hover {
+      color: var(--text-button-primary);
+    }
+  }
+
+  &__sources-chevron {
+    color: var(--text-secondary);
+    transition: transform 0.15s ease;
+
+    &--expanded {
+      transform: rotate(180deg);
+    }
+  }
+
+  &__sources-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  &__source-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 12px;
+    border-radius: 6px;
+    background: var(--background-secondary, #f5f6f8);
+  }
+
+  &__source-name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  &__pending {
+    display: flex;
+    flex-shrink: 0;
+    align-items: center;
+    gap: 8px;
+  }
+
+  &__empty {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex: 1;
+    min-height: 120px;
+  }
+
+  &__footer {
+    flex-shrink: 0;
+    border-top: 1px solid var(--border-main);
+    padding: 16px 24px 24px;
+  }
+
+  &__input-wrapper {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+  }
+
+  &__textarea {
+    width: 100%;
+    min-height: 88px;
+    max-height: 160px;
+    padding: 16px 56px 16px 16px;
+    border: 2px solid transparent;
+    border-radius: 12px;
+    background:
+      linear-gradient(var(--background-content), var(--background-content)) padding-box,
+      linear-gradient(90deg, #4d9fff 0%, #6b4ce6 55%, #a855f7 100%) border-box;
+    font-family: inherit;
+    font-size: 14px;
+    line-height: 24px;
+    color: var(--text-primary);
+    resize: none;
+    overflow-y: auto;
+    outline: none;
+
+    @include standard-scroll;
+
+    &::placeholder {
+      color: var(--text-secondary);
+    }
+
+    &:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+  }
+
+  &__send-btn {
+    position: absolute;
+    right: 12px;
+    bottom: 12px;
+  }
+}

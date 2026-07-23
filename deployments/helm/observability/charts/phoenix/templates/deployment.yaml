@@ -1,0 +1,128 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "phoenix.fullname" . }}
+  labels:
+    {{- include "phoenix.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  {{- if .Values.persistence.enabled }}
+  # RWO PVC (persistence below): Recreate avoids a Multi-Attach deadlock on
+  # upgrades. RollingUpdate surges the new pod up first while the old pod still
+  # holds the ReadWriteOnce volume, hanging the new pod in Init forever with
+  # "Multi-Attach error for volume ... already used by pod(s)".
+  strategy:
+    type: Recreate
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "phoenix.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "phoenix.selectorLabels" . | nindent 8 }}
+      annotations:
+        # Native Istio sidecar so the `ensure-phoenix-database` initContainer
+        # (which uses `pg_isready` + `psql` to bootstrap the phoenix DB on
+        # shared-postgresql) reaches postgres over mTLS. Postgres lives in
+        # the STRICT-mTLS `database` namespace; without native sidecar the
+        # init container runs before iptables interception and gets RST.
+        sidecar.istio.io/nativeSidecar: "true"
+    spec:
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- $backend := .Values.database.backend | default "sqlite" }}
+      {{- $hasEnsureDb := and (eq $backend "postgresql") .Values.database.create }}
+      {{- $hasMigGuard := .Values.migration.guard.enabled }}
+      {{- if or $hasEnsureDb $hasMigGuard }}
+      initContainers:
+        {{- if $hasEnsureDb }}
+        # Ensures the Phoenix PostgreSQL database exists before Phoenix (or the
+        # migration-guard) tries to connect.
+        - name: ensure-phoenix-database
+          image: {{ .Values.database.initImage }}
+          env:
+            - name: PGHOST
+              value: {{ .Values.database.host | quote }}
+            - name: PGPORT
+              value: {{ .Values.database.port | toString | quote }}
+            - name: PGUSER
+              value: {{ .Values.database.user | quote }}
+            - name: PGPASSWORD
+              value: {{ .Values.database.password | quote }}
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -e
+              until pg_isready -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" 2>/dev/null; do
+                echo "waiting for postgres..."
+                sleep 2
+              done
+              EXISTS=$(psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='{{ .Values.database.name }}'")
+              if [ "$EXISTS" != "1" ]; then
+                psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d postgres -c "CREATE DATABASE {{ .Values.database.name }}"
+              fi
+        {{- end }}
+        {{- if $hasMigGuard }}
+        # Detects Alembic revision mismatches and backs up the incompatible DB
+        # so Phoenix can start fresh instead of crash-looping.
+        # Runs last in the init sequence so the DB already exists for the check.
+        - name: migration-guard
+          image: {{ include "phoenix.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["python3", "/scripts/migration-guard.py"]
+          env:
+            - name: PHOENIX_DB_BACKEND
+              value: {{ $backend | quote }}
+            {{- include "phoenix.env" . | nindent 12 }}
+          volumeMounts:
+            - name: migration-guard-script
+              mountPath: /scripts
+            {{- if .Values.persistence.enabled }}
+            - name: data
+              mountPath: {{ .Values.persistence.mountPath | default "/data" }}
+            {{- end }}
+        {{- end }}
+      {{- end }}
+      containers:
+        - name: phoenix
+          image: {{ include "phoenix.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.port }}
+              protocol: TCP
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          env:
+            # When the Service is named "phoenix", Kubernetes injects PHOENIX_PORT=tcp://...
+            # which Phoenix rejects; set the integer value explicitly.
+            - name: PHOENIX_PORT
+              value: {{ .Values.service.port | toString | quote }}
+            {{- include "phoenix.env" . | nindent 12 }}
+          {{- if .Values.persistence.enabled }}
+          volumeMounts:
+            - name: data
+              mountPath: {{ .Values.persistence.mountPath | default "/data" }}
+          {{- end }}
+      volumes:
+        {{- if .Values.persistence.enabled }}
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "phoenix.fullname" . }}
+        {{- end }}
+        {{- if .Values.migration.guard.enabled }}
+        - name: migration-guard-script
+          configMap:
+            name: {{ include "phoenix.fullname" . }}-migration-guard
+        {{- end }}

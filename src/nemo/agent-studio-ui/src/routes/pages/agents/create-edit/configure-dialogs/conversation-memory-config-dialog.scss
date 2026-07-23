@@ -1,0 +1,51 @@
+.conversation-memory-config-dialog {
+  width: 100%;
+
+  // Mirrors Card{Header,Footer}'s `padding-inline: 40px` so the
+  // description, dropdown, inputs, toggle, and helper line up with the
+  // title above and the action buttons below. UA-margin reset is needed
+  // because `Typography Component="p"` renders a real <p>; default UA
+  // margins would stack on top of the flex gaps and balloon the layout.
+
+  &__content {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    padding: 24px 40px;
+
+    p {
+      margin: 0;
+    }
+  }
+
+  &__field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    width: 100%;
+    max-width: 520px;
+  }
+
+  // Info icon + helper text shown below the message-history-limit input.
+  // Acts as a small visual break between the upper "message" cluster and
+  // the lower "session" cluster, while still keeping the user oriented
+  // on what the dropdown choice actually means.
+  &__helper {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    max-width: 520px;
+  }
+
+  &__helper-icon {
+    flex-shrink: 0;
+    color: var(--text-secondary);
+  }
+
+  &__toggle-row {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+  }
+}

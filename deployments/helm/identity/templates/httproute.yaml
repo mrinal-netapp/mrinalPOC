@@ -1,0 +1,87 @@
+{{- /*
+HTTPRoute exposing the in-namespace Keycloak Service via an external
+Gateway in another namespace (typically `agentstudio-edge/agentstudio-gateway`).
+
+Off by default. Set httpRoute.enabled=true to let apps reach this
+Keycloak under a browser-reachable hostname like `auth.<endpoint>`
+for browser/redirect flows.
+
+CROSS-NS PARENT, SAME-NS BACKEND:
+- parentRef points at the gateway in another namespace (cross-ns) --
+  the gateway's listener must set `allowedRoutes.namespaces.from`
+  to a value that includes this namespace, or this route is
+  silently rejected. The nemo chart's default values for
+  `gateway.listeners.{http,https}.allowedRoutes` already permit it.
+- backendRef stays in this namespace, so no `ReferenceGrant` is
+  needed. If we ever point the backend at a Service in another
+  namespace, add a ReferenceGrant alongside or the route fails to
+  resolve refs.
+
+LIVENESS:
+The route's status (`Accepted` / `ResolvedRefs`) shows up under
+.status.parents on `kubectl get httproute`.
+*/ -}}
+{{- if and .Values.httpRoute (.Values.httpRoute.enabled | default false) -}}
+{{- $backendName := .Values.httpRoute.backend.serviceName | default (include "keycloak.fullname" .) -}}
+{{- $backendPort := .Values.httpRoute.backend.port | default 8080 -}}
+{{- /*
+Defensive guard: if the route is enabled but no hostnames are listed,
+the rendered HTTPRoute would inherit ALL hostnames its parent listener
+permits, which on a shared wildcard gateway means Keycloak would answer
+on every sibling FQDN routed through that gateway. The chart REQUIRES at
+least one explicit hostname when enabled -- callers must set
+`httpRoute.hostnames` (e.g. ["auth.<endpoint>"]).
+*/ -}}
+{{- if not .Values.httpRoute.hostnames -}}
+{{- fail "httpRoute.hostnames must list at least one hostname when httpRoute.enabled=true (leaving it empty would let the route answer on every hostname the parent Gateway listener permits, e.g. every name under the wildcard cert). Set it to e.g. [\"auth.<endpoint>\"]." -}}
+{{- end -}}
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ include "keycloak.fullname" . }}
+  labels:
+    {{- include "keycloak.labels" . | nindent 4 }}
+  annotations:
+    debug.gateway-api.parent-gateway: {{ printf "%s/%s" .Values.httpRoute.parentRef.namespace .Values.httpRoute.parentRef.name | quote }}
+    debug.gateway-api.backend-service: {{ printf "%s:%d" $backendName (int $backendPort) | quote }}
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: {{ required "httpRoute.parentRef.name is required when httpRoute.enabled=true" .Values.httpRoute.parentRef.name }}
+      namespace: {{ required "httpRoute.parentRef.namespace is required when httpRoute.enabled=true (the namespace where the parent Gateway lives)" .Values.httpRoute.parentRef.namespace }}
+      {{- with .Values.httpRoute.parentRef.sectionName }}
+      sectionName: {{ . }}
+      {{- end }}
+  {{- /*
+  Substitute `agentstudio.local` → global.endpoint (same swap as
+  agent-studio-realm.json + statefulset.yaml KC_HOSTNAME). Without this
+  the HTTPRoute attaches only to the literal `auth.agentstudio.local`
+  even when the operator passed --set global.endpoint=<real-host>; the
+  gateway then never routes the real hostname to Keycloak.
+  */}}
+  {{- $effective := include "keycloak.publicHttpRouteHostnames" . | fromYamlArray }}
+  {{- with $effective }}
+  hostnames:
+    {{- range . }}
+    - {{ . | quote }}
+    {{- end }}
+  {{- end }}
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      {{- if .Values.httpRoute.removeHSTS }}
+      filters:
+        - type: ResponseHeaderModifier
+          responseHeaderModifier:
+            remove:
+              - Strict-Transport-Security
+      {{- end }}
+      backendRefs:
+        - group: ""
+          kind: Service
+          name: {{ $backendName }}
+          port: {{ $backendPort }}
+{{- end }}

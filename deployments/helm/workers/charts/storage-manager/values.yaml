@@ -1,0 +1,94 @@
+# Default values for storage-manager sub-chart
+enabled: true
+# replicaCount: Number of storage-manager instances
+# All instances perform background tasks (config sync, health reporting, Kubernetes resource management)
+# All instances can handle API requests (stateless operations)
+# Set to 1 for single-instance deployments, or 2+ for high availability
+replicaCount: 1
+
+image:
+  repository: nemo/storage-manager
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 8080
+  metricsPort: 9090  # Dedicated Prometheus port served by the Node.js observability client lib (must match AGENT_STUDIO_OBSERVABILITY_PROMETHEUS_METRICS_PORT)
+
+resources:
+  limits:
+    cpu: 1000m
+    memory: 2Gi
+  requests:
+    cpu: 500m
+    memory: 1Gi
+
+env:
+  - name: CONFIG_SERVICE_URL
+    value: "http://config-service:3000"
+  - name: K8S_NAMESPACE
+    value: ""  # Overridden by template to use actual release namespace
+  - name: CONFIG_SYNC_INTERVAL
+    value: "30s"
+  - name: LOG_LEVEL
+    value: "info"
+  # DEPLOYMENT_ID and REGION are set in deployment template with defaults
+  # DEPLOYMENT_ID defaults to "nemo"
+  # REGION defaults to "us-east-1" or from values.region
+
+# Region for nemo deployment (defaults to us-east-1)
+region: "us-east-1"
+
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 8080
+  initialDelaySeconds: 30
+  periodSeconds: 10
+
+readinessProbe:
+  httpGet:
+    path: /ready
+    port: 8080
+  initialDelaySeconds: 5
+  periodSeconds: 5
+
+# Init container configuration (waits for keycloak-setup to populate OIDC secrets)
+initContainer:
+  enabled: true
+  waitForKeycloakSetup: true
+  waitForConfigService: true
+
+# Observability — RED metrics served by the observability client lib on metricsPort
+metrics:
+  path: /metrics
+  port: metrics
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+tracing:
+  otlpEndpoint: ""  # Legacy; AGENT_STUDIO_OBSERVABILITY_OTLP_TRACES_ENDPOINT is used instead
+
+# These will be passed from parent chart
+namespace: ""
+serviceAccountName: ""
+podSecurityContext: {}
+securityContext: {}
+nodeSelector: {}
+affinity: {}
+tolerations: []
+# Note: global values (imageRegistry, imagePullSecrets) are automatically inherited from parent chart's root-level global
+
+serviceAccount:
+  create: true
+  name: ""
+  azureClientId: ""
+
+workloadIdentity:
+  enabled: false
+
+# Global defaults for nil-safe sub-chart rendering; overridden by parent chart global.
+global:
+  observability:
+    otlpEndpoint: ""

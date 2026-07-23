@@ -1,0 +1,121 @@
+# VolumeMountSet CRD: declarative desired PVC mounts per target workload (Deployment/StatefulSet).
+# Storage-manager writes spec.desiredPvcNames; controller reconciles deployment and writes status.
+# Install before storage-manager and VolumeMountSet controller.
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: volumemountsets.agentstudio.io
+spec:
+  group: agentstudio.io
+  names:
+    kind: VolumeMountSet
+    listKind: VolumeMountSetList
+    plural: volumemountsets
+    singular: volumemountset
+  scope: Namespaced
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - name: Target
+          type: string
+          jsonPath: .spec.target.deploymentName
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            apiVersion:
+              type: string
+            kind:
+              type: string
+            metadata:
+              type: object
+            spec:
+              description: Desired state (written by storage-manager or other writers).
+              type: object
+              properties:
+                target:
+                  type: object
+                  description: Target workload to reconcile.
+                  properties:
+                    deploymentName:
+                      type: string
+                      description: Name of the Deployment in the same namespace (Phase 1).
+                    labelSelector:
+                      type: string
+                      description: "(Future) Resolve Deployment by label selector."
+                    kind:
+                      type: string
+                      description: "(Future) Deployment or StatefulSet."
+                      enum:
+                        - Deployment
+                        - StatefulSet
+                desiredPvcNames:
+                  type: array
+                  items:
+                    type: string
+                  description: PVC names that should be mounted on the target (storage-manager managed only; excludes default-bucket, pvcs-base, etc.).
+                mountPathBase:
+                  type: string
+                  description: Base path for volume mounts (e.g. /mnt/pvcs).
+                  default: "/mnt/pvcs"
+                pvcMountPaths:
+                  type: object
+                  additionalProperties:
+                    type: string
+                  description: Override mount path per PVC (pvcName -> mountPath).
+            status:
+              description: Observed state (written by controller).
+              type: object
+              properties:
+                evictedPvcNames:
+                  type: array
+                  items:
+                    type: string
+                  description: PVCs temporarily removed due to mount failure.
+                pvcConditions:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      pvcName:
+                        type: string
+                      mounted:
+                        type: boolean
+                      message:
+                        type: string
+                      firstFailureAt:
+                        type: string
+                        format: date-time
+                      lastFailureAt:
+                        type: string
+                        format: date-time
+                      evictedAt:
+                        type: string
+                        format: date-time
+                targetResolved:
+                  type: object
+                  description: Resolved target ref after first reconciliation.
+                conditions:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      type:
+                        type: string
+                      message:
+                        type: string
+                      lastTransitionTime:
+                        type: string
+                        format: date-time
+                  description: Top-level conditions (e.g. TargetNotFound).
+                observedGeneration:
+                  type: integer
+                  format: int64
+                  description: metadata.generation when spec was last reconciled.

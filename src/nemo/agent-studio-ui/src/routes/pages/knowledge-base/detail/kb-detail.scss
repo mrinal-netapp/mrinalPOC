@@ -1,0 +1,125 @@
+// KB Detail — full detail page with breadcrumbs, header, stats, tabs
+
+.kb-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+
+  // -- Loading / Error states --
+
+  &__loading,
+  &__error {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    padding: 64px 0;
+  }
+
+  // -- Header area --
+
+  &__header {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  &__title-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+  }
+
+  &__title {
+    margin: 0;
+    font-family: var(--font-family);
+    font-size: 20px;
+    font-weight: 600;
+    line-height: 28px;
+    color: var(--text-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+  }
+
+  &__title-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+  }
+
+  &__status-badge {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  // -- Stats card --
+
+  &__stats-card {
+    width: 100%;
+  }
+
+  // -- Tabs area --
+
+  &__tabs {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+  }
+
+  &__tab-content {
+    padding-top: 24px;
+  }
+}
+
+// -- Overview tab: card-variant sub-tabs --
+
+.kb-overview__tabs > .tab-group__list {
+  border-bottom: 1px solid var(--border-main);
+}
+
+.kb-overview__tab-content {
+  padding: 0;
+}
+
+.kb-overview__spinner-center {
+  display: flex;
+  justify-content: center;
+  padding: 32px 0;
+}
+
+.kb-overview__metrics-card {
+  width: 100%;
+  margin-bottom: 24px;
+}
+
+// -- Sync tab --
+
+.kb-sync__card {
+  width: 100%;
+}
+
+.kb-sync__status-value {
+  display: flex !important;
+  align-items: center;
+  gap: 8px;
+}
+
+.kb-sync__history-header {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  margin: 24px 0;
+}
+
+.kb-dataset__header {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  margin: 24px 0;
+}

@@ -1,0 +1,30 @@
+[package]
+name = "agentstudio-secrets-client"
+version = "1.0.0"
+edition = "2021"
+description = "AgentStudio secrets-client — reads CSI-mounted secrets from /mnt/secrets with live rotation support"
+license = "Apache-2.0"
+
+[dependencies]
+# File-system event watching (inotify on Linux, kqueue on macOS/BSD).
+notify = "6"
+# Lock-free atomic swap for the hot-swapping TLS config pointer.
+arc-swap = "1"
+# Ergonomic RwLock with no poisoning.
+parking_lot = "0.12"
+# TLS context building from PEM files.
+rustls = { version = "0.23", features = ["ring"] }
+rustls-pemfile = "2"
+# JSON deserialization for get_json.
+serde_json = "1"
+serde = { version = "1", features = ["derive"] }
+# Error handling.
+thiserror = "1"
+
+[dev-dependencies]
+# Self-signed certificate generation for tests.
+rcgen = "0.13"
+tempfile = "3"
+
+[features]
+default = []

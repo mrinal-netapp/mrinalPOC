@@ -1,0 +1,18 @@
+# GKE overlay for the CONSOLE tier.
+#
+# gui / agent-studio-ui are stateless (no PVCs), so there is no storage override
+# here; this overlay exists solely to create the dedicated ServiceAccounts.
+#
+# Dedicated ServiceAccounts (mirrors the AKS overlay, minus Azure WI/clientId).
+# The base chart defaults serviceAccount.create=false, so without these the
+# gui / agent-studio-ui pods run as the namespace `default` SA — tripping the
+# mesh's `admissionPolicies.denyDefaultServiceAccount` guardrail. AKS gets named
+# SAs for free via Azure Workload Identity; on GKE we create them explicitly
+# (only the SPIFFE identity matters here).
+gui:
+  serviceAccount:
+    create: true
+
+agent-studio-ui:
+  serviceAccount:
+    create: true

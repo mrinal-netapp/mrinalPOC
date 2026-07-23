@@ -1,0 +1,48 @@
+{{- if and .Values.enabled .Values.networkPolicy.enabled }}
+{{- $root := . }}
+{{- range .Values.models }}
+{{- $args := dict "root" $root "modelKey" .key }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "tei.modelFullname" $args }}
+  namespace: {{ $root.Values.namespace | default $root.Release.Namespace }}
+  labels:
+    {{- include "tei.commonLabels" $args | nindent 4 }}
+    {{- include "tei.selectorLabels" $args | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "tei.selectorLabels" $args | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $root.Values.networkPolicy.allowedNamespace | quote }}
+          podSelector:
+            matchLabels:
+              {{- toYaml $root.Values.networkPolicy.allowFromPodLabel | nindent 14 }}
+        - podSelector:
+            matchLabels:
+              {{- toYaml $root.Values.networkPolicy.allowFromPodLabel | nindent 14 }}
+      ports:
+        - port: 80
+          protocol: TCP
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - port: 443
+          protocol: TCP
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+{{- end }}
+{{- end }}

@@ -1,0 +1,46 @@
+# Default values for prometheus-proxy.
+# Override in deployments/helm/observability/values.yaml under prometheus-proxy:
+
+enabled: false
+
+replicaCount: 1
+
+image:
+  repository: ""   # e.g. docker.repo.eng.netapp.com/user/ag93878/nemo/prometheus-proxy
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
+# Namespace the proxy is deployed into. Must match the observability namespace.
+namespace: monitoring
+
+# In-cluster URL of the Prometheus HTTP API.
+prometheusUpstreamURL: "http://prometheus-prometheus.monitoring.svc.cluster.local:9090"
+
+# In-cluster URL of the grafana-proxy service.
+# The proxy calls /.internal/projects on grafana-proxy to fetch user project lists.
+grafanaProxyURL: "http://grafana-proxy.monitoring.svc.cluster.local:8080"
+
+# Shared secret for authenticating /.internal/projects calls to grafana-proxy.
+# Must match grafana-proxy's INTERNAL_TOKEN.
+# In production use existingSecret instead of setting inlineToken.
+internalToken:
+  # Inline value — dev only. NEVER use in production.
+  value: ""
+  # Name of an existing K8s Secret with key `internalToken`.
+  # When set, value above is ignored.
+  existingSecret: ""
+
+# How long per-user project lists are cached locally (seconds).
+projectCacheTTLSeconds: 300
+
+service:
+  type: ClusterIP
+  port: 9091
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 32Mi
+  limits:
+    cpu: 200m
+    memory: 64Mi

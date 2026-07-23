@@ -1,0 +1,276 @@
+# Release pipeline. Triggers on push to main or release/<major>.<minor>.x
+# branches. Computes the next SemVer pre-release tag (dev/rc) from the
+# repo-root VERSION file (or the branch name on release branches), pushes
+# the tag, then calls build-common.yml to build & publish images, package
+# the Helm chart artifacts, and create a GitHub Release.
+#
+# On main: also auto-deploys the new tag to dev AKS/GKE/EKS and runs the
+# post-deploy integration suite (AKS-first fan-out). On release branches
+# only build/publish/tag — dev deploy is a deliberate manual action.
+#
+# Tagging convention:
+#   main                      -> 1.0.0-dev.1, 1.0.0-dev.2, ...
+#   release/<major>.<minor>.x -> <major>.<minor>.0-rc.1, <major>.<minor>.0-rc.2, ...
+
+name: Release Pipeline
+
+on:
+  push:
+    branches:
+      - main
+      - 'release/**'
+
+permissions:
+  contents: write
+  packages: write
+  id-token: write
+  security-events: write
+  actions: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # ─── OBTAIN PR DETAILS ──────────────────────────────
+  # Best-effort metadata pull for the merge commit. Used only for
+  # logging / release-note attribution; release.yml never blocks on it.
+  obtain-pr-details:
+    name: Obtain PR Details
+    runs-on: ubuntu-latest
+    outputs:
+      pr_user: ${{ steps.fetch-pr.outputs.pr_user }}
+      pr_title: ${{ steps.fetch-pr.outputs.pr_title }}
+      pr_base_branch: ${{ steps.fetch-pr.outputs.pr_base_branch }}
+      pr_email: ${{ steps.fetch-pr.outputs.pr_email }}
+    steps:
+      - name: Fetch PR details for the merge commit
+        id: fetch-pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash -e {0}
+        run: |
+          HTTP_CODE=$(curl -s -o /tmp/pr_response.json -w "%{http_code}" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/commits/${{ github.sha }}/pulls")
+
+          if [[ "$HTTP_CODE" -ge 400 ]]; then
+            echo "GitHub API returned HTTP $HTTP_CODE -- treating as no PR found"
+            PR_JSON="[]"
+          else
+            PR_JSON=$(cat /tmp/pr_response.json)
+          fi
+
+          PR_FIRST=$(echo "$PR_JSON" | jq '.[0] // empty')
+
+          if [[ -z "$PR_FIRST" || "$PR_FIRST" == "null" ]]; then
+            echo "No PR found for commit ${{ github.sha }} -- using defaults"
+            echo "pr_user=${{ github.actor }}" >> "$GITHUB_OUTPUT"
+            echo "pr_title=Direct push to ${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+            echo "pr_base_branch=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          PR_USER=$(echo "$PR_FIRST" | jq -r '.user.login // empty')
+          PR_TITLE=$(echo "$PR_FIRST" | jq -r '.title // empty')
+          PR_BRANCH=$(echo "$PR_FIRST" | jq -r '.base.ref // empty')
+
+          echo "pr_user=${PR_USER:-${{ github.actor }}}" >> "$GITHUB_OUTPUT"
+          echo "pr_title=${PR_TITLE:-unknown}" >> "$GITHUB_OUTPUT"
+          echo "pr_base_branch=${PR_BRANCH:-${{ github.ref_name }}}" >> "$GITHUB_OUTPUT"
+
+          echo "PR by $PR_USER: $PR_TITLE (base: $PR_BRANCH)"
+
+          # Resolve the author's email / Teams UPN for the @-mention id.
+          #
+          # Prefer the primary email configured on the author's GitHub account
+          # (`GET /users/{login}` -> .email) — the address the person set on
+          # their profile, which is their real mailbox / Teams UPN. The merge
+          # commit's git author email is only a fallback: with email privacy on
+          # (GitHub's default) it is a `<numeric-id>+<login>@users.noreply.github.com`
+          # address — the GitHub user id, not a mailbox — so a mention built from
+          # it can never ping anyone. Such noreply addresses are ignored.
+          # Best-effort throughout: never blocks the release.
+          PR_EMAIL=""
+
+          # 1) Author's account-configured (profile) email.
+          USER_CODE=$(curl -s -o /tmp/user_response.json -w "%{http_code}" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/users/${PR_USER}")
+          if [[ "$USER_CODE" -ge 400 ]]; then
+            echo "User lookup for '$PR_USER' returned HTTP $USER_CODE."
+          else
+            ACCOUNT_EMAIL=$(jq -r '.email // empty' /tmp/user_response.json)
+            if [[ -n "$ACCOUNT_EMAIL" && "$ACCOUNT_EMAIL" != *@users.noreply.github.com ]]; then
+              PR_EMAIL="$ACCOUNT_EMAIL"
+              echo "Resolved author email from GitHub account profile."
+            else
+              echo "No usable account email configured for '$PR_USER'."
+            fi
+          fi
+
+          # 2) Fall back to the merge commit author email (ignoring GitHub
+          #    noreply addresses, which the notifier can't ping anyway).
+          if [[ -z "$PR_EMAIL" ]]; then
+            COMMIT_CODE=$(curl -s -o /tmp/commit_response.json -w "%{http_code}" \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${{ github.repository }}/commits/${{ github.sha }}")
+            if [[ "$COMMIT_CODE" -ge 400 ]]; then
+              echo "Commit lookup returned HTTP $COMMIT_CODE -- no author email"
+            else
+              COMMIT_EMAIL=$(jq -r '.commit.author.email // empty' /tmp/commit_response.json)
+              if [[ "$COMMIT_EMAIL" == *@users.noreply.github.com ]]; then
+                echo "Commit author email is a GitHub noreply address; not a usable Teams UPN."
+              else
+                PR_EMAIL="$COMMIT_EMAIL"
+              fi
+            fi
+          fi
+
+          echo "pr_email=${PR_EMAIL}" >> "$GITHUB_OUTPUT"
+          echo "PR author email: ${PR_EMAIL:-<none>}"
+
+  # ─── GENERATE SEMVER TAG ────────────────────────────
+  # On release/<major>.<minor>.x branches the version prefix comes from
+  # the branch name (label = `rc`). On main it comes from the repo-root
+  # VERSION file (label = `dev`). Both increment the trailing serial by
+  # finding the highest existing matching tag and adding 1.
+  generate-tag:
+    name: Generate SemVer Tag
+    needs: obtain-pr-details
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      new_tag: ${{ steps.compute-tag.outputs.new_tag }}
+    steps:
+      - name: Checkout with full tag history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Compute next tag
+        id: compute-tag
+        shell: bash -e {0}
+        run: |
+          BRANCH="${{ github.ref_name }}"
+
+          if [[ "$BRANCH" =~ ^release/([0-9]+)\.([0-9]+)\.x$ ]]; then
+            MAJOR="${BASH_REMATCH[1]}"
+            MINOR="${BASH_REMATCH[2]}"
+            VERSION_PREFIX="${MAJOR}.${MINOR}.0"
+            LABEL="rc"
+          else
+            if [[ ! -f VERSION ]]; then
+              echo "::error::VERSION file is missing at repo root"
+              exit 1
+            fi
+            VERSION_PREFIX="$(tr -d '[:space:]' < VERSION)"
+            if [[ ! "$VERSION_PREFIX" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "::error::VERSION file must contain a MAJOR.MINOR.PATCH value, got: '$VERSION_PREFIX'"
+              exit 1
+            fi
+            LABEL="dev"
+          fi
+
+          TAG_PATTERN="${VERSION_PREFIX}-${LABEL}.*"
+          echo "Looking for tags matching: $TAG_PATTERN"
+
+          LATEST_TAG=$(git tag -l "$TAG_PATTERN" --sort=-v:refname | head -1)
+
+          if [[ -z "$LATEST_TAG" ]]; then
+            NEXT_NUM=1
+          else
+            CURRENT_NUM=$(echo "$LATEST_TAG" | grep -oE '[0-9]+$')
+            NEXT_NUM=$((CURRENT_NUM + 1))
+          fi
+
+          NEW_TAG="${VERSION_PREFIX}-${LABEL}.${NEXT_NUM}"
+
+          echo "Latest existing tag: ${LATEST_TAG:-none}"
+          echo "New tag: $NEW_TAG"
+          echo "new_tag=$NEW_TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Create and push tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          NEW_TAG="${{ steps.compute-tag.outputs.new_tag }}"
+          git tag "$NEW_TAG" -m "Auto-generated tag $NEW_TAG"
+          git push origin "$NEW_TAG"
+          echo "Pushed tag: $NEW_TAG"
+
+  # ─── CALL BUILD-COMMON ─────────────────────────────
+  # Build/publish to ACR + GAR + ECR on runner-4, package the Helm chart
+  # artifacts, and cut the GitHub Release. On main, also rolls the tag onto
+  # dev AKS/GKE/EKS and runs the integration suite; release branches skip
+  # dev deploy (RC tags are promoted via promote.yml / manual deploy).
+  call-build-common:
+    name: Build, Publish & Release
+    needs: [obtain-pr-details, generate-tag]
+    uses: ./.github/workflows/build-common.yml
+    secrets: inherit
+    with:
+      tag: ${{ needs.generate-tag.outputs.new_tag }}
+      # Hardcoded `true` is intentional: every tag this pipeline cuts is
+      # a pre-release per SemVer -- main produces `X.Y.Z-dev.N`, release
+      # branches produce `X.Y.Z-rc.N`. Final tags (no `-dev/-rc` suffix)
+      # are minted only by promote.yml, which flips this to `false`. If
+      # we ever start cutting GA tags directly from this workflow, derive
+      # this from the `LABEL` (`dev`/`rc`) computed in `generate-tag`.
+      pre_release: true
+      create_release: true
+      # Security scans default OFF in the auto-release pipeline so
+      # dev/RC tag cuts stay fast. Promote.yml flips them ON for final
+      # releases. See build-common.yml for opt-in path on a release
+      # branch (workflow_dispatch follow-up tracked separately).
+      run_bds_repo_scan: false
+      run_bds_image_scan: false
+      run_wiz_scan: false
+      package_helm_charts: true
+      # main: auto-deploy dev + integration gate (AKS-first GKE/EKS fan-out).
+      # release/<major>.<minor>.x: build/publish/tag only — no dev rollout.
+      deploy_to_aks: ${{ github.ref == 'refs/heads/main' }}
+      deploy_to_gke: ${{ github.ref == 'refs/heads/main' }}
+      deploy_to_eks: ${{ github.ref == 'refs/heads/main' }}
+      run_integration_tests: ${{ github.ref == 'refs/heads/main' }}
+      notify_on_failure: ${{ github.ref == 'refs/heads/main' }}
+      notify_github_login: ${{ needs.obtain-pr-details.outputs.pr_user }}
+      notify_email: ${{ needs.obtain-pr-details.outputs.pr_email }}
+
+  # ─── STAGING INTEGRATION SUITE (release branches only) ──
+  # On release/<major>.<minor>.x branches an RC tag is cut and (once the
+  # staging environment exists) deployed to staging. Run the full suite
+  # against staging before the manual GA approval. Gated behind a repo
+  # variable so it stays inert until the `stage` GitHub Environment +
+  # cluster are provisioned (owned by the release-management workstream).
+  integration-tests-staging:
+    name: Integration tests (staging)
+    needs: [obtain-pr-details, generate-tag, call-build-common]
+    if: >-
+      ${{
+        startsWith(github.ref, 'refs/heads/release/') &&
+        vars.RUN_STAGING_INTEGRATION_TESTS == 'true'
+      }}
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/integration-tests-container.yml
+    with:
+      cloud_environment: stage
+      allure_project: stage
+      image_tag: ${{ needs.generate-tag.outputs.new_tag }}
+      notify_on_failure: true
+      notify_github_login: ${{ needs.obtain-pr-details.outputs.pr_user }}
+      notify_email: ${{ needs.obtain-pr-details.outputs.pr_email }}
+      severity: gate
+    secrets: inherit

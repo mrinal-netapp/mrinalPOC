@@ -1,0 +1,19 @@
+istio-mesh-policies installed successfully.
+
+mTLS mode: {{ .Values.mtls.mode }}
+Namespaces with injection enabled:
+{{- range .Values.namespaces }}
+  - {{ .name }}
+{{- end }}
+
+Validate mesh:
+  istioctl analyze -n agentstudio-services
+  kubectl -n agentstudio-services get peerauthentication,authorizationpolicy
+
+After validating PERMISSIVE mTLS, promote to STRICT:
+  helm upgrade istio-mesh-policies deployments/helm/edge/istio-mesh-policies \
+    --reuse-values --set mtls.mode=STRICT
+
+Enable default-deny after allow-list is confirmed:
+  helm upgrade istio-mesh-policies deployments/helm/edge/istio-mesh-policies \
+    --reuse-values --set authorizationPolicies.defaultDeny.enabled=true

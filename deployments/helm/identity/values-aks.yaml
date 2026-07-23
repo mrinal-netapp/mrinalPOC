@@ -1,0 +1,339 @@
+# AKS production overlay for the Keycloak chart.
+#
+# Lifecycle:
+#   - CD installs / upgrades via:
+#       make helm-identity-install-aks
+#       make helm-identity-upgrade-aks
+#   - Manual breakglass install on AKS (Entra broker OPTIONAL — omit the
+#     KEYCLOAK_ENTRA_* vars to bootstrap the realm without the Entra IdP):
+#       make helm-identity-install-aks \
+#           KEYCLOAK_HOSTNAME=... \
+#           KEYCLOAK_ENTRA_APP_CLIENT_ID=... \
+#           KEYCLOAK_TENANT_ID=... \
+#           KEYCLOAK_ENTRA_GROUP_ADMINS_OBJECTID=... \
+#           KEYCLOAK_ENTRA_GROUP_MEMBERS_OBJECTID=...
+#   - Local verification (every developer, before merge):
+#       make helm-identity-install-local
+#
+# Prerequisites on the target cluster (run ONCE per cluster):
+#   - The shared PostgreSQL StatefulSet is already installed
+#     (deployments/helm/database). Its initdb script pre-creates the
+#     `keycloak` database; Keycloak then runs its own schema migrations
+#     on first boot.
+#   - The agentstudio-identity namespace exists.
+#   - The DB (keycloak-postgres-auth) and bootstrap-admin (keycloak-bootstrap-admin)
+#     Secrets are CHART-RENDERED from the inline values below (same model as the
+#     GKE/EKS/local overlays) — no pre-flight `make` step. Override the defaults
+#     at install time with:
+#         --set postgres.auth.password=...
+#         --set keycloak.bootstrapAdmin.password=...
+#   - OPTIONAL (only when brokering login through Microsoft Entra ID):
+#       keycloak-entra-broker      clientSecret key
+#         -> make aks-keycloak-entra-register  (runs register-entra-app.sh)
+#     Skip this — and pass no KEYCLOAK_ENTRA_* vars — to bootstrap the realm
+#     without the Entra IdP (broker.enabled=false).
+#   - grafana-proxy session + internal-token secrets in the monitoring namespace:
+#         -> make aks-keycloak-grafana-proxy-secrets
+
+global:
+  # Pull Keycloak directly from quay.io (the upstream Red Hat registry
+  # for Keycloak), same as the legacy `keycloak` release on this dev
+  # cluster does today (image: quay.io/keycloak/keycloak:26.4.7).
+  #
+  # Why NOT an internal ACR: the `cragentstudiodeveus2001` ACR for
+  # this RG only mirrors NetApp first-party services
+  # (nemo/agent-service, nemo/gui, etc.) and does not contain a
+  # `keycloak/keycloak` repository. Pointing imageRegistry at the
+  # ACR therefore 401s the pull. The two long-term options to revisit
+  # later are:
+  #   1. ACR import: `az acr import --source quay.io/keycloak/keycloak:<tag>
+  #      --name cragentstudiodeveus2001` per release tag, then point
+  #      imageRegistry at the ACR. Keeps pulls inside the Azure
+  #      backbone (no egress, no quay outage exposure) but adds a
+  #      release-time mirror step.
+  #   2. Pull-through cache: enable ACR's quay.io pull-through cache
+  #      registry endpoint (preview feature in some regions) so pulls
+  #      auto-populate from quay on first request. No mirror step.
+  # Tracking the ACR-mirror decision in
+  # AKS-SMOKE-TEST-PLAN.md §10.3.
+  imageRegistry: "quay.io"
+
+# Production mode: `kc.sh start` (not start-dev). Requires keycloak.hostname
+# to be set, which the chart enforces via a render-time required() guard.
+keycloak:
+  productionMode: true
+
+  # Public hostname Keycloak signs tokens for (KC_HOSTNAME). MUST match
+  # the FQDN the API Gateway exposes for the `auth.*` subdomain AND a
+  # SAN on the Gateway wildcard cert. The CI deploy job sets this
+  # dynamically per environment via:
+  #     --set keycloak.hostname=auth.<env>
+  # e.g. for AKS dev today: auth.agentstudio.dev.openeng.netapp.com (install
+  # derives httpRoute.hostnames[0] from KEYCLOAK_HOSTNAME at deploy time).
+  hostname: ""
+
+  bootstrapAdmin:
+    # EXTERNAL Secret = single source of truth for the admin credential. The
+    # chart renders NO bootstrap-admin Secret; the deploy flow
+    # (deploy-*-tiers-aks -> `make keycloak-admin-secret`) creates
+    # keycloak-bootstrap-admin CREATE-IF-ABSENT:
+    #   - fresh cluster  -> a random password is generated, which then seeds
+    #                       Keycloak's first-boot admin (no weak literal in git),
+    #   - existing cluster -> the Secret is left untouched, so it keeps matching
+    #                       the admin password already stored in the persistent DB.
+    # This removes the drift a re-rendered inline literal causes against a
+    # long-lived database (the realm-bootstrap Job authenticates with this value).
+    # On Azure it can instead be materialised from Key Vault via the
+    # SecretProviderClass (secretProviderClass.enabled=true + keyvaultName/...).
+    # Rotate deliberately with: KEYCLOAK_ADMIN_PASSWORD=... make keycloak-admin-secret ...
+    username: admin
+    existingSecret: keycloak-bootstrap-admin
+
+  # ── OIDC client registry ──────────────────────────────────────────────────
+  # Rendered into the keycloak-oidc-secrets K8s Secret (see
+  # templates/keycloak-oidc-secrets.yaml) that lakekeeper + the AgentStudio
+  # services consume via secretKeyRef, and which `make sync-shared-secrets`
+  # mirrors into every consumer tier namespace.
+  #
+  # On AKS, the actual secrets are materialised from Key Vault into
+  # individual keycloak-addl-agentstudio-* secrets. The placeholder values
+  # below trigger secret creation; Helm's lookup() preserves real values
+  # from the existing secret across upgrades (see keycloak-oidc-secrets.yaml).
+  oidcClients:
+    gui:
+      clientId: "agentstudio-gui"
+    lakekeeper:
+      clientId: "agentstudio-lakekeeper"
+      clientSecret: "changeme-lakekeeper-secret"
+    lakekeeperUi:
+      clientId: "agentstudio-lakekeeper-ui"
+    workflowEngine:
+      clientId: "agentstudio-workflow-engine"
+      clientSecret: "changeme-workflow-engine-secret"
+    analyticsEngine:
+      clientId: "agentstudio-analytics-engine"
+      clientSecret: "changeme-analytics-engine-secret"
+    configService:
+      clientId: "agentstudio-config-service"
+      clientSecret: "changeme-config-service-secret"
+    storageManager:
+      clientId: "agentstudio-storage-manager"
+      clientSecret: "changeme-storage-manager-secret"
+    agentService:
+      clientId: "agentstudio-agent-service"
+      clientSecret: "changeme-agent-service-secret"
+    connectorWorker:
+      clientId: "agentstudio-connector-worker"
+      clientSecret: "changeme-connector-worker-secret"
+    evalWorker:
+      clientId: "agentstudio-eval-worker"
+      clientSecret: "changeme-eval-worker-secret"
+
+# Realm bootstrap: enabled on AKS so `helm install` produces a working
+# agent-studio realm in one shot, including the Entra IdP broker, the
+# group->realm-role IdP mappers, and the four phase-1 OAuth clients.
+#
+# The Job authenticates against the in-cluster Keycloak Service using
+# the chart-rendered keycloak-bootstrap-admin Secret, then substitutes
+# the Entra placeholders into the realm JSON before kcadm imports it.
+#
+# Brute-force protection -- permanent lockout enabled on AKS to harden
+# against credential-stuffing campaigns.
+realmBootstrap:
+  enabled: true
+  # Realm name pinned to `nemo` to match the live realm on the AKS dev
+  # cluster today (https://auth.../realms/nemo). The chart's T-106 phase-1
+  # clients (agent-studio-*) and the T-107 drop-in compat clients
+  # (agentstudio-*) all live in this single realm so the new Keycloak is
+  # a strict superset of the running one — services keep working
+  # whichever Keycloak we eventually point them at.
+  realm: nemo
+  bruteForce:
+    permanentLockout: true
+
+  # agent-studio-ui redirect URIs / web origins on AKS.
+  #
+  # Defaults use `agentstudio.local` (chart baseline). `make helm-identity-install-aks`
+  # rewrites every host to the real endpoint (derived from KEYCLOAK_HOSTNAME /
+  # ENDPOINT) via render_gke_keycloak_values — same model as GKE/EKS.
+  uiRedirectUris:
+    - "https://app.agentstudio.local:8443/*"
+  uiWebOrigins:
+    - "https://app.agentstudio.local:8443"
+
+  # Entra ID broker. OPTIONAL on AKS: disabled by default so an install
+  # with no Entra config produces a working realm without the Entra IdP.
+  # `make helm-identity-install-aks` flips this to true (and fills in the
+  # four public identifiers below) ONLY when the operator/CD supplies all
+  # four KEYCLOAK_ENTRA_* vars, sourced from the `make aks-keycloak-entra-register`
+  # summary. When enabled=true, leaving any identifier empty trips the
+  # render-time fail() guards in templates/realm-bootstrap-job.yaml.
+  broker:
+    enabled: false
+    clientId: ""              # ENTRA_APP_CLIENT_ID
+    tenantId: ""              # ENTRA_TENANT_ID
+    groupAdminsObjectId: ""   # AgentStudio-PlatformAdmins objectId
+    groupMembersObjectId: ""  # AgentStudio-PlatformMembers objectId
+
+    # Pre-created by `make aks-keycloak-entra-register` (register-entra-app.sh).
+    existingSecret: keycloak-entra-broker
+
+  # T-107 drop-in compat: render the same 11 clients the live `nemo`
+  # realm on AKS already serves. Same clientIds, same flows, same default
+  # scopes — the dev cluster's existing services (gateway, gui,
+  # lakekeeper, analytics-engine, workflow-engine, ...) keep working
+  # against whichever Keycloak we eventually point them at.
+  #
+  # Client secrets for confidential clients are generated by Keycloak on
+  # realm bootstrap (Lever 1). The post-realm-bootstrap Job reads them
+  # back and patches them into keycloak-oidc-secrets. No pre-provisioned
+  # secrets are needed here.
+  #
+  # `app.<host>` and `catalog.<host>` are filled in at install time by
+  # the CI deploy job:
+  #     --set realmBootstrap.additionalClients.clients[7].redirectUris[0]=...
+  # but the defaults below match the running AKS realm so a manual
+  # breakglass install on the dev cluster works without per-client
+  # --set flags.
+  additionalClients:
+    enabled: true
+    clients:
+      - name: agentstudio-agent-service
+        kind: confidential-svc
+      - name: agentstudio-analytics-engine
+        kind: confidential-svc
+      - name: agentstudio-config-service
+        kind: confidential-svc
+      - name: agentstudio-connector-worker
+        kind: confidential-svc
+      - name: agentstudio-eval-worker
+        kind: confidential-svc
+      - name: agentstudio-lakekeeper
+        kind: confidential-svc
+        # Attach the `lakekeeper` realm-level client-scope so tokens carry
+        # `scope=lakekeeper` AND the audience mapper on that scope emits
+        # `aud=agentstudio-lakekeeper` (required by Lakekeeper's authn).
+        extraDefaultScopes: ["lakekeeper"]
+      - name: agentstudio-storage-manager
+        kind: confidential-svc
+      - name: agentstudio-workflow-engine
+        kind: confidential-svc
+      # Browser-facing clients. `agentstudio.local` is rewritten at install
+      # time by render_gke_keycloak_values (see values-gke.yaml for the same model).
+      #
+      # Both `:8443` and no-port forms listed because Keycloak accepts a
+      # list; cloud gateway uses 443 (no port), local KIND uses 8443. Drop
+      # `:8443` entries in a follow-up once cloud is settled on no-port.
+      - name: agentstudio-gui
+        kind: public-spa
+        redirectUris:
+          - "https://app.agentstudio.local:8443/console/*"
+          - "https://app.agentstudio.local/console/*"
+          - "https://app.agentstudio.local:8443/studio/*"
+          - "https://app.agentstudio.local/studio/*"
+        webOrigins:
+          - "https://app.agentstudio.local:8443"
+          - "https://app.agentstudio.local"
+        attributes:
+          pkce.code.challenge.method: "S256"
+          # `+` is Keycloak shorthand for "reuse the redirectUris list" —
+          # keeps logout in lockstep with login, no second allowlist to
+          # drift out of sync.
+          post.logout.redirect.uris: "+"
+      - name: agentstudio-lakekeeper-ui
+        kind: public-spa
+        # See `agentstudio-lakekeeper` above for rationale; UI flow tokens
+        # need `aud=agentstudio-lakekeeper-ui` (also emitted by the same
+        # `lakekeeper` scope's audience mappers).
+        extraDefaultScopes: ["lakekeeper"]
+        redirectUris:
+          - "https://catalog.agentstudio.local:8443/*"
+          - "https://catalog.agentstudio.local/*"
+        webOrigins:
+          - "https://catalog.agentstudio.local:8443"
+          - "https://catalog.agentstudio.local"
+        attributes:
+          pkce.code.challenge.method: "S256"
+          post.logout.redirect.uris: "+"
+      - name: agentstudio-swagger
+        kind: public-spa
+        redirectUris:
+          - "https://app.agentstudio.local:8443/api-docs/*"
+          - "https://app.agentstudio.local/api-docs/*"
+        webOrigins:
+          - "https://app.agentstudio.local:8443"
+          - "https://app.agentstudio.local"
+        attributes:
+          pkce.code.challenge.method: "S256"
+          post.logout.redirect.uris: "+"
+      # Grafana proxy — server-side OIDC auth-code client used by agent-studio-grafana-proxy.
+      # redirectUris are overridden at install time:
+      #   --set realmBootstrap.additionalClients.clients[N].redirectUris[0]=https://grafana.<host>/oauth2/callback
+      - name: agentstudio-grafana-proxy
+        kind: confidential-spa
+        redirectUris:
+          - "https://grafana.agentstudio.local:8443/oauth2/callback"
+          - "https://grafana.agentstudio.local/oauth2/callback"
+        webOrigins:
+          - "https://grafana.agentstudio.local:8443"
+          - "https://grafana.agentstudio.local"
+        attributes:
+          post.logout.redirect.uris: "+"
+          # Backchannel logout: Keycloak POSTs a logout token here when any
+          # client (e.g. Agent Studio) ends the user's SSO session, allowing
+          # the grafana-proxy to immediately revoke the affected browser session.
+          # IMPORTANT: must be the internal cluster URL — Keycloak sends this
+          # server-side (pod→pod) so the external browser hostname is not
+          # resolvable from within the Keycloak pod.
+          backchannel.logout.url: "http://grafana-proxy.monitoring.svc.cluster.local:8080/oauth2/backchannel-logout"
+
+
+# Shared PostgreSQL. Credentials chart-rendered into the keycloak-postgres-auth
+# Secret (see templates/postgres-auth-secret.yaml), same as the GKE/EKS/local
+# overlays. Database name `keycloak` matches the database created by the
+# shared-postgresql initdb script (see deployments/helm/database/values.yaml).
+postgres:
+  host: "shared-postgresql.database.svc.cluster.local"
+  port: 5432
+  database: "keycloak"
+  auth:
+    # Single source of truth: Keycloak reads the DB password DIRECTLY from the
+    # database tier's own shared-postgresql-secret, copied into this namespace by
+    # `make keycloak-db-secret-sync` (deploy-all-tiers-aks runs it before the
+    # identity install). The username is a literal; only the password comes from
+    # the Secret, under the DB tier's key name `postgres-password`. No separate
+    # keycloak-postgres-auth Secret is created, so the password can never drift.
+    username: "postgres"
+    existingSecret: "shared-postgresql-secret"
+    secretKeys:
+      passwordKey: postgres-password
+    # To source the password from a DIFFERENT external Secret instead (e.g. Key
+    # Vault via the SPC), override both:
+    #   --set postgres.auth.existingSecret=<name>
+    #   --set postgres.auth.secretKeys.passwordKey=<key>
+
+# Production resource budget.
+resources:
+  requests:
+    cpu: 500m
+    memory: 1Gi
+  limits:
+    cpu: 2000m
+    memory: 2Gi
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+# Route auth.<endpoint> -> Keycloak on the edge Gateway. Without this HTTPRoute,
+# auth.* matches the wildcard *.<endpoint> catch-all in the edge tier and
+# apigateway-service mis-handles browser paths (e.g. /realm/* -> S3 NoSuchBucket).
+# helm-identity-install-aks overrides hostnames[0] from KEYCLOAK_HOSTNAME
+# (render_gke_keycloak_values also rewrites the baseline auth.agentstudio.local).
+httpRoute:
+  enabled: true
+  hostnames:
+    - "auth.agentstudio.local"
+  parentRef:
+    name: agentstudio-gateway
+    namespace: agentstudio-edge

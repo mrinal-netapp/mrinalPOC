@@ -1,0 +1,18 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "keyVaultName": {
+      "value": "REPLACE_WITH_key_vault_name"
+    },
+    "tenantId": {
+      "value": "REPLACE_WITH_az_account_show_--query_tenantId"
+    },
+    "purgeProtectionEnabled": {
+      "value": false
+    },
+    "softDeleteRetentionInDays": {
+      "value": 7
+    }
+  }
+}

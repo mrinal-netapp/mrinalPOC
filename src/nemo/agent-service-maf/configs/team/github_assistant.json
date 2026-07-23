@@ -1,0 +1,118 @@
+{
+  "_schema_version": "2.0.0",
+  "project_id": "550e8400-e29b-41d4-a716-446655440000",
+  "_team_id": "github_assistant",
+  "_team_name": "GitHub Assistant",
+  "_description": "Single-agent team that uses the GitHub MCP server (exposed via the same Bifrost gateway) to search repositories and view pull requests.",
+  "agent": {
+    "framework": "maf",
+    "model": "azure/gpt-5.4",
+    "temperature": 0.3,
+    "max_tokens": 4096,
+    "timeout_seconds": 120,
+    "metadata": {
+      "project": "agent-studio",
+      "version": "1.0.0",
+      "environment": "development"
+    }
+  },
+  "semantic_kernel": {
+    "agents": [
+      {
+        "name": "github_assistant",
+        "instructions": "You are a GitHub research assistant. Your sole job is to answer questions using LIVE data from the GitHub MCP tools. You have NO independent knowledge of GitHub. Your training data is months or years stale and you MUST treat it as unreliable for any GitHub-related question.\n\n# Mandatory protocol\nFor EVERY user question, before you write ANY answer text:\n1. Identify which of the available GitHub tools fits the request.\n   - Questions about repositories (names, popularity, language, topics, stars, search) -> repository search tool.\n   - Questions about a specific pull request (by repo + number, URL, or description) -> pull request view tool.\n   - Anything else that touches GitHub -> still pick the closest tool and call it.\n2. Call the tool. Wait for the result.\n3. Answer using ONLY what the tool returned, plus brief framing language.\n\n# What you must NEVER do\n- Do NOT answer GitHub questions from memory, even if the topic feels famous (e.g. 'popular Python frameworks', 'the React repository', 'the Linux kernel', 'fastapi'). Recallable does NOT equal current. Famous repos still need a live lookup -- star counts, default branch, open PRs, and even repository ownership can change.\n- Do NOT invent or guess repository URLs, owner names, PR numbers, star counts, commit SHAs, issue counts, or descriptions. If the tool did not return it, you do not know it.\n- Do NOT skip the tool call because you think you already know the answer. 'Knowing' stale GitHub data is the failure mode this prompt exists to prevent.\n- Do NOT batch multiple separate questions into a single tool call. Each distinct GitHub fact needs its own lookup.\n\n# When tools cannot help\nIf none of the available tools fits the request (the user asked something that genuinely is not a GitHub query, or you need a tool that does not exist), say so explicitly in one sentence and stop. Do NOT improvise an answer from training data.\n\n# Output format\n- Always cite the repository full name (owner/repo) and PR number when applicable.\n- Be concise: 2-5 sentences unless the user asks for more detail.\n- Quote stars / open-PR counts / dates / SHAs verbatim from the tool result. Never round, summarize, or guess.\n- If a tool returned no results, say 'No results' rather than substituting plausible-sounding ones.",
+        "description": "GitHub research assistant — searches repos and inspects PRs via the GitHub MCP server.",
+        "model": "azure/gpt-5.4",
+        "temperature": 0.3,
+        "max_tokens": 4096,
+        "top_p": 1.0,
+        "frequency_penalty": 0.0,
+        "presence_penalty": 0.0,
+        "stop_sequences": [],
+        "tools": [],
+        "mcp_servers": [
+          "github"
+        ],
+        "function_choice_behavior": "auto",
+        "response_format": null,
+        "prompt_template": null
+      }
+    ],
+    "orchestration": {
+      "type": "single"
+    },
+    "default_function_choice_behavior": "auto",
+    "chat_history_max_messages": 100,
+    "enable_telemetry": false,
+    "session_ttl_seconds": 3600
+  },
+  "gateway": {
+    "url": "http://host.docker.internal:4001/v1",
+    "api_key": "",
+    "default_model": "azure/gpt-5.4",
+    "request_timeout_seconds": 120,
+    "retry_on_timeout": true,
+    "max_retries": 2
+  },
+  "guardrails": {
+    "enabled": true,
+    "fail_open": false,
+    "execution_mode": "pipeline",
+    "input_guardrails": [
+      {
+        "name": "input_validator",
+        "type": "validation",
+        "enabled": true,
+        "priority": 1,
+        "action_on_trigger": "block",
+        "message": "Input does not meet validation requirements.",
+        "config": {
+          "max_length": 10000,
+          "min_length": 1
+        }
+      }
+    ],
+    "output_guardrails": [],
+    "tool_guardrails": {
+      "default_policy": {
+        "mode": "denylist",
+        "tools": [],
+        "max_calls_per_request": 10
+      }
+    }
+  },
+  "mcp": {
+    "connection_timeout_seconds": 30,
+    "lazy_connect": true,
+    "tool_call_timeout_seconds": 60,
+    "max_tool_retries": 1,
+    "retry_on_timeout": true,
+    "discovery_on_connect": true,
+    "tool_name_format": "qualified",
+    "max_concurrent_tool_calls": 5
+  },
+  "mcp_servers": [
+    {
+      "name": "github",
+      "transport": "streamable-http",
+      "url": "http://bifrost-proxy.agentstudio.svc.cluster.local:8080/mcp",
+      "enabled": true,
+      "timeout_seconds": 30,
+      "sse_read_timeout_seconds": 120
+    }
+  ],
+  "memory": {
+    "enabled": true,
+    "storage_backend": "memory",
+    "buffer_type": "sliding_window",
+    "ttl_seconds": 3600,
+    "max_history_length": 100,
+    "max_tokens_per_session": 0,
+    "max_chars_per_session": 0
+  },
+  "logging": {
+    "level": "INFO",
+    "format": "json",
+    "include_timestamp": true
+  }
+}

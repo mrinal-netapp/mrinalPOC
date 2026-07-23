@@ -1,0 +1,203 @@
+{{- if .Values.enabled }}
+{{- $nemoDataMount := .Values.nemoDataMount | default "/mnt/pvcs/default-nemo" }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "artifact-service.fullname" . }}
+  labels:
+    {{- include "artifact-service.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  # `Recreate` (not the default `RollingUpdate`) because artifact-service
+  # mounts a ReadWriteOnce PVC. RollingUpdate creates the new ReplicaSet
+  # alongside the old, but RWO can only attach to one node, so the new
+  # pod hangs with `Multi-Attach error` while the old pod keeps serving
+  # the previous chart's spec. See the parallel comment on
+  # llm-gateway/charts/bifrost/templates/deployment.yaml; same root cause
+  # observed on sks6316. Brief downtime during upgrade is acceptable
+  # since this is a single-replica service.
+  strategy:
+    type: Recreate
+    # See bifrost/templates/deployment.yaml for the rationale.
+    rollingUpdate: null
+  selector:
+    matchLabels:
+      {{- include "artifact-service.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "artifact-service.selectorLabels" . | nindent 8 }}
+        {{- if .Values.workloadIdentity.enabled }}
+        azure.workload.identity/use: "true"
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "artifact-service.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      volumes:
+        - name: nemo-default-bucket
+          persistentVolumeClaim:
+            claimName: {{ include "nemo.defaultBucketPvcName" . }}
+        # Writable /tmp for Node + isomorphic-git scratch (lockfiles, temp
+        # blob staging). Required because the container runs with
+        # readOnlyRootFilesystem=true per the platform security baseline.
+        - name: tmp
+          emptyDir: {}
+        {{- if and .Values.initContainer.enabled .Values.initContainer.waitForKeycloakSetup }}
+        - name: keycloak-oidc-secrets
+          secret:
+            secretName: keycloak-oidc-secrets
+        {{- end }}
+      {{- if and .Values.initContainer.enabled .Values.initContainer.waitForKeycloakSetup }}
+      initContainers:
+        - name: wait-for-keycloak-setup
+          image: {{ .Values.global.imageRepository }}/init-tools:latest
+          imagePullPolicy: {{ .Values.global.imagePullPolicy | default "IfNotPresent" }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              MOUNT="/etc/keycloak-oidc-secrets"
+              echo "Waiting for keycloak-oidc-secrets to be populated..."
+              MAX_ATTEMPTS=120
+              ATTEMPT=0
+              while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
+                SECRET_VALUE=$(cat "$MOUNT/artifact-service-client-secret" 2>/dev/null || \
+                  cat "$MOUNT/config-service-client-secret" 2>/dev/null || echo "")
+                if [ -n "$SECRET_VALUE" ] && [ "$SECRET_VALUE" != "changeme" ]; then
+                  echo "keycloak-oidc-secrets present; proceeding."
+                  exit 0
+                fi
+                ATTEMPT=$((ATTEMPT + 1))
+                echo "Waiting for keycloak-oidc-secrets... ($ATTEMPT/$MAX_ATTEMPTS)"
+                sleep 5
+              done
+              echo "Timeout waiting for keycloak-oidc-secrets; proceeding anyway."
+              exit 0
+          volumeMounts:
+            - name: keycloak-oidc-secrets
+              mountPath: /etc/keycloak-oidc-secrets
+              readOnly: true
+          resources:
+            limits:
+              cpu: 50m
+              memory: 32Mi
+            requests:
+              cpu: 10m
+              memory: 16Mi
+      {{- end }}
+      containers:
+        - name: artifact-service
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.global.imageRepository }}/{{ .Values.image.repository }}:{{ .Values.global.imageTag | default .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy | default .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+            {{- if .Values.service.metricsPort }}
+            - name: metrics
+              containerPort: {{ .Values.service.metricsPort }}
+              protocol: TCP
+            {{- end }}
+          env:
+            - name: PORT
+              value: "8080"
+            - name: LOG_LEVEL
+              value: {{ .Values.logLevel | quote }}
+            - name: NEMO_DEFAULT_STORE_ROOT
+              value: {{ $nemoDataMount | quote }}
+            # Postgres (shared with config-service).
+            - name: POSTGRES_HOST
+              value: {{ .Values.database.host | quote }}
+            - name: POSTGRES_PORT
+              value: {{ .Values.database.port | quote }}
+            - name: POSTGRES_USER
+              value: {{ .Values.database.user | quote }}
+            - name: POSTGRES_DB
+              value: {{ .Values.database.name | quote }}
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ if .Values.database.existingSecret }}{{ .Values.database.existingSecret }}{{ else }}{{ include "artifact-service.fullname" . }}-postgresql{{ end }}
+                  key: {{ if .Values.database.existingSecret }}{{ .Values.database.existingSecretKey }}{{ else }}postgres-password{{ end }}
+            # Redis (optional). Idempotency cache; degrades gracefully when absent.
+            {{- if .Values.redis.url }}
+            - name: REDIS_URL
+              value: {{ .Values.redis.url | quote }}
+            {{- end }}
+            # Observability — traces and logs → OTel collector
+            {{- if .Values.global.observability.otlpEndpoint }}
+            - name: AGENT_STUDIO_OBSERVABILITY_OTLP_TRACES_ENDPOINT
+              value: {{ .Values.global.observability.otlpEndpoint | quote }}
+            - name: AGENT_STUDIO_OBSERVABILITY_OTLP_LOGS_ENDPOINT
+              value: {{ .Values.global.observability.otlpEndpoint | quote }}
+            {{- end }}
+            - name: AGENT_STUDIO_OBSERVABILITY_LOG_FILE_PATH
+              value: "/dev/stdout"
+            - name: AGENT_STUDIO_OBSERVABILITY_TRACE_FILE_PATH
+              value: "/tmp/App_Logs/trace.jsonl"
+            - name: AGENT_STUDIO_OBSERVABILITY_TRACE_JSONL_FILTER
+              value: "all"
+            - name: NODE_OPTIONS
+              value: "--require /app/node_modules/@agentstudio/observability-client-runtime/dist/preload.js"
+            - name: AGENT_STUDIO_OBSERVABILITY_ENABLE_AUTO_INSTRUMENTATION
+              value: "false"
+            {{- if .Values.service.metricsPort }}
+            - name: AGENT_STUDIO_OBSERVABILITY_PROMETHEUS_METRICS_PORT
+              value: {{ .Values.service.metricsPort | quote }}
+            {{- end }}
+            - name: OTEL_SERVICE_NAME
+              value: "artifact-service"
+            - name: OTEL_METRICS_EXPORTER
+              value: "none"
+            {{- if .Values.tracing.otlpEndpoint }}
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: {{ .Values.tracing.otlpEndpoint | quote }}
+            {{- end }}
+            {{- range .Values.env }}
+            - name: {{ .name }}
+              {{- if .value }}
+              value: {{ .value | quote }}
+              {{- else if .valueFrom }}
+              valueFrom:
+                {{- toYaml .valueFrom | nindent 16 }}
+              {{- end }}
+            {{- end }}
+          volumeMounts:
+            - name: nemo-default-bucket
+              mountPath: {{ $nemoDataMount | quote }}
+            - name: tmp
+              mountPath: /tmp
+          livenessProbe:
+            {{- toYaml .Values.livenessProbe | nindent 12 }}
+          readinessProbe:
+            {{- toYaml .Values.readinessProbe | nindent 12 }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- range . }}
+        {{- if kindIs "string" . }}
+        - name: {{ . | quote }}
+        {{- else if kindIs "map" . }}
+        - {{- toYaml . | nindent 10 }}
+        {{- else }}
+        - name: {{ . | quote }}
+        {{- end }}
+        {{- end }}
+      {{- end }}
+{{- end }}

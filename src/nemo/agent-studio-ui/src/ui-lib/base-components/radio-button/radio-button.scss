@@ -1,0 +1,119 @@
+@use '../../../styles/mixins.scss';
+
+// -- RadioGroup
+
+.radio-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+// -- Base
+
+.radio-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  border: 1px solid var(--selector-off-border);
+  border-radius: 50%;
+  background-color: transparent;
+  cursor: pointer;
+  @include mixins.transition(background-color 150ms ease, border-color 150ms ease);
+
+  &:hover:not([data-disabled]) {
+    border-color: var(--selector-off-border-hover);
+  }
+
+  // selected
+  &[data-checked] {
+    border-color: var(--selector-on-bg);
+
+    &:hover:not([data-disabled]) {
+      border-color: var(--selector-on-bg-hover);
+    }
+  }
+
+  // disabled off
+  &[data-disabled] {
+    cursor: default;
+    border-color: var(--selector-off-border-disabled);
+  }
+
+  // disabled on
+  &[data-disabled][data-checked] {
+    border-color: var(--selector-on-bg-disabled);
+  }
+
+  // focus outline
+  &:focus-visible {
+    outline: 2px solid var(--border-focus-outline);
+    outline-offset: 2px;
+  }
+}
+
+// -- State modifiers
+
+.radio-button--error {
+  border-color: var(--notification-error);
+
+  &[data-checked] {
+    border-color: var(--notification-error);
+  }
+}
+
+.radio-button--warning {
+  border-color: var(--notification-warning);
+
+  &[data-checked] {
+    border-color: var(--notification-warning);
+  }
+}
+
+// -- Variant: solid (16x16)
+
+.radio-button-variant-solid {
+  width: 16px;
+  height: 16px;
+  min-width: 16px;
+  min-height: 16px;
+}
+
+// -- Variant: table (24x24)
+
+.radio-button-variant-table {
+  width: 24px;
+  height: 24px;
+  min-width: 24px;
+  min-height: 24px;
+}
+
+// -- Indicator (inner filled circle)
+
+.radio-button__indicator {
+  display: block;
+  border-radius: 50%;
+  background-color: var(--selector-on-bg);
+  opacity: 0;
+  @include mixins.transition(opacity 100ms ease);
+
+  &[data-checked] {
+    opacity: 1;
+  }
+
+  // size proportional to variant -- solid indicator is 8px, table is 12px
+  .radio-button-variant-solid & {
+    width: 8px;
+    height: 8px;
+  }
+
+  .radio-button-variant-table & {
+    width: 12px;
+    height: 12px;
+  }
+
+  // disabled on
+  [data-disabled] > & {
+    background-color: var(--selector-on-bg-disabled);
+  }
+}

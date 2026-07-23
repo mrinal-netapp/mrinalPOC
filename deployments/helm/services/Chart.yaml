@@ -1,0 +1,53 @@
+apiVersion: v2
+name: services
+description: AgentStudio services tier — agent-service, apigateway-service, config-service, workflow-engine, kb-retrieval-service, analytics-engine, analytics-mcp-server, artifact-service. Gateway / HTTPRoute / TLS moved to the edge tier in deployments/helm/edge/.
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+keywords:
+  - agentstudio
+  - services
+maintainers:
+  - name: AgentStudio Team
+
+dependencies:
+  - name: agent-service
+    version: "1.0.0"
+    repository: "file://./charts/agent-service"
+    condition: agent-service.enabled
+  - name: agent-service-maf
+    version: "1.0.0"
+    repository: "file://./charts/agent-service-maf"
+    condition: agent-service-maf.enabled
+  - name: apigateway-service
+    version: "1.0.0"
+    repository: "file://./charts/apigateway-service"
+    condition: apigateway-service.enabled
+  - name: config-service
+    version: "1.0.0"
+    repository: "file://./charts/config-service"
+    condition: config-service.enabled
+  - name: workflow-engine
+    version: "1.0.0"
+    repository: "file://./charts/workflow-engine"
+    condition: workflow-engine.enabled
+  - name: kb-retrieval-service
+    version: "1.0.0"
+    repository: "file://./charts/kb-retrieval-service"
+    condition: kb-retrieval-service.enabled
+  - name: analytics-engine
+    version: "1.0.0"
+    repository: "file://./charts/analytics-engine"
+    condition: analytics-engine.enabled
+  - name: analytics-mcp-server
+    version: "1.0.0"
+    repository: "file://./charts/analytics-mcp-server"
+    condition: analytics-mcp-server.enabled
+  - name: artifact-service
+    version: "1.0.0"
+    repository: "file://./charts/artifact-service"
+    condition: artifact-service.enabled
+  - name: text-embeddings-inference
+    version: "0.1.0"
+    repository: "file://./charts/text-embeddings-inference"
+    condition: text-embeddings-inference.enabled

@@ -1,0 +1,51 @@
+enabled: true
+
+replicaCount: 1
+
+image:
+  repository: grafana/tempo
+  tag: "2.7.2"
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  ports:
+    http: 3200    # Query / status API
+    grpc: 4317    # OTLP gRPC ingest (matches distributor.receivers.otlp.protocols.grpc)
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 100m
+    memory: 256Mi
+
+persistence:
+  enabled: true
+  size: 30Gi
+  storageClass: ""
+
+# Mirrors observability-service/tempo/tempo-config.yaml
+retention:
+  blockRetention: 168h   # 7 days
+
+ingester:
+  maxBlockDuration: 5m
+
+overrides:
+  maxBytesPerTrace: 5000000   # 5 MB per trace
+
+# Pod-level security context.  grafana/tempo runs as UID 10001:10001 by default.
+# fsGroup must match so Kubernetes chowns the PVC mount root on attach,
+# allowing the non-root process to create subdirectories (e.g. /var/tempo/blocks).
+# Required on AKS where managed-premium volumes are provisioned root:root 700.
+securityContext:
+  runAsUser: 10001
+  runAsGroup: 10001
+  fsGroup: 10001
+  runAsNonRoot: true
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

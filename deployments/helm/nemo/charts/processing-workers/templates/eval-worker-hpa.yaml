@@ -1,0 +1,62 @@
+{{- if .Values.evalWorker.enabled -}}
+{{- $autoscaling := .Values.evalWorker.autoscaling -}}
+{{- if $autoscaling.enabled }}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "processing-workers.fullname" . }}-eval
+  labels:
+    {{- include "processing-workers.labels" . | nindent 4 }}
+    {{- include "processing-workers.evalWorker.selectorLabels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "processing-workers.fullname" . }}-eval
+  minReplicas: {{ $autoscaling.minReplicas }}
+  maxReplicas: {{ $autoscaling.maxReplicas }}
+  metrics:
+    {{- if $autoscaling.customMetric.enabled }}
+    - type: {{ $autoscaling.customMetric.type | default "Pods" }}
+      {{- if eq ($autoscaling.customMetric.type | default "Pods") "Object" }}
+      object:
+        describedObject:
+          apiVersion: {{ $autoscaling.customMetric.describedObject.apiVersion | default "v1" | quote }}
+          kind: {{ $autoscaling.customMetric.describedObject.kind | default "Service" | quote }}
+          name: {{ $autoscaling.customMetric.describedObject.name | default (include "processing-workers.fullname" .) | quote }}
+        metric:
+          name: {{ $autoscaling.customMetric.name | quote }}
+          {{- with $autoscaling.customMetric.metricSelector }}
+          selector:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+        target:
+          type: {{ $autoscaling.customMetric.target.type | default "Value" }}
+          value: {{ $autoscaling.customMetric.target.value | default "10" | quote }}
+      {{- else }}
+      pods:
+        metric:
+          name: {{ $autoscaling.customMetric.name | quote }}
+          {{- with $autoscaling.customMetric.metricSelector }}
+          selector:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+        target:
+          type: {{ $autoscaling.customMetric.target.type | default "AverageValue" }}
+          averageValue: {{ $autoscaling.customMetric.target.averageValue | default "10" | quote }}
+      {{- end }}
+    {{- end }}
+    {{- if $autoscaling.targetCPUUtilizationPercentage }}
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ $autoscaling.targetCPUUtilizationPercentage }}
+    {{- end }}
+  {{- with $autoscaling.behavior }}
+  behavior:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- end }}
+{{- end }}

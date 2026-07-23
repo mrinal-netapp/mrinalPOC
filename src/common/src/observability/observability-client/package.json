@@ -1,0 +1,46 @@
+{
+  "name": "@agentstudio/observability-client-runtime",
+  "version": "0.1.0",
+  "description": "AgentStudio Node.js observability runtime — log4js JSONL logging, OTel traces, Prometheus RED metrics.",
+  "main": "dist/observability_client_runtime/index.js",
+  "types": "dist/observability_client_runtime/index.d.ts",
+  "type": "commonjs",
+  "scripts": {
+    "build": "tsc && cp -r observability_client_runtime/config dist/observability_client_runtime/",
+    "build:watch": "tsc --watch",
+    "test": "node --test dist/tests/*.js",
+    "test:src": "node --test tests/*.js",
+    "clean": "rm -rf dist"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@opentelemetry/api": "^1.9.1",
+    "@opentelemetry/auto-instrumentations-node": "^0.72.0",
+    "@opentelemetry/exporter-metrics-otlp-http": "^0.214.0",
+    "@opentelemetry/exporter-prometheus": "^0.214.0",
+    "@opentelemetry/exporter-trace-otlp-http": "^0.214.0",
+    "@opentelemetry/resources": "^2.6.1",
+    "@opentelemetry/sdk-metrics": "^2.6.1",
+    "@opentelemetry/sdk-node": "^0.214.0",
+    "@opentelemetry/sdk-trace-base": "^2.6.1",
+    "@opentelemetry/semantic-conventions": "^1.40.0",
+    "@traceloop/node-server-sdk": "^0.26.0",
+    "log4js": "^6.9.1"
+  },
+  "peerDependencies": {
+    "express": ">=4.0.0"
+  },
+  "peerDependenciesMeta": {
+    "express": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/log4js": "^2.3.5",
+    "@types/node": "^25.9.1",
+    "typescript": "^6.0.3"
+  }
+}

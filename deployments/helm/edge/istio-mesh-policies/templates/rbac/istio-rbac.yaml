@@ -1,0 +1,70 @@
+{{- if .Values.rbac.enabled }}
+---
+# Developer read-only access to Istio resources in the primary namespace.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: istio-readonly
+  namespace: {{ .Values.rbac.namespace }}
+  labels:
+    {{- include "istio-mesh-policies.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["security.istio.io", "networking.istio.io", "telemetry.istio.io"]
+    resources: ["*"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods", "services", "serviceaccounts", "endpoints"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: devs-istio-readonly
+  namespace: {{ .Values.rbac.namespace }}
+  labels:
+    {{- include "istio-mesh-policies.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: istio-readonly
+subjects:
+  - apiGroup: rbac.authorization.k8s.io
+    kind: Group
+    name: {{ .Values.rbac.developerGroup }}
+---
+# GitOps deployer: full CRUD on Istio config resources.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: istio-config-admin
+  namespace: {{ .Values.rbac.namespace }}
+  labels:
+    {{- include "istio-mesh-policies.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["security.istio.io", "networking.istio.io", "telemetry.istio.io"]
+    resources:
+      - peerauthentications
+      - requestauthentications
+      - authorizationpolicies
+      - virtualservices
+      - destinationrules
+      - gateways
+      - serviceentries
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: gitops-istio-config-admin
+  namespace: {{ .Values.rbac.namespace }}
+  labels:
+    {{- include "istio-mesh-policies.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: istio-config-admin
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Values.rbac.gitopsServiceAccount.name }}
+    namespace: {{ .Values.rbac.gitopsServiceAccount.namespace }}
+{{- end }}

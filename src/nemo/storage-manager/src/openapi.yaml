@@ -1,0 +1,177 @@
+openapi: 3.0.3
+info:
+  title: AgentStudio Storage Manager API
+  description: Internal API for Storage Manager service
+  version: 1.0.0
+servers:
+  - url: http://storage-manager:8080
+    description: Internal service
+
+paths:
+  /api/v1/routing/info:
+    get:
+      summary: Get routing information for a bucket
+      description: Returns routing information for a bucket (used by API Gateway on cache miss)
+      operationId: getRoutingInfo
+      parameters:
+        - name: bucket_name
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Name of the bucket
+        - name: namespace_id
+          in: query
+          schema:
+            type: string
+          description: Namespace ID (optional)
+      responses:
+        '200':
+          description: Routing information
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoutingInfo'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/health:
+    get:
+      summary: Health check with details
+      description: Returns detailed health status of the Proxy Manager
+      operationId: healthCheck
+      responses:
+        '200':
+          description: Health status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthCheckResponse'
+
+  /api/v1/metrics:
+    post:
+      summary: Submit metrics
+      description: Receives metrics from API Gateway
+      operationId: submitMetrics
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Metrics'
+      responses:
+        '200':
+          description: Metrics accepted
+
+  /health:
+    get:
+      summary: Health check
+      description: Returns the health status of the Proxy Manager
+      operationId: healthCheck
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: healthy
+                  last_config_sync:
+                    type: string
+                    format: date-time
+
+  /ready:
+    get:
+      summary: Readiness check
+      description: Returns the readiness status of the Proxy Manager
+      operationId: readinessCheck
+      responses:
+        '200':
+          description: Service is ready
+        '503':
+          description: Service is not ready
+
+components:
+  schemas:
+    RoutingInfo:
+      type: object
+      properties:
+        is_local:
+          type: boolean
+          description: True if bucket is served by this deployment
+        redirect_url:
+          type: string
+          description: URL to redirect to if not local
+        serving_deployments:
+          type: array
+          items:
+            type: string
+          description: List of deployments serving this bucket
+        role:
+          type: string
+          enum: [primary, secondary]
+          description: Role of this deployment for this bucket
+
+    HealthCheckResponse:
+      type: object
+      properties:
+        healthy:
+          type: boolean
+          description: Overall health status
+        status_message:
+          type: string
+          description: Human-readable status message
+        last_config_sync:
+          type: integer
+          format: int64
+          description: Unix timestamp of last config sync
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+          description: Error message
+        code:
+          type: string
+          description: Error code
+
+    Metrics:
+      type: object
+      properties:
+        source:
+          type: string
+          enum: [api_gateway, volume_manager]
+        timestamp:
+          type: string
+          format: date-time
+        metrics:
+          type: object
+          properties:
+            request_latency_p50_ms:
+              type: number
+            request_latency_p95_ms:
+              type: number
+            request_latency_p99_ms:
+              type: number
+            requests_per_second:
+              type: number
+            error_rate:
+              type: number
+        bucket_metrics:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              requests:
+                type: integer
+              errors:
+                type: integer
+

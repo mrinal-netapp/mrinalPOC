@@ -1,0 +1,225 @@
+# Resource-constrained overlay: lower CPU/memory requests and limits so pods schedule
+# on smaller clusters (e.g. dev, Kind, single-node). Use with:
+#   helm upgrade --install nemo ... -f values.yaml -f values-resource-constrained.yaml
+#
+# "Insufficient CPU / insufficient memory" is usually a scheduling issue: the scheduler
+# uses REQUESTS to decide placement. Lowering requests (and limits) allows more pods
+# to fit. See TROUBLESHOOTING.md for best practices (keep memory limits; optional to
+# remove CPU limits for non-critical workloads).
+
+# PostgreSQL (when enabled)
+postgresql:
+  primary:
+    resources:
+      requests:
+        cpu: 250m
+        memory: 256Mi
+      limits:
+        cpu: 1000m
+        memory: 1Gi
+
+# Redis: laptop / single-node clusters cannot afford replication mode (1 master + 2
+# replicas + 3 sentinels would consume ~1.3GB just for Redis). Override to standalone;
+# Sentinel-aware client code falls back to REDIS_URL when REDIS_SENTINEL_URL is empty.
+redis:
+  architecture: standalone
+  sentinel:
+    enabled: false
+  replica:
+    replicaCount: 0
+  master:
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        cpu: 250m
+        memory: 512Mi
+
+# App services
+agent-service:
+  redisStandalone: true
+  autoscaling:
+    # Laptop / small clusters: cap scale-out (chart default maxReplicas is 10)
+    maxReplicas: 3
+  resources:
+    requests:
+      cpu: 500m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 2Gi
+  # Redis is switched to standalone above; agents still use parent REDIS_* from values.yaml.
+  # Do not replace agent-service.env here — a partial list overwrites the entire env array in Helm.
+
+gui:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
+
+config-service:
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: 1000m
+      memory: 2Gi
+
+apigateway-service:
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+workflow-engine:
+  redisStandalone: true
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: 500m
+      memory: 1Gi
+  # Do not replace workflow-engine.env here — partial list overwrites the full array in Helm.
+
+analytics-engine:
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 1Gi
+
+storage-manager:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
+
+# Infra
+lakekeeper:
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: 500m
+      memory: 1Gi
+
+s3gateway:
+  replicaCount: 1
+  storage:
+    accessMode: ReadWriteOnce
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  metadata:
+    enabled: true
+    size: 2Gi
+  defaultBucket:
+    enabled: true
+    name: default-nemo  # Must match deploymentName; override both together
+    size: 10Gi
+
+# Temporal
+temporal:
+  server:
+    resources:
+      requests:
+        cpu: 250m
+        memory: 256Mi
+      limits:
+        cpu: 1000m
+        memory: 1Gi
+  ui:
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 250m
+        memory: 256Mi
+
+# Processing workers (high request consumers — reduce so they schedule)
+processing-workers:
+  datasetWorker:
+    autoscaling:
+      enabled: false
+    resources:
+      requests:
+        cpu: "250m"
+        memory: "512Mi"
+      limits:
+        cpu: "1"
+        memory: "4Gi"
+  kbWorker:
+    autoscaling:
+      enabled: true
+      maxReplicas: 3
+    resources:
+      requests:
+        cpu: "500m"
+        memory: "1Gi"
+      limits:
+        cpu: "2"
+        memory: "2Gi"
+  connectorWorker:
+    redisStandalone: true
+    # Laptop: keep autoscaling off and stay at 1 replica with low concurrency to fit.
+    replicas: 1
+    autoscaling:
+      enabled: false
+    resources:
+      requests:
+        cpu: "250m"
+        memory: "512Mi"
+      limits:
+        cpu: "1"
+        memory: "2Gi"
+
+# LLM / observability. Override Sentinel-format URL to standalone for laptop deployments.
+bifrost:
+  persistence:
+    size: 5Gi
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+
+# KB / vector services
+kb-retrieval-service:
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: 500m
+      memory: 1Gi
+
+# Allow Keycloak HTTPRoute (in agent-studio-identity) to bind to the HTTPS listener.
+gateway:
+  listeners:
+    https:
+      allowedRoutes:
+        namespaces:
+          from: All
+

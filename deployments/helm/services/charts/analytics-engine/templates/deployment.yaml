@@ -1,0 +1,166 @@
+{{- if .Values.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "analytics-engine.fullname" . }}
+  labels:
+    {{- include "analytics-engine.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "analytics-engine.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "analytics-engine.selectorLabels" . | nindent 8 }}
+        {{- if .Values.workloadIdentity.enabled }}
+        azure.workload.identity/use: "true"
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "analytics-engine.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: analytics-engine
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.global.imageRepository }}/{{ .Values.image.repository }}:{{ .Values.global.imageTag | default .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy | default .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 5000
+              protocol: TCP
+            {{- if .Values.service.metricsPort }}
+            - name: metrics
+              containerPort: {{ .Values.service.metricsPort }}
+              protocol: TCP
+            {{- end }}
+          env:
+            {{- $root := . }}
+            {{- $k8sNamespaceSet := false }}
+            {{- $keycloakIssuerSet := false }}
+            {{- range .Values.env }}
+            {{- if eq .name "K8S_NAMESPACE" }}
+            {{- $k8sNamespaceSet = true }}
+            {{- else if eq .name "KEYCLOAK_ISSUER" }}
+            {{- $keycloakIssuerSet = true }}
+            {{- end }}
+            {{- end }}
+            {{- range .Values.env }}
+            - name: {{ .name }}
+              {{- if eq .name "K8S_NAMESPACE" }}
+              {{- /* Always set K8S_NAMESPACE to AgentStudio namespace, even if empty in values */}}
+              value: {{ include "nemo.namespace" $root | quote }}
+              {{- else if eq .name "KEYCLOAK_ISSUER" }}
+              {{- /* Always set KEYCLOAK_ISSUER from template, ignore value from values.yaml */}}
+              value: {{ include "nemo.keycloakIssuer" $root | quote }}
+              {{- else if .value }}
+              value: {{ .value | quote }}
+              {{- else if .valueFrom }}
+              {{- if and (eq .name "DEPLOYMENT_ID") .valueFrom.configMapKeyRef }}
+              {{- /* DEPLOYMENT_ID defaults to "nemo" for nemo services */}}
+              value: "nemo"
+              {{- else }}
+              valueFrom:
+                {{- toYaml .valueFrom | nindent 16 }}
+              {{- end }}
+              {{- end }}
+            {{- end }}
+            {{- if not $k8sNamespaceSet }}
+            {{- /* K8S_NAMESPACE not in env list, add it with AgentStudio namespace */}}
+            - name: K8S_NAMESPACE
+              value: {{ include "nemo.namespace" $root | quote }}
+            {{- end }}
+            {{- /* Ensure KEYCLOAK_INTERNAL_ISSUER is always set if not in env list */}}
+            {{- if not $keycloakIssuerSet }}
+            - name: KEYCLOAK_INTERNAL_ISSUER
+              value: {{ include "nemo.keycloakInternalIssuer" $root | quote }}
+            {{- end }}
+            {{- if .Values.global.observability.otlpEndpoint }}
+            - name: AGENT_STUDIO_OBSERVABILITY_OTLP_TRACES_ENDPOINT
+              value: {{ .Values.global.observability.otlpEndpoint | quote }}
+            - name: AGENT_STUDIO_OBSERVABILITY_METRICS_OTLP_ENDPOINT
+              value: {{ .Values.global.observability.otlpEndpoint | quote }}
+            - name: AGENT_STUDIO_OBSERVABILITY_OTLP_LOGS_ENDPOINT
+              value: {{ .Values.global.observability.otlpEndpoint | quote }}
+            {{- end }}
+            - name: AGENT_STUDIO_OBSERVABILITY_LOG_FILE_PATH
+              value: "/dev/stdout"
+            - name: AGENT_STUDIO_OBSERVABILITY_TRACE_FILE_PATH
+              value: "/tmp/App_Logs/trace.jsonl"
+            - name: AGENT_STUDIO_OBSERVABILITY_TRACE_JSONL_FILTER
+              value: "all"
+            - name: OTEL_SERVICE_NAME
+              value: "analytics-engine"
+            {{- if .Values.tracing.otlpEndpoint }}
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: {{ .Values.tracing.otlpEndpoint | quote }}
+            {{- end }}
+            - name: LAKEKEEPER_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-oidc-secrets
+                  key: analytics-engine-client-id
+            - name: LAKEKEEPER_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-oidc-secrets
+                  key: analytics-engine-client-secret
+            - name: LAKEKEEPER_CATALOG_URL
+              value: {{ include "nemo.lakekeeperCatalogRestUrl" $root | quote }}
+            - name: KEYCLOAK_TOKEN_URL
+              value: {{ printf "%s/protocol/openid-connect/token" (include "nemo.keycloakInternalIssuer" $root) | quote }}
+            - name: WAREHOUSE_NAME
+              value: {{ .Values.warehouseName | default (include "nemo.deploymentName" $root | trim) | quote }}
+            - name: DUCKDB_EXTENSION_DIR
+              value: {{ .Values.extensionDir | default "/opt/duckdb/extensions" | quote }}
+            - name: S3_ENDPOINT
+              value: "http://s3gateway:7070"
+            - name: S3_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "nemo.s3gatewayCredentialsName" $root }}
+                  key: access-key
+            - name: S3_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "nemo.s3gatewayCredentialsName" $root }}
+                  key: secret-key
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          livenessProbe:
+            {{- toYaml .Values.livenessProbe | nindent 12 }}
+          readinessProbe:
+            {{- toYaml .Values.readinessProbe | nindent 12 }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: tmp
+          emptyDir: {}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- range . }}
+        {{- if kindIs "string" . }}
+        - name: {{ . | quote }}
+        {{- else if kindIs "map" . }}
+        - {{- toYaml . | nindent 10 }}
+        {{- else }}
+        - name: {{ . | quote }}
+        {{- end }}
+        {{- end }}
+      {{- end }}
+{{- end }}

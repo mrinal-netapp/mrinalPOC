@@ -1,0 +1,145 @@
+{{- /*
+Lua EnvoyFilter -- reads validated JWT claims from
+envoy.filters.http.jwt_authn dynamic metadata and sets the parity
+X-User-* / X-Project-ID headers backends still consume. Replaces
+apigateway-service's middleware/auth.go header-injection behaviour.
+
+Inserted AFTER `envoy.filters.http.jwt_authn` so claims are populated
+before the Lua filter reads them; Istio routing dispatches to the
+backend after the filter runs.
+
+Self-managed Istio places no restriction on EnvoyFilter types or
+operations; same filter renders identically on AKS / GKE / EKS.
+
+Forward path: re-express as TrafficExtension once Istio 1.30 has bake
+time -- see §5.4 of the design doc.
+*/ -}}
+{{- if and .Values.gateway.enabled (eq (.Values.gateway.provider | default "nginx") "istio") -}}
+{{- /*
+Project-path prefixes shared with the UMA RPT filter — both filters need
+to recognise the same set of project-scoped URL prefixes. Falls back to
+the UMA filter's configured list (so operators set it in one place) and
+finally to a sensible default that includes the legacy `/config/...`
+shim path emitted by older GUI bundles (see httproute-app-istio.yaml's
+URLRewrite shim and the comment in src/nemo/apigateway-service/main.go
+about the apigateway-service `setupServiceProxy(r, "/config", ...)`
+legacy mount).
+*/ -}}
+{{- $umaPrefixes := (.Values.gateway.istio.umaRpt | default dict).projectPathPrefixes -}}
+{{- $projectPrefixes := $umaPrefixes | default (list "/api/v1/projects/" "/config/api/v1/projects/") -}}
+{{- /*
+EnvoyFilter is an alpha / escape-hatch API in Istio and has only ever been
+served at networking.istio.io/v1alpha3 -- there is no stable v1. Don't change
+this without checking the live CRD: `kubectl get crd envoyfilters.networking.istio.io
+-o jsonpath='{.spec.versions[*].name}'`. Forward path: re-express as
+TrafficExtension once Istio 1.30 has bake time (§5.4 of the design doc).
+*/ -}}
+apiVersion: networking.istio.io/v1alpha3
+kind: EnvoyFilter
+metadata:
+  name: parity-headers-inject
+  namespace: {{ include "nemo.namespace" . }}
+  labels:
+    {{- include "edge.labels" . | nindent 4 }}
+spec:
+  workloadSelector:
+    labels:
+      {{- include "nemo.istioGatewaySelector" . | nindent 6 }}
+  configPatches:
+    - applyTo: HTTP_FILTER
+      match:
+        context: GATEWAY
+        listener:
+          filterChain:
+            filter:
+              name: envoy.filters.network.http_connection_manager
+              subFilter:
+                name: envoy.filters.http.jwt_authn
+      patch:
+        operation: INSERT_AFTER
+        value:
+          name: envoy.filters.http.lua
+          typed_config:
+            "@type": type.googleapis.com/envoy.extensions.filters.http.lua.v3.Lua
+            default_source_code:
+              inline_string: |
+                -- Project-path prefix list (kept in sync with the UMA RPT
+                -- filter — `extract_project_id` here and `extract_project_id`
+                -- in envoyfilter-uma-rpt-istio.yaml MUST agree on which
+                -- paths carry a project_id segment, otherwise the UMA filter
+                -- swaps the token but parity-headers fails to inject
+                -- x-project-id (or vice versa). Templated from
+                -- `.Values.gateway.istio.umaRpt.projectPathPrefixes` for the
+                -- single-source-of-truth property.
+                local PROJECT_PREFIXES = {
+                  {{- range $i, $p := $projectPrefixes }}
+                  {{ $p | quote }},
+                  {{- end }}
+                }
+
+                -- /api/v1/projects/{id}/... and /config/api/v1/projects/{id}/...
+                -- extraction. URL extraction wins over any project_id JWT
+                -- claim because URL is always the authoritative scope of the
+                -- current request; the claim (if present) reflects the
+                -- user's default workspace, not the project the request
+                -- targets. The trailing terminator (/) requirement means
+                -- a bare /api/v1/projects (no id) does NOT match.
+                local function extract_project_id(path)
+                  if not path then return nil end
+                  for _, prefix in ipairs(PROJECT_PREFIXES) do
+                    if path:sub(1, #prefix) == prefix then
+                      local rest = path:sub(#prefix + 1)
+                      local id = rest:match("^([^/%?]+)")
+                      if id and id ~= "" then return id end
+                    end
+                  end
+                  return nil
+                end
+
+                function envoy_on_request(handle)
+                  local md = handle:streamInfo():dynamicMetadata():get(
+                    "envoy.filters.http.jwt_authn")
+                  if md == nil then return end
+
+                  -- jwt_authn populates per-provider; we expect one provider.
+                  local claims
+                  for _, v in pairs(md) do claims = v; break end
+                  if claims == nil then return end
+
+                  local sub    = claims["sub"]
+                  local email  = claims["email"]
+                  local uname  = claims["preferred_username"]
+                  -- AgentStudio custom JWT claims (flat keys with literal
+                  -- "agentstudio." prefix — see src/common/src/middleware/
+                  -- auth.ts and src/nemo/workflow-engine/internal/middleware/
+                  -- auth.go for the canonical claim names). Lua table access
+                  -- supports period-containing keys verbatim.
+                  local workspace_id = claims["agentstudio.workspace_id"]
+                  local namespace_id = claims["agentstudio.namespace_id"]
+
+                  local path = handle:headers():get(":path")
+                  local project_id = extract_project_id(path)
+
+                  -- Parity X-User-* / X-Workspace-ID / X-Namespace-ID
+                  -- / X-Project-ID headers (replaces apigateway-service
+                  -- middleware/auth.go injection behaviour). The standard
+                  -- Authorization: Bearer <jwt> header continues to the
+                  -- upstream service unchanged via RequestAuthentication's
+                  -- forwardOriginalToken: true -- that JWT is the in-mesh
+                  -- user-identity carrier.
+                  --
+                  -- X-Workspace-ID + X-Namespace-ID are consumed by
+                  -- apigateway-service's workspaceproxy.go for the
+                  -- per-workspace access check (header workspace vs.
+                  -- hostname workspace label) and namespace-cookie
+                  -- persistence inside the workspace. Without them, the
+                  -- workspace mismatch check silently no-ops and the
+                  -- namespace cookie never persists across reloads.
+                  if sub          then handle:headers():replace("x-user-id",      sub)          end
+                  if email        then handle:headers():replace("x-user-email",   email)        end
+                  if uname        then handle:headers():replace("x-user-name",    uname)        end
+                  if workspace_id then handle:headers():replace("x-workspace-id", workspace_id) end
+                  if namespace_id then handle:headers():replace("x-namespace-id", namespace_id) end
+                  if project_id   then handle:headers():replace("x-project-id",   project_id)   end
+                end
+{{- end }}

@@ -1,0 +1,173 @@
+{{- if .Values.coredns.enabled }}
+{{- /*
+  CoreDNS Configuration for agentstudio.local DNS Resolution
+  
+  Supports two modes:
+  - "hosts": Static DNS entries (local development, mirrors /etc/hosts)
+  - "forward": Forward to upstream DNS server (production multi-cluster)
+  
+  Note: In forward mode, the agentstudio.local server block automatically handles
+  all subdomains including s3.* subdomains (e.g., s3.us-west-2.agentstudio.local)
+*/}}
+{{- $mode := .Values.coredns.mode | default "hosts" }}
+{{- $domain := .Values.coredns.domain | default "agentstudio.local" }}
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "nemo.fullname" . }}-coredns-config
+  namespace: kube-system
+  labels:
+    {{- include "nemo.labels" . | nindent 4 }}
+    agentstudio.io/coredns-config: "true"
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "0"
+    "helm.sh/hook-delete-policy": before-hook-creation
+data:
+  Corefile.patch: |
+    {{- if eq $mode "hosts" }}
+    # Hosts plugin configuration for local development
+    # Add this AFTER the kubernetes plugin and BEFORE prometheus
+    # Note: Include all s3.* subdomains you need
+    hosts {
+      {{- $hasEntries := and .Values.coredns.hosts.entries (gt (len .Values.coredns.hosts.entries) 0) }}
+      {{- if $hasEntries }}
+        {{- range .Values.coredns.hosts.entries }}
+      {{ .ip }}{{- range .hostnames }} {{ . }}{{- end }}
+        {{- end }}
+      {{- else }}
+        {{- /*
+          Generate default entries from endpoint.
+          Includes the apex {endpoint} for backward compatibility with any in-cluster
+          code that still resolves it directly. Public browser traffic should target
+          {consoleHost} (e.g. app.{endpoint}) instead — the apex may not resolve
+          externally on clusters with a single-label wildcard DNS.
+          Per-workspace hosts ({workspaceLabelPrefix}<id>.{endpoint}) are NOT listed
+          because they are dynamic; in-cluster traffic to workspaces uses internal
+          Service DNS (workspace-svc-<id>), not the public hostname.
+        */}}
+        {{- $endpoint := include "nemo.endpoint" . }}
+        {{- $consoleHost := include "nemo.consoleHost" . }}
+        {{- $authSubdomain := include "nemo.authSubdomain" . }}
+        {{- $catalogSubdomain := include "nemo.catalogSubdomain" . }}
+        {{- $s3Subdomain := include "nemo.s3Subdomain" . }}
+        {{- $workflowsSubdomain := include "nemo.workflowsSubdomain" . }}
+        {{- $phoenixSubdomain := include "nemo.phoenixSubdomain" . }}
+      127.0.0.1 {{ $endpoint }} {{ $consoleHost }} {{ $authSubdomain }} {{ $catalogSubdomain }} {{ $s3Subdomain }} {{ $workflowsSubdomain }} {{ $phoenixSubdomain }}
+      {{- end }}
+      fallthrough
+    }
+    {{- else if eq $mode "forward" }}
+    # Forward plugin configuration for production multi-cluster
+    # Add this as a SEPARATE server block AFTER the main server block
+    # This block handles agentstudio.local and ALL subdomains including s3.*
+    {{ $domain }} {
+        forward . {{ .Values.coredns.forward.upstreamDnsServer }} {
+            max_fails {{ .Values.coredns.forward.maxFails | default 3 }}
+            health_check {{ .Values.coredns.forward.healthCheck | default "5s" }}
+        }
+        cache
+        errors
+        log
+    }
+    {{- end }}
+  apply-instructions.md: |
+    # CoreDNS Configuration Instructions
+    
+    {{- if eq $mode "hosts" }}
+    ## Hosts Mode (Local Development)
+    
+    Add the hosts plugin block to your main server block in the Corefile.
+    It should be placed AFTER the kubernetes plugin and BEFORE prometheus.
+    
+    **Important**: Make sure to include all s3.* subdomains you need in the hosts entries.
+    
+    Example Corefile structure:
+    ```
+    .:53 {
+        errors
+        health {
+           lameduck 5s
+        }
+        ready
+        kubernetes cluster.local in-addr.arpa ip6.arpa {
+           pods insecure
+           fallthrough in-addr.arpa ip6.arpa
+           ttl 30
+        }
+        # ADD HOSTS PLUGIN HERE
+        hosts {
+           127.0.0.1 agentstudio.local
+           127.0.0.1 us-west-2.agentstudio.local
+           127.0.0.1 s3.us-west-2.agentstudio.local
+           fallthrough
+        }
+        prometheus :9153
+        forward . /etc/resolv.conf
+        cache 30
+        loop
+        reload
+        loadbalance
+    }
+    ```
+    {{- else if eq $mode "forward" }}
+    ## Forward Mode (Production)
+    
+    Add a SEPARATE server block for {{ $domain }} AFTER the main server block.
+    **This block automatically handles ALL subdomains** including:
+    - us-west-2.agentstudio.local
+    - s3.us-west-2.agentstudio.local
+    - Any other *.agentstudio.local subdomain
+    
+    Example Corefile structure:
+    ```
+    .:53 {
+        errors
+        health {
+           lameduck 5s
+        }
+        ready
+        kubernetes cluster.local in-addr.arpa ip6.arpa {
+           pods insecure
+           fallthrough in-addr.arpa ip6.arpa
+           ttl 30
+        }
+        prometheus :9153
+        forward . /etc/resolv.conf {
+           max_concurrent 1000
+        }
+        cache 30 {
+           disable success cluster.local
+           disable denial cluster.local
+        }
+        loop
+        reload
+        loadbalance
+    }
+    
+    # ADD SEPARATE SERVER BLOCK HERE
+    # This handles agentstudio.local and ALL subdomains (including s3.*)
+    {{ $domain }} {
+        forward . {{ .Values.coredns.forward.upstreamDnsServer }} {
+            max_fails {{ .Values.coredns.forward.maxFails | default 3 }}
+            health_check {{ .Values.coredns.forward.healthCheck | default "5s" }}
+        }
+        cache
+        errors
+        log
+    }
+    ```
+    {{- end }}
+    
+    To apply:
+    1. Backup: kubectl get configmap coredns -n kube-system -o yaml > coredns-backup.yaml
+    2. Edit the Corefile according to instructions above
+    3. Apply: kubectl apply -f coredns-backup.yaml
+    4. CoreDNS will automatically reload
+    
+    Verification:
+    - Test DNS: kubectl run -it --rm test-dns --image=busybox --restart=Never -- nslookup s3.us-west-2.agentstudio.local
+    - Check logs: kubectl logs -n kube-system -l k8s-app=kube-dns --tail=20
+{{- end }}

@@ -1,0 +1,248 @@
+# AWS EKS overlay for the Keycloak identity chart.
+# TODO: Change secrets in the relevant file to read from Key Vault or another
+# secret manager (AKS), instead of hardcoded/static values.
+#
+# Used by `make helm-identity-install-eks` / `make deploy-eks`.
+#
+# Prerequisites:
+#   - FSx Trident StorageClass fsxn-nas (see database/values-eks.yaml)
+#   - services-gateway in agentstudio-services (services tier)
+#   - Gateway TLS secret nemo-gateway-tls (prepare-nemo-gateway.sh)
+#
+# Secrets for confidential OIDC clients are chart-rendered (same pattern as
+# values-gke.yaml). The Entra broker client secret is externally managed —
+# see realmBootstrap.broker.existingSecret below and `make eks-keycloak-broker-secret`.
+#
+global:
+  imageRegistry: "quay.io"
+  imageTag: ""
+
+# Two replicas for Infinispan HA on multi-node EKS. Drop to 1 on small clusters:
+#   --set replicaCount=1
+replicaCount: 2
+
+keycloak:
+  productionMode: true
+
+  # Injected by helm-identity-install-eks:
+  #   --set keycloak.hostname=$(KEYCLOAK_HOSTNAME)
+  # Empty here so a missing override fails at render time.
+  hostname: ""
+
+  backchannelDynamic: true
+
+  bootstrapAdmin:
+    username: admin
+    # EXTERNAL Secret = single source of truth for the admin credential. The
+    # chart renders NO bootstrap-admin Secret; the deploy flow
+    # (deploy-*-tiers-eks -> `make keycloak-admin-secret`) creates
+    # keycloak-bootstrap-admin CREATE-IF-ABSENT:
+    #   - fresh cluster  -> a random password is generated, which then seeds
+    #                       Keycloak's first-boot admin (no weak literal in git),
+    #   - existing cluster -> the Secret is left untouched, so it keeps matching
+    #                       the admin password already stored in the persistent DB.
+    # This removes the drift a re-rendered inline literal causes against a
+    # long-lived database (the realm-bootstrap Job authenticates with this value).
+    # Rotate deliberately with: KEYCLOAK_ADMIN_PASSWORD=... make keycloak-admin-secret ...
+    existingSecret: keycloak-bootstrap-admin
+
+  # Populates keycloak-oidc-secrets (see templates/keycloak-oidc-secrets.yaml).
+  # Confidential client secrets must match realmBootstrap.additionalClients below.
+  oidcClients:
+    gui:
+      clientId: "agentstudio-gui"
+    lakekeeper:
+      clientId: "agentstudio-lakekeeper"
+      clientSecret: "changeme-eks-lakekeeper-secret"
+    lakekeeperUi:
+      clientId: "agentstudio-lakekeeper-ui"
+    workflowEngine:
+      clientId: "agentstudio-workflow-engine"
+      clientSecret: "changeme-eks-workflow-engine-secret"
+    analyticsEngine:
+      clientId: "agentstudio-analytics-engine"
+      clientSecret: "changeme-eks-analytics-engine-secret"
+    configService:
+      clientId: "agentstudio-config-service"
+      clientSecret: "changeme-eks-config-service-secret"
+    storageManager:
+      clientId: "agentstudio-storage-manager"
+      clientSecret: "changeme-eks-storage-manager-secret"
+    agentService:
+      clientId: "agentstudio-agent-service"
+      clientSecret: "changeme-eks-agent-service-secret"
+    connectorWorker:
+      clientId: "agentstudio-connector-worker"
+      clientSecret: "changeme-eks-connector-worker-secret"
+    evalWorker:
+      clientId: "agentstudio-eval-worker"
+      clientSecret: "changeme-eks-eval-worker-secret"
+
+postgres:
+  host: "shared-postgresql.database.svc.cluster.local"
+  port: 5432
+  database: "keycloak"
+  auth:
+    # Single source of truth: Keycloak reads the DB password DIRECTLY from the
+    # database tier's own shared-postgresql-secret, copied into this namespace by
+    # `make keycloak-db-secret-sync` (deploy-all-tiers-eks runs it before the
+    # identity install). Username is a literal; only the password comes from the
+    # Secret, under the DB tier's key name `postgres-password`. No separate
+    # keycloak-postgres-auth Secret is created, so the password can never drift.
+    # (An AWS Secrets Manager + External Secrets Operator source can later
+    # replace the sync by pointing existingSecret at an ESO-managed Secret.)
+    username: "postgres"
+    existingSecret: "shared-postgresql-secret"
+    secretKeys:
+      passwordKey: postgres-password
+
+serviceAccount:
+  create: true
+  workloadIdentityEnabled: false
+  annotations: {}
+  # IRSA (eks.amazonaws.com/role-arn) can be added here when External Secrets
+  # Operator + AWS Secrets Manager integration lands.
+
+secretProviderClass:
+  enabled: false
+
+realmBootstrap:
+  enabled: true
+  realm: nemo
+  bruteForce:
+    permanentLockout: true
+
+  uiRedirectUris:
+    - "https://app.agentstudio.local:8443/*"
+  uiWebOrigins:
+    - "https://app.agentstudio.local:8443"
+
+  # Microsoft Entra ID broker. EKS uses its OWN dedicated Entra app registration
+  # (`agent-studio-dev-eks-broker`), separate from the AKS/GKE apps. The four
+  # public identifiers (clientId, tenantId, group objectIds) are threaded in
+  # at install time by `make helm-identity-install-eks` from the KEYCLOAK_ENTRA_*
+  # make vars — mirroring the GKE overlay — so they stay out of this committed
+  # file. Leaving any of the four empty at install trips the render-time fail()
+  # guards in templates/realm-bootstrap-job.yaml.
+  # OPTIONAL: disabled by default. `make helm-identity-install-eks` flips this
+  # to true (and fills the four identifiers) only when all four KEYCLOAK_ENTRA_*
+  # vars are supplied; otherwise the realm is bootstrapped without the Entra IdP.
+  broker:
+    enabled: false
+    existingSecret: keycloak-entra-broker
+
+  additionalClients:
+    enabled: true
+    clients:
+      - name: agentstudio-agent-service
+        kind: confidential-svc
+        secretEnvVar: KC_ADDL_AGENTSTUDIO_AGENT_SERVICE_SECRET
+        clientSecret: "changeme-eks-agent-service-secret"
+      - name: agentstudio-analytics-engine
+        kind: confidential-svc
+        secretEnvVar: KC_ADDL_AGENTSTUDIO_ANALYTICS_ENGINE_SECRET
+        clientSecret: "changeme-eks-analytics-engine-secret"
+      - name: agentstudio-config-service
+        kind: confidential-svc
+        secretEnvVar: KC_ADDL_AGENTSTUDIO_CONFIG_SERVICE_SECRET
+        clientSecret: "changeme-eks-config-service-secret"
+      - name: agentstudio-connector-worker
+        kind: confidential-svc
+        secretEnvVar: KC_ADDL_AGENTSTUDIO_CONNECTOR_WORKER_SECRET
+        clientSecret: "changeme-eks-connector-worker-secret"
+      - name: agentstudio-lakekeeper
+        kind: confidential-svc
+        secretEnvVar: KC_ADDL_AGENTSTUDIO_LAKEKEEPER_SECRET
+        clientSecret: "changeme-eks-lakekeeper-secret"
+        # Attach the `lakekeeper` realm-level client-scope so tokens carry
+        # `scope=lakekeeper` AND the audience mapper on that scope emits
+        # `aud=agentstudio-lakekeeper` (required by Lakekeeper's authn).
+        extraDefaultScopes: ["lakekeeper"]
+      - name: agentstudio-storage-manager
+        kind: confidential-svc
+        secretEnvVar: KC_ADDL_AGENTSTUDIO_STORAGE_MANAGER_SECRET
+        clientSecret: "changeme-eks-storage-manager-secret"
+      - name: agentstudio-workflow-engine
+        kind: confidential-svc
+        secretEnvVar: KC_ADDL_AGENTSTUDIO_WORKFLOW_ENGINE_SECRET
+        clientSecret: "changeme-eks-workflow-engine-secret"
+
+      - name: agentstudio-gui
+        kind: public-spa
+        redirectUris:
+          - "https://app.agentstudio.local:8443/console/*"
+          - "https://app.agentstudio.local/console/*"
+          - "https://app.agentstudio.local:8443/studio/*"
+          - "https://app.agentstudio.local/studio/*"
+        webOrigins:
+          - "https://app.agentstudio.local:8443"
+          - "https://app.agentstudio.local"
+        attributes:
+          pkce.code.challenge.method: "S256"
+          post.logout.redirect.uris: "+"
+      - name: agentstudio-lakekeeper-ui
+        kind: public-spa
+        # See `agentstudio-lakekeeper` above for rationale; UI flow tokens
+        # need `aud=agentstudio-lakekeeper-ui` (also emitted by the same
+        # `lakekeeper` scope's audience mappers).
+        extraDefaultScopes: ["lakekeeper"]
+        redirectUris:
+          - "https://catalog.agentstudio.local:8443/*"
+          - "https://catalog.agentstudio.local/*"
+        webOrigins:
+          - "https://catalog.agentstudio.local:8443"
+          - "https://catalog.agentstudio.local"
+        attributes:
+          pkce.code.challenge.method: "S256"
+          post.logout.redirect.uris: "+"
+      - name: agentstudio-swagger
+        kind: public-spa
+        redirectUris:
+          - "https://app.agentstudio.local:8443/api-docs/*"
+          - "https://app.agentstudio.local/api-docs/*"
+        webOrigins:
+          - "https://app.agentstudio.local:8443"
+          - "https://app.agentstudio.local"
+        attributes:
+          pkce.code.challenge.method: "S256"
+          post.logout.redirect.uris: "+"
+      # Grafana proxy — server-side OIDC auth-code client used by agent-studio-grafana-proxy.
+      # Placeholder host agentstudio.local (chart baseline for every EKS client above) is
+      # rewritten at install time by render_gke_keycloak_values to ENDPOINT
+      # (e.g. grafana.agentstudio.local -> grafana.<ENDPOINT>). Do not hardcode a
+      # cluster-specific FQDN here — that breaks other EKS environments.
+      - name: agentstudio-grafana-proxy
+        kind: confidential-spa
+        redirectUris:
+          - "https://grafana.agentstudio.local:8443/oauth2/callback"
+          - "https://grafana.agentstudio.local/oauth2/callback"
+        webOrigins:
+          - "https://grafana.agentstudio.local:8443"
+          - "https://grafana.agentstudio.local"
+        attributes:
+          post.logout.redirect.uris: "+"
+          backchannel.logout.url: "http://grafana-proxy.monitoring.svc.cluster.local:8080/oauth2/backchannel-logout"
+
+
+resources:
+  requests:
+    cpu: 500m
+    memory: 1Gi
+  limits:
+    cpu: 2000m
+    memory: 2Gi
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+httpRoute:
+  enabled: true
+  hostnames:
+    - "auth.agentstudio.local"
+  # Edge tier in agentstudio-edge owns the parent Gateway after the Istio
+  # migration; the EKS rollout will flip both this parentRef + the edge
+  # values overlay to provider=istio together.
+  parentRef:
+    name: agentstudio-gateway
+    namespace: agentstudio-edge

@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .Values.namespace }}
+  labels:
+    app.kubernetes.io/managed-by: Helm
+    # Enrol the observability namespace in the Istio service mesh so that
+    # Prometheus, Phoenix, Loki, Tempo, and OTel pods get sidecars and
+    # participate in mTLS with the rest of the mesh. The OTel DaemonSet
+    # remains privileged (see pod-security labels below) — sidecar injection
+    # is compatible with privileged workloads.
+    istio-injection: enabled
+    # Required for the OTel DaemonSet log collector, which mounts /var/log/pods
+    # and /var/log/containers as hostPath volumes and runs as root (UID 0) to
+    # read container runtime-owned log files. Without this label, the Pod
+    # Security Admission controller rejects the DaemonSet pod under the
+    # "baseline" or "restricted" standards.
+    pod-security.kubernetes.io/enforce: privileged
+    pod-security.kubernetes.io/warn: privileged

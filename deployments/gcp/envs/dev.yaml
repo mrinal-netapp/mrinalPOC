@@ -1,0 +1,74 @@
+# dev.yaml -- AgentStudio GCP infra config for the dev environment.
+#
+# SYNCED FROM LIVE (2026-06-27): project agent-studio-netapp, cluster `agentstudio-dev`
+# (us-east4) on VPC agentstudio-dev-vpc. Platform provisioned out-of-band; no IM
+# deployment yet. Use ACTION=plan to preview; IM apply needs GCP_SERVICE_ACCOUNT with
+# roles/config.admin (and artifactregistry.admin for shared GAR reader grant).
+#
+#   make infra CLOUD=gcp ENV=dev ACTION=plan
+#   export GCP_SERVICE_ACCOUNT=agentstudio-cicd-sa@agent-studio-netapp.iam.gserviceaccount.com
+#   make deploy CLOUD=gke ...   # after infra (set SKIP_CLUSTER_CREATE=1 today)
+
+env: dev
+projectId: agent-studio-netapp
+location: us-east4
+deploymentId: agentstudio-dev
+
+application:
+  endpoint: agentstudio-gke.dev.openeng.netapp.com
+
+tags:
+  creator: ng-agent-studio
+
+networking:
+  vpcName: agentstudio-dev-vpc
+  subnetName: agentstudio-dev-gke
+  subnetCidr: 10.60.32.0/20
+  podsSecondaryCidr: 10.61.0.0/16
+  servicesSecondaryCidr: 10.62.0.0/20
+
+gke:
+  clusterName: agentstudio-dev
+  deletionProtection: false
+  releaseChannel: REGULAR
+  kubernetesVersion: "1.35"
+  nodePools:
+    - name: agentstudio-dev-general
+      machineType: e2-standard-8
+      minCount: 2
+      maxCount: 6
+      diskSizeGiB: 100
+      imageType: COS_CONTAINERD
+      labels:
+        workload-arch: amd64
+    - name: agentstudio-dev-san-ubuntu
+      machineType: e2-standard-4
+      minCount: 1
+      maxCount: 1
+      diskSizeGiB: 100
+      imageType: UBUNTU_CONTAINERD
+      labels:
+        agentstudio.netapp.io/san: "true"
+      taints:
+        - key: agentstudio.netapp.io/san
+          value: "true"
+          effect: NO_SCHEDULE
+
+storage:
+  nasPoolName: sp-agentstudio-gcnv-nas
+  sanPoolName: sp-agentstudio-gcnv-san
+  nasCapacityGiB: 4096
+  sanCapacityGiB: 4096
+  trident:
+    helmVersion: "100.2410.0"
+    namespace: trident
+    gsaName: trident-controller
+    serviceAccount: trident-controller
+  gcnv:
+    nasBackendName: gcnv-native-nas-backend
+    sanBackendName: gcnv-native-san-backend
+    nasStorageClass: gcnv-nas-rwx
+    sanStorageClass: gcnv-san-rwo
+
+edge:
+  gatewayAddressName: agentstudio-services-gw-ip

@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "logging": {
+    "log_file_path": "${AGENT_STUDIO_OBSERVABILITY_LOG_FILE_PATH:-../../App_Logs}",
+    "trace_file_path": "${AGENT_STUDIO_OBSERVABILITY_TRACE_FILE_PATH:-../../Trace_Logs}",
+    "write_spans_to_jsonl_file": "${AGENT_STUDIO_OBSERVABILITY_WRITE_SPANS_TO_JSONL_FILE:-true}",
+    "trace_jsonl_filter": "${AGENT_STUDIO_OBSERVABILITY_TRACE_JSONL_FILTER:-openllmetry}",
+    "otlp_traces_endpoint": "${AGENT_STUDIO_OBSERVABILITY_OTLP_TRACES_ENDPOINT:-}",
+    "metrics_otlp_endpoint": "${AGENT_STUDIO_OBSERVABILITY_METRICS_OTLP_ENDPOINT:-}",
+    "prometheus_metrics_port": "${AGENT_STUDIO_OBSERVABILITY_PROMETHEUS_METRICS_PORT:-8000}",
+    "prometheus_metrics_host": "${AGENT_STUDIO_OBSERVABILITY_PROMETHEUS_METRICS_HOST:-0.0.0.0}",
+    "enable_red_metrics": "${AGENT_STUDIO_OBSERVABILITY_ENABLE_RED_METRICS:-true}",
+    "metrics_export_interval_ms": "${AGENT_STUDIO_OBSERVABILITY_METRICS_EXPORT_INTERVAL_MS:-60000}",
+    "metrics_service_name": "${AGENT_STUDIO_OBSERVABILITY_METRICS_SERVICE_NAME:-test-service}",
+    "min_log_level": "${AGENT_STUDIO_OBSERVABILITY_MIN_LOG_LEVEL:-info}",
+    "service_name": "nodejs-service",
+    "service_version": "0.0.1",
+    "environment": "dev",
+    "log_file_name": "app.jsonl",
+    "log_file_encoding": "utf-8",
+    "create_log_parent_dirs": true,
+    "enable_auto_instrumentation": true,
+    "enable_auto_span_logging": false,
+    "auto_span_log_level": "info",
+    "ensure_tracer_provider": true,
+    "enable_openllmetry": false,
+    "traceloop_disable_batch": false,
+    "trace_file_encoding": "utf-8"
+  }
+}

@@ -1,0 +1,35 @@
+# Core dependencies
+# Use lancedb 0.29.x for IVF_RQ and native FTS index compatibility
+lancedb>=0.29.0,<0.30.0
+# 0.7+ removes CreateEmptyTableRequest; lancedb 0.29 still imports it (0.30+ uses DeclareTableRequest)
+lance-namespace>=0.3.2,<0.7.0
+pyarrow>=16.0.0,<18.0.0
+boto3>=1.34.0
+requests>=2.31.0
+numpy<2
+
+# Chunking strategy support
+nltk>=3.8                    # For sentence-based chunking
+tiktoken>=0.5.0              # For token-based chunking (LLM-aligned)
+
+# PyIceberg for structured dataset support
+# Order matters for s3fs/boto3/aiobotocore compatibility
+aiobotocore>=2.13.0
+s3fs>=2024.6.0
+pyiceberg>=0.7.0
+
+# Embeddings now happen via the Bifrost gateway (Phase 4 of the unified-
+# embedding port). The in-process SentenceTransformer / torch dependencies
+# previously imported here have been removed — the worker image is ~700 MB
+# smaller as a result. The `requests` library above handles the HTTP call.
+
+# Temporal SDK
+temporalio>=1.7.0
+
+# Unstructured binary document extraction
+pypdf>=4.0.0
+python-docx>=1.1.0
+python-pptx>=1.0.0
+odfpy>=1.4.1
+openpyxl>=3.1.0
+xlrd>=2.0.1

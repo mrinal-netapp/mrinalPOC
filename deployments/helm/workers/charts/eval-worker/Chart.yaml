@@ -1,0 +1,6 @@
+apiVersion: v2
+name: eval-worker
+description: AgentStudio evaluation worker (Temporal — hosts AgentEvaluationWorkflow)
+type: application
+version: 1.0.0
+appVersion: "1.0.0"

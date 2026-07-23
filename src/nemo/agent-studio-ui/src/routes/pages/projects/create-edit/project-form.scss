@@ -1,0 +1,77 @@
+.project-form-section {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+
+  &__header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    padding: 0;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    text-align: left;
+  }
+
+  &__title {
+    flex: 1;
+    min-width: 0;
+  }
+
+  &__status {
+    color: var(--text-secondary);
+    white-space: nowrap;
+  }
+
+  &__chevron {
+    flex-shrink: 0;
+    color: var(--text-secondary);
+    transition: transform 150ms ease;
+
+    &--expanded {
+      transform: rotate(180deg);
+    }
+  }
+
+  &__body {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+}
+
+.project-details-section {
+  &__fields {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+}
+
+.project-access-section {
+  &__placeholder {
+    margin: 0;
+    color: var(--text-secondary);
+  }
+}
+
+.project-form-page {
+  &__loading,
+  &__error {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 240px;
+    padding: 24px;
+  }
+}
+
+// Project create/edit uses a wider content column so Access rows fit Role + Email side by side.
+.add-entity-form.add-entity-form--project {
+  .add-entity-form__header-block,
+  .add-entity-form__form-card .card-block > * {
+    max-width: 880px;
+  }
+}

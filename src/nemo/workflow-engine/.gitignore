@@ -1,0 +1,2 @@
+# Local-only helper; mirrors CI coverage invocation — not part of the repo.
+scripts/test-coverage.sh

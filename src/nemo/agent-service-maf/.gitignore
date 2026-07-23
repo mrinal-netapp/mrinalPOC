@@ -1,0 +1,93 @@
+# App-level ignores for agent-service-maf. The repo root already covers most
+# of these patterns; duplicating them here keeps this directory self-contained
+# (e.g. when developed in a worktree or copied out for vendoring).
+
+# ── Secrets & environment ────────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+
+# ── TLS / SSL certificates ───────────────────────────────────────────────────
+certs/
+*.pem
+*.crt
+*.cer
+*.key
+*.p12
+*.pfx
+*.csr
+
+# ── Python ───────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+eggs/
+wheels/
+*.whl
+.Python
+pip-log.txt
+pip-delete-this-directory.txt
+
+# ── Virtual environments ──────────────────────────────────────────────────────
+.venv/
+venv/
+env/
+ENV/
+.env.bak
+
+# ── Testing & coverage ────────────────────────────────────────────────────────
+.pytest_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.tox/
+.hypothesis/
+
+# ── Type checking ─────────────────────────────────────────────────────────────
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pytype/
+.pyright/
+
+# ── Linting / formatting ──────────────────────────────────────────────────────
+.ruff_cache/
+
+# ── IDEs & editors ────────────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ── Logs ──────────────────────────────────────────────────────────────────────
+*.log
+*.jsonl
+logs/
+App_Logs/
+
+# ── Local runtime data (sample data under data/ stays tracked) ────────────────
+data/local/
+
+# ── Generated artefacts (e.g. scripts/generate_openapi.py output) ─────────────
+openapi.json
+openapi.yaml
+
+# ── Misc ──────────────────────────────────────────────────────────────────────
+*.tmp
+*.bak
+*.orig
+*.bkp
+
+
+# ── Spec / planning docs (local only) ──
+/spec/

@@ -1,0 +1,132 @@
+{{- /*
+Edge routing policy for app.<endpoint>. RequestAuthentication (above)
+validates JWTs when present (invalid/expired → 401). This policy routes
+traffic to backends; config-service (and other services) return 401 for
+missing credentials on protected routes — the edge must NOT 403 RBAC
+before the app auth middleware runs.
+
+Exempts public paths and subdomain-routed hosts that own their own auth
+(auth.*, catalog.*, workflows.*, phoenix.*, grafana.*, s3.*, ws-*).
+grafana.* fronts the grafana-proxy, which runs its own OIDC + per-project
+RBAC, so the gateway lets it through without a JWT just like the other
+self-authenticating subdomains.
+
+Selector-scoped to the gateway pod (same namespace as the
+RequestAuthentication above).
+*/ -}}
+{{- if and .Values.gateway.enabled (eq .Values.gateway.provider "istio") -}}
+{{- $endpoint := include "nemo.endpoint" . }}
+{{- $consoleHost := include "nemo.consoleHost" . }}
+{{- $authHost := include "nemo.authSubdomain" . }}
+{{- $catalogHost := include "nemo.catalogSubdomain" . }}
+{{- $workflowsHost := include "nemo.workflowsSubdomain" . }}
+{{- $phoenixHost := include "nemo.phoenixSubdomain" . }}
+{{- $grafanaHost := include "nemo.grafanaSubdomain" . }}
+{{- $s3Host := include "nemo.s3Subdomain" . }}
+{{- $wsHost := include "nemo.workspaceWildcardHost" . }}
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: edge-require-jwt
+  namespace: {{ include "nemo.namespace" . }}
+  labels:
+    {{- include "edge.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "nemo.istioGatewaySelector" . | nindent 6 }}
+  action: ALLOW
+  rules:
+    # 1) Public exemptions (no auth required).
+    #
+    # `/api/v1/setup/*` is the FirstTimeSetup bootstrap loop -- the GUI
+    # polls it BEFORE anyone has logged in (chicken-and-egg: can't require
+    # a JWT for the path that gates whether a user can even *create* the
+    # first user). `/config/api/v1/setup/*` is the same call under the
+    # legacy `/config/` prefix shim; both forms are exempt for as long as
+    # `agentstudio-app-config` exists. Drop them when the GUI is rebuilt to call
+    # `/api/v1/*` directly.
+    #
+    # `/config/health` and `/config/ready` are the same liveness/readiness
+    # probes under the legacy `/config/` prefix (agentstudio-app-config strips
+    # `/config` before forwarding to config-service). Integration tests and
+    # external monitors that use `CONFIG_SERVICE_URL=…/config` probe these
+    # without a JWT; exact paths only — do NOT wildcard `/config/**/health`.
+    - to:
+        - operation:
+            paths:
+              - /health
+              - /ready
+              - /config/health
+              - /config/ready
+              - /metrics
+              - /api-docs/*
+              - /swagger/*
+              - /console/*
+              - /internal/lakekeeper/*
+              - /internal/temporal/*
+              - /api/v1/setup/*
+              - /config/api/v1/setup/*
+    # 2) Subdomains that own their own auth.
+    #
+    # Istio's `to.operation.hosts` matches against the HTTP `:authority`
+    # header verbatim. Browsers preserve non-standard ports in :authority
+    # (so on local with the gateway listening on 8443, the value is
+    # `auth.agentstudio.local:8443` — `:443` would have been stripped).
+    # We therefore emit each host TWICE — bare + `:*` port glob — so the
+    # rule matches on both AKS prod (443, port-stripped) and local (8443,
+    # port-preserved) without per-cloud overlay knobs.
+    - to:
+        - operation:
+            hosts:
+              - {{ $authHost | quote }}
+              - {{ printf "%s:*" $authHost | quote }}
+              - {{ $catalogHost | quote }}
+              - {{ printf "%s:*" $catalogHost | quote }}
+              - {{ $workflowsHost | quote }}
+              - {{ printf "%s:*" $workflowsHost | quote }}
+              - {{ $phoenixHost | quote }}
+              - {{ printf "%s:*" $phoenixHost | quote }}
+              - {{ $grafanaHost | quote }}
+              - {{ printf "%s:*" $grafanaHost | quote }}
+              - {{ $s3Host | quote }}
+              - {{ printf "%s:*" $s3Host | quote }}
+              - {{ $wsHost | quote }}
+              - {{ printf "%s:*" $wsHost | quote }}
+    # 3) Config-service API paths under app.<endpoint>: /api/v1/* (direct)
+    #    and /config/* (legacy GUI prefix shim). Routed to config-service;
+    #    no requestPrincipals gate here — missing JWT reaches the app and
+    #    returns 401. RequestAuthentication above still rejects
+    #    malformed/invalid tokens with 401. Delete the /config/* entry when
+    #    agentstudio-app-config HTTPRoute goes away.
+    - to:
+        - operation:
+            hosts:
+              - {{ $consoleHost | quote }}
+              - {{ printf "%s:*" $consoleHost | quote }}
+            paths:
+              - /api/v1/*
+              - /config/*
+    # 4) GUI static + console traffic on app.<endpoint> — public to the
+    #    gateway because the GUI itself enforces login on its protected
+    #    routes. Everything that isn't an API call (/api/v1/*) or the
+    #    legacy /config/* shim falls into this rule: `/`, `/console`,
+    #    `/console/*`, `/favicon.ico`, `/robots.txt`, `/manifest.json`,
+    #    `/assets/*`, `/auth/callback`, ... — anything CRA / Vite / a
+    #    bundler might emit at the root of the SPA.
+    #
+    #    Using `notPaths` here is the durable shape: future GUI builds
+    #    that add new static paths don't require a chart change. The
+    #    `/api/v1/setup/*` and `/config/api/v1/setup/*` carve-outs stay
+    #    in rule 1 because they're API paths that need to be public for
+    #    the bootstrap loop and `notPaths` here would otherwise exclude
+    #    them.
+    - to:
+        - operation:
+            hosts:
+              - {{ $consoleHost | quote }}
+              - {{ printf "%s:*" $consoleHost | quote }}
+            notPaths:
+              - /api/v1/*
+              - /config/*
+{{- end }}

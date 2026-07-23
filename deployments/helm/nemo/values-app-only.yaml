@@ -1,0 +1,43 @@
+# Deploy only application services; assume platform infra is already installed
+# (Phase 3 release: nemo-deps).
+# Used by: make deploy-platform (Phase 4) when using the two-release model.
+#
+# Phase 3: helm upgrade --install nemo-deps ... -f values-deps-only.yaml
+# Phase 4: helm upgrade --install nemo ... -f values.yaml -f values-app-only.yaml
+#
+# Service discovery: app services use fixed DNS in namespace nemo (temporal,
+# redis-master, lakekeeper, bifrost-proxy, s3gateway) so they find infra from
+# the nemo-deps release.
+
+# Do not create or own the namespace; it is created by helm-nemo-prepare (ensure_namespace).
+createNamespace: false
+
+# Secret keycloak-oidc-secrets is created and owned by nemo-deps (Phase 3); skip it here.
+# Note: uses skipX (truthy) instead of createX: false because Helm's `default` treats false as empty.
+skipKeycloakOidcSecrets: true
+
+# Disable infrastructure dependencies (deployed by nemo-deps in Phase 3)
+redis:
+  enabled: false
+
+temporal:
+  enabled: false
+
+lakekeeper:
+  enabled: false
+
+bifrost:
+  enabled: false
+
+s3gateway:
+  enabled: false
+
+# Keycloak-setup hook and defaultSetup bootstrap jobs run in nemo-deps (Phase 3) only.
+keycloak:
+  setup:
+    enabled: false
+
+defaultSetup:
+  enabled: false
+
+# Gateway and app services remain enabled (defaults from values.yaml).

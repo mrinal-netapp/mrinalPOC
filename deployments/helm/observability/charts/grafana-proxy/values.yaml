@@ -1,0 +1,113 @@
+# Default values for grafana-proxy.
+# Override in deployments/helm/observability/values.yaml under grafana-proxy:
+
+# Set to true to deploy the proxy.
+enabled: false
+
+replicaCount: 1
+
+image:
+  repository: ""          # e.g. docker.repo.eng.netapp.com/user/sekaranr/grafana-proxy
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
+# Namespace the proxy is deployed into. Must match the observability namespace.
+namespace: monitoring
+
+# External hostname for the proxy (Keycloak redirect URI, HTTPRoute).
+# Grafana will be accessible at https://<hostname>.
+hostname: "grafana.agentstudio.local"
+
+# Optional HTTPS port appended to the redirect URI when the gateway
+# does not listen on the standard port 443.  Set to 8443 for local OrbStack
+# deployments where the NGINX Gateway Fabric uses NodePort 8443.
+# Leave empty ("") to omit the port (standard HTTPS on 443).
+redirectURIPort: ""
+
+# Keycloak OIDC settings.
+keycloak:
+  # Internal/backchannel issuer URL — used for server-side token exchange from
+  # within the cluster.  Use the in-cluster HTTP Service URL to avoid routing
+  # through the external gateway and its TLS certificate.
+  # e.g. http://keycloak.agent-studio-identity.svc.cluster.local:8080/realms/nemo
+  issuer: ""
+  # Browser-facing HTTPS issuer URL — used to build the authorization-code
+  # redirect that the end-user's browser follows.  Must be the external HTTPS
+  # hostname so Keycloak sets Secure session cookies on the correct domain.
+  # If unset, falls back to `issuer` (suitable when one URL works for both).
+  # e.g. https://auth.agentstudio.local:8443/realms/nemo
+  publicIssuer: ""
+  clientId: "agentstudio-grafana-proxy"
+  # Inline secret — used for local dev only.
+  # In production, set existingSecret instead.
+  clientSecret: ""
+  # Name of a K8s Secret that holds the client secret.
+  # If set, clientSecret above is ignored.
+  existingSecret: ""
+  # Key within existingSecret (or the chart-rendered Secret) to read the client secret from.
+  # Override to "grafana-proxy-client-secret" when pointing existingSecret at keycloak-oidc-secrets.
+  clientSecretKey: "clientSecret"
+  # Allow self-signed TLS on the Keycloak endpoint (local dev only).
+  tlsSkipVerify: false
+
+# Session encryption keys.
+# In production, set existingSecret to a K8s Secret with keys
+# `sessionHashKey` and `sessionBlockKey`.
+session:
+  # Inline keys — hex-encoded or raw ASCII, minimum 32 / 16 bytes respectively.
+  # Used for local dev only.
+  hashKey: ""
+  blockKey: ""
+  # Name of a K8s Secret with keys `sessionHashKey` and `sessionBlockKey`.
+  existingSecret: ""
+  # How long a session stays valid (hours).
+  ttlHours: 8
+
+# How long the per-user project list cache is valid (seconds).
+projectCacheTTLSeconds: 300
+
+# Realm role that grants Grafana Admin access.
+platformAdminRole: "platform-admin"
+
+# In-cluster URL of Grafana (kube-prometheus-stack service name).
+grafanaUpstreamURL: "http://observability-grafana.monitoring.svc.cluster.local:80"
+
+# In-cluster URL of config-service. The Service exposes port 3000.
+configServiceURL: "http://config-service.agentstudio-services.svc.cluster.local:3000"
+
+# Kubernetes namespace where config-service runs. Used by the NetworkPolicy
+# egress rule so the proxy can reach config-service.  Must match the namespace
+# embedded in configServiceURL.
+configService:
+  namespace: agentstudio-services
+
+# Gateway to attach the HTTPRoute to.
+# The services Helm release generates a Gateway named "<release>-gateway" in
+# the services namespace.  Since the release is named "services", the current
+# gateway resource is "services-gateway" in "agentstudio-services".
+gateway:
+  name: services-gateway
+  namespace: agentstudio-services
+  sectionName: https
+
+service:
+  type: ClusterIP
+  port: 8080
+
+# Shared secret used by prometheus-proxy to authenticate /.internal/projects
+# calls. Must match the internalToken.value in the prometheus-proxy chart.
+# In production use existingSecret to reference a pre-created K8s Secret.
+internalToken:
+  # Inline value — dev only. NEVER use in production.
+  value: ""
+  # Name of an existing K8s Secret with key `internalToken`.
+  # When set, value above is ignored.
+  existingSecret: ""
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 200m
+    memory: 128Mi

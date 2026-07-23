@@ -1,0 +1,76 @@
+# Nightly integration tests against the live shared environments.
+#
+# Runs the full integration suite against whatever is currently deployed in
+# each shared cloud environment (it does NOT deploy). Results are published to
+# the shared Allure service under one project per environment so trend / flaky
+# history accumulates. Runs on a daily schedule (18:30 UTC) and can also be
+# triggered manually via workflow_dispatch.
+#
+# Each environment leg delegates to integration-tests-container.yml, which
+# reads its target URLs + Keycloak credentials from the matching GitHub
+# Environment (see docs/testing/integration-cicd.md).
+#
+# Preprod legs use GitHub Environments `azure` / `gcp` / `aws` (same names as the
+# infra OIDC environments in deploy-preprod-*.yml). Each must also expose the
+# integration-test contract (AGENTSTUDIO_ENDPOINT, Keycloak creds, ACR/OIDC).
+# Add `stage` / `prod` legs once those environments exist.
+
+name: Nightly Integration Tests
+
+on:
+  schedule:
+    # 18:30 UTC every day == 00:00 IST (Asia/Kolkata, UTC+5:30). Off-peak for
+    # the shared dev and preprod clusters.
+    - cron: '30 18 * * *'
+  workflow_dispatch:
+    inputs:
+      pytest_selector:
+        description: "Extra pytest args / markers / suite path. Empty = full suite."
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+  # Container workflow pulls the harness image from ACR via Azure OIDC.
+  id-token: write
+
+# Don't stack nightly runs on top of each other if one overruns.
+concurrency:
+  group: nightly-integration
+  cancel-in-progress: false
+
+jobs:
+  nightly:
+    name: Nightly (${{ matrix.allure_project }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - environment: dev
+            allure_project: dev-aks
+          - environment: dev-gke
+            allure_project: dev-gke
+          - environment: dev-eks
+            allure_project: dev-eks
+          - environment: azure
+            allure_project: preprod-aks
+          - environment: gcp
+            allure_project: preprod-gke
+          - environment: aws
+            allure_project: preprod-eks
+          # - environment: stage
+          #   allure_project: stage
+          # - environment: prod
+          #   allure_project: prod
+    uses: ./.github/workflows/integration-tests-container.yml
+    with:
+      cloud_environment: ${{ matrix.environment }}
+      allure_project: ${{ matrix.allure_project }}
+      pytest_selector: ${{ inputs.pytest_selector || '' }}
+      # Always notify on nightly legs — pass or fail — so a green run is an
+      # explicit signal, not silence. No PR author on a scheduled run, so no
+      # @-mention (notify_github_login left unset).
+      notify_always: true
+      severity: nightly
+    secrets: inherit

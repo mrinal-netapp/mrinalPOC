@@ -1,0 +1,287 @@
+# Platform tier umbrella values
+# Namespace: agentstudio-platform (set via Helm --namespace at install time)
+#
+# Cross-namespace dependencies:
+#   keycloak          → agentstudio-identity  (for lakekeeper OIDC init)
+#   shared-postgresql → database
+#
+# Secrets created in this namespace by subchart:
+#   nemo-s3gateway-credentials (created by s3gateway)
+#   shared-postgresql-secret   (created by lakekeeper-postgresql-secret template)
+#
+# Secrets synced by CI into agentstudio-platform:
+#   keycloak-oidc-secrets (from agentstudio-identity, needed by lakekeeper-bootstrap-job)
+
+createNamespace: true
+namespacePodSecurity:
+  enforce: privileged
+  audit: privileged
+  warn: privileged
+
+deploymentName: "nemo"
+endpoint: "agentstudio.local"
+consoleSubdomain: "app"
+
+keycloakNamespace: "agentstudio-identity"
+platformNamespace: "agentstudio-platform"
+servicesNamespace: "agentstudio-services"
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+# postgresql stub — used only by lakekeeper-db-init-job image pull policy.
+# The actual database runs in the 'database' namespace (helm/database chart).
+postgresql:
+  image:
+    pullPolicy: IfNotPresent
+
+global:
+  imageRegistry: ""
+  imageRepository: "docker.repo.eng.netapp.com/user/sekaranr"
+  imageTag: ""
+  imagePullSecrets: []
+  storageClass: ""
+  endpoint: "agentstudio.local"
+  deploymentName: "nemo"
+  s3gatewayFullname: "s3gateway"
+  lakekeeperCatalogUrl: ""
+
+keycloak:
+  setup:
+    # Set to false in platform tier: the keycloak-setup Job lives in agentstudio-identity,
+    # not agentstudio-platform. Lakekeeper waits for Keycloak via HTTP (wait-for-keycloak-oidc
+    # init container) rather than watching the Job object across namespace boundaries.
+    enabled: false
+    keycloakNamespace: "agentstudio-identity"
+    keycloakUrl: ""
+    realmName: "nemo"
+    image:
+      repository: ""
+      tag: ""
+      pullPolicy: IfNotPresent
+
+# defaultSetup: controls lakekeeper-bootstrap hook (s3-bucket-init runs in workers tier)
+defaultSetup:
+  enabled: true
+  lakekeeperEnabled: true
+  s3gatewayBootstrapEnabled: true
+  warehouseName: "nemo"
+  lakekeeperUrl: "http://lakekeeper:8181"
+  s3GatewayUrl: "http://s3gateway.agentstudio-workers.svc.cluster.local:7070"
+  llmGatewayUrl: "http://bifrost-proxy.agentstudio-llm-gateway.svc.cluster.local:8080"
+  llmGatewayApiKey: ""
+  configServiceUrl: "http://config-service.agentstudio-services.svc.cluster.local:3000"
+
+# Shared Redis (Bitnami)
+redis:
+  enabled: true
+  fullnameOverride: "redis"
+  architecture: standalone
+  auth:
+    enabled: false
+  master:
+    persistence:
+      enabled: true
+      size: 8Gi
+    resources:
+      requests:
+        cpu: 250m
+        memory: 512Mi
+      limits:
+        cpu: 1000m
+        memory: 2Gi
+  replica:
+    replicaCount: 0
+  sentinel:
+    enabled: false
+  metrics:
+    enabled: true
+    serviceMonitor:
+      enabled: false
+  volumePermissions:
+    enabled: true
+  serviceAccount:
+    create: false
+    name: ""
+    azureClientId: ""
+  workloadIdentity:
+    enabled: false
+
+# Temporal
+temporal:
+  enabled: true
+  fullnameOverride: "temporal"
+  replicaCount: 1
+  serviceAccountName: ""
+  image:
+    repository: temporalio/auto-setup
+    tag: "1.24.2"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 7233
+  resources:
+    limits:
+      cpu: 2000m
+      memory: 4Gi
+    requests:
+      cpu: 500m
+      memory: 1Gi
+  database:
+    host: "shared-postgresql.database.svc.cluster.local"
+    port: "5432"
+    name: "temporal"
+    user: "postgres"
+    password: "agentstudio-postgres-password"  # Dev default; use existingSecret for production
+    existingSecret: "shared-postgresql-secret"
+    existingSecretKey: "postgres-password"
+  serviceAccount:
+    create: false
+    name: ""
+    azureClientId: ""
+  workloadIdentity:
+    enabled: false
+
+# S3 Gateway — Deployment moved to the workers tier (deployments/helm/workers).
+# These stub values are only referenced by the lakekeeper-bootstrap and
+# s3-bucket-init hook jobs that still live in this chart.
+s3gateway:
+  credentials:
+    accessKey: "testuser"   # Override in production
+    secretKey: "secret"     # Override in production
+  defaultBucket:
+    enabled: true
+    name: "default-nemo"
+  region: "us-east-1"
+
+# Lakekeeper (external Helm chart dependency)
+lakekeeper:
+  enabled: true
+  fullnameOverride: "lakekeeper"
+  # Run db-migration as a regular Job (concurrent with deployment) rather than a
+  # post-install Helm hook. With helmWait=false (upstream default), the migration
+  # is post-install and Helm's --wait blocks on the deployment which itself blocks
+  # on check-db waiting for migration → deadlock. Setting helmWait=true makes the
+  # migration Job a regular resource that runs concurrently so check-db resolves.
+  helmWait: true
+  postgresql:
+    enabled: false
+  externalDatabase:
+    type: postgres
+    host_read: "shared-postgresql.database.svc.cluster.local"
+    host_write: "shared-postgresql.database.svc.cluster.local"
+    port: 5432
+    database: lakekeeper
+    user: postgres
+    password: "agentstudio-postgres-password"
+    userSecret: "shared-postgresql-secret"
+    userSecretKey: "postgres"
+    passwordSecret: "shared-postgresql-secret"
+    passwordSecretKey: "postgres-password"
+    encryptionKeySecret: "lakekeeper-postgres-encryption"
+    encryptionKeySecretKey: "encryptionKey"
+  auth:
+    oauth2:
+      providerUri: "http://keycloak.agentstudio-identity.svc.cluster.local:8080/realms/nemo"
+      additionalIssuers: ["https://auth.agentstudio.local:8443/realms/nemo"]
+  catalog:
+    # Pod-template annotations on the main lakekeeper catalog Deployment.
+    # Same rationale as `dbMigrations.podAnnotations` below: the chart's
+    # built-in `check-db` initContainer connects to shared-postgresql, which
+    # lives in a STRICT-mTLS namespace. Without native sidecar mode, the
+    # init container runs before Istio's iptables interception is set up
+    # and postgres's sidecar rejects the plaintext TCP with RST.
+    #
+    # `sidecar.istio.io/nativeSidecar: "true"` flips istio-proxy from a
+    # regular container to a k8s native sidecar (initContainer with
+    # restartPolicy=Always), so it's serving mTLS before check-db runs.
+    podAnnotations:
+      sidecar.istio.io/nativeSidecar: "true"
+    extraInitContainers:
+      - name: wait-for-keycloak-oidc
+        env:
+          - name: KEYCLOAK_K8S_NAMESPACE
+            value: "agentstudio-identity"
+        image: init-tools:latest
+        command:
+          - /bin/sh
+          - -c
+          - |
+            NS="${KEYCLOAK_K8S_NAMESPACE:-agentstudio-identity}"
+            KEYCLOAK_URL="http://keycloak.${NS}.svc.cluster.local:8080/realms/nemo/.well-known/openid-configuration"
+            echo "Waiting for Keycloak OpenID discovery at ${KEYCLOAK_URL}"
+            max=40; n=0
+            until [ "$n" -ge "$max" ]; do
+              if curl -sf -o /dev/null --max-time 5 "${KEYCLOAK_URL}"; then
+                echo "Keycloak OpenID discovery is ready."; exit 0
+              fi
+              n=$((n+1))
+              echo "Attempt $n/$max: Keycloak not ready, retrying in 3s..."; sleep 3
+            done
+            echo "Timeout: Keycloak OpenID discovery did not become ready."; exit 1
+    dbMigrations:
+      annotations:
+        "helm.sh/hook-delete-policy": "before-hook-creation,hook-succeeded"
+      # Pod-template annotations on the migration Job's pod.
+      # `sidecar.istio.io/nativeSidecar: "true"` opts into Istio native
+      # sidecar containers (k8s 1.28+, Istio 1.20+). istio-proxy is
+      # injected as an initContainer with restartPolicy=Always, so it's
+      # already running mTLS by the time the upstream chart's `check-db`
+      # initContainer makes its first connection to shared-postgresql
+      # (which is in a STRICT-mTLS namespace). Without this, check-db's
+      # outbound TCP arrives at postgres without a SPIFFE cert and
+      # postgres's sidecar rejects with TCP RST — surfacing on the
+      # client as "Connection reset by peer (os error 104)", which we
+      # actually hit on sks6316 (100x retries). Native sidecar also
+      # auto-exits when migration completes, so the Job reaches
+      # Succeeded without a lifecycle hang.
+      podAnnotations:
+        sidecar.istio.io/nativeSidecar: "true"
+    extraEnv:
+      - name: LAKEKEEPER__PG_DATABASE_URL_READ
+        value: "postgres://postgres:agentstudio-postgres-password@shared-postgresql.database.svc.cluster.local:5432/lakekeeper"
+      - name: LAKEKEEPER__PG_DATABASE_URL_WRITE
+        value: "postgres://postgres:agentstudio-postgres-password@shared-postgresql.database.svc.cluster.local:5432/lakekeeper"
+      - name: LAKEKEEPER__PG_READ_POOL_CONNECTIONS
+        value: "5"
+      - name: LAKEKEEPER__PG_WRITE_POOL_CONNECTIONS
+        value: "3"
+      - name: LAKEKEEPER__BASE_URI
+        value: "http://lakekeeper:8181"
+      - name: LAKEKEEPER__UI__LAKEKEEPER_URL
+        value: "https://catalog.agentstudio.local:8443"
+      - name: LAKEKEEPER__OPENID_PROVIDER_URI
+        value: "http://keycloak.agentstudio-identity.svc.cluster.local:8080/realms/nemo"
+      - name: LAKEKEEPER__OPENID_CLIENT_ID
+        valueFrom:
+          secretKeyRef:
+            name: keycloak-oidc-secrets
+            key: lakekeeper-client-id
+      - name: LAKEKEEPER__OPENID_CLIENT_SECRET
+        valueFrom:
+          secretKeyRef:
+            name: keycloak-oidc-secrets
+            key: lakekeeper-client-secret
+      - name: LAKEKEEPER__UI__OPENID_CLIENT_ID
+        valueFrom:
+          secretKeyRef:
+            name: keycloak-oidc-secrets
+            key: lakekeeper-ui-client-id
+      - name: LAKEKEEPER__UI__OPENID_PROVIDER_URI
+        value: "https://auth.agentstudio.local:8443/realms/nemo"
+      - name: LAKEKEEPER__UI__OPENID_SCOPE
+        value: "openid profile email"
+      - name: LAKEKEEPER__OPENID_ADDITIONAL_ISSUERS
+        value: "https://auth.agentstudio.local:8443/realms/nemo"
+  service:
+    type: ClusterIP
+    port: 8181
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 2Gi
+    requests:
+      cpu: 500m
+      memory: 1Gi

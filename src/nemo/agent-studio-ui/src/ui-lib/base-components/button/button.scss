@@ -1,0 +1,205 @@
+// Base button — shared across all variants
+// Figma: corner-radius/50=2px, space/100=8px, space/300=24px, font 14px/590w/24lh
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 1px solid transparent;
+  border-radius: 2px;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 24px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 150ms ease, border-color 150ms ease, color 150ms ease;
+  outline: none;
+  user-select: none;
+  position: relative;
+  flex-shrink: 0;
+
+  &:focus-visible {
+    box-shadow: 0 0 0 3px color-mix(in oklch, var(--border-focus-outline) 50%, transparent);
+  }
+
+  &:active:not(:disabled) {
+    transform: translateY(1px);
+  }
+
+  &:disabled {
+    pointer-events: none;
+  }
+
+  & svg {
+    flex-shrink: 0;
+  }
+}
+
+.btn-spinner .spinner__circle {
+  stroke: var(--button-primary-disabled);
+}
+
+// Icon wrapper
+.btn-icon {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+// ---- Variants ----
+
+// Solid — Figma: bg=--button/primary-bg, text=--text/reversed
+// Hover: bg=--button/primary-bg-hover
+// Disabled: bg=--button/primary-bg-disabled, text=--button/primary-disabled
+.btn-variant-solid {
+  min-width: 152px;
+  background-color: var(--button-primary-bg);
+  color: var(--text-reversed);
+
+  &:hover:not(:disabled) {
+    background-color: var(--button-primary-hover-bg);
+  }
+
+  &:disabled {
+    background-color: var(--button-primary-bg-disabled);
+    color: var(--button-primary-disabled);
+  }
+}
+
+// Solid Destructive — Figma: bg=--button/destructive-bg, text=--text/reversed
+// Hover: bg=--button/destructive-hover-bg
+// Disabled: same as solid disabled
+.btn-variant-solid-destructive {
+  min-width: 152px;
+  background-color: var(--button-destructive-bg);
+  color: var(--text-reversed);
+
+  &:hover:not(:disabled) {
+    background-color: var(--button-destructive-hover-bg);
+  }
+
+  &:disabled {
+    background-color: var(--button-primary-bg-disabled);
+    color: var(--button-primary-disabled);
+  }
+}
+
+// Outline — Figma: bg=--background/content, border=--button/secondary, text=--button/secondary
+// Hover: border+text=--button/secondary-hover, bg=--background/hover
+// Disabled: border+text=--button/secondary-disabled
+.btn-variant-outline {
+  min-width: 152px;
+  background-color: var(--background-content);
+  border-color: var(--button-secondary);
+  color: var(--button-secondary);
+
+  &:hover:not(:disabled) {
+    background-color: var(--background-hover);
+    border-color: var(--button-secondary-hover);
+    color: var(--button-secondary-hover);
+  }
+
+  &:disabled {
+    border-color: var(--button-secondary-disabled);
+    color: var(--button-secondary-disabled);
+  }
+}
+
+// Flat — no bg, no border; only text color changes on hover
+.btn-variant-flat {
+  background-color: transparent;
+  color: var(--button-secondary);
+
+  &:hover:not(:disabled) {
+    color: var(--button-secondary-hover);
+  }
+
+  &:disabled {
+    color: var(--button-secondary-disabled);
+  }
+}
+
+// Icon — square, icon only; only icon color changes on hover
+.btn-variant-icon {
+  background-color: transparent;
+  color: var(--button-secondary);
+
+  &:hover:not(:disabled) {
+    color: var(--button-secondary-hover);
+  }
+
+  &:disabled {
+    color: var(--button-secondary-disabled);
+  }
+}
+
+// ---- Sizes ----
+
+// Large: h=40px, px=24px, py=8px, icon in labeled=16px, icon in icon-only=24px
+// Figma: space/100=8px, space/300=24px
+.btn-size-large {
+  height: 40px;
+  padding: 8px 24px;
+
+  & .btn-icon svg {
+    width: 16px;
+    height: 16px;
+  }
+
+  // Icon-only variant overrides to square
+  &.btn-variant-icon {
+    width: 40px;
+    padding: 8px;
+    min-width: unset;
+
+    & .btn-icon svg {
+      width: 24px;
+      height: 24px;
+    }
+  }
+}
+
+// Medium: h=32px, px=16px, py=4px, icon in labeled=16px, icon in icon-only=20px
+.btn-size-medium {
+  height: 32px;
+  padding: 4px 16px;
+
+  & .btn-icon svg {
+    width: 16px;
+    height: 16px;
+  }
+
+  &.btn-variant-icon {
+    width: 32px;
+    padding: 6px;
+    min-width: unset;
+
+    & .btn-icon svg {
+      width: 20px;
+      height: 20px;
+    }
+  }
+}
+
+// Small: h=24px, px=12px, py=0, icon in labeled=14px, icon in icon-only=16px
+.btn-size-small {
+  height: 24px;
+  padding: 0 12px;
+  font-size: 12px;
+
+  & .btn-icon svg {
+    width: 14px;
+    height: 14px;
+  }
+
+  &.btn-variant-icon {
+    width: 24px;
+    padding: 4px;
+    min-width: unset;
+
+    & .btn-icon svg {
+      width: 16px;
+      height: 16px;
+    }
+  }
+}

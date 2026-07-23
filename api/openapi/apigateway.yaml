@@ -1,0 +1,147 @@
+openapi: 3.0.3
+info:
+  title: AgentStudio API Gateway
+  description: S3-compatible API Gateway for regional deployments
+  version: 1.0.0
+servers:
+  - url: https://api.agentstudio.io
+    description: Production server
+  - url: http://localhost:8080
+    description: Local development server
+
+paths:
+  /{bucket}/{object}:
+    get:
+      summary: Get object
+      description: Retrieves an object from a bucket (S3 GET)
+      operationId: getObject
+      parameters:
+        - name: bucket
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: object
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Object content
+        '301':
+          description: Redirect to another deployment
+          headers:
+            Location:
+              schema:
+                type: string
+        '404':
+          description: Object not found
+    put:
+      summary: Put object
+      description: Uploads an object to a bucket (S3 PUT)
+      operationId: putObject
+      parameters:
+        - name: bucket
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: object
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+      responses:
+        '200':
+          description: Object uploaded successfully
+        '301':
+          description: Redirect to another deployment
+    delete:
+      summary: Delete object
+      description: Deletes an object from a bucket (S3 DELETE)
+      operationId: deleteObject
+      parameters:
+        - name: bucket
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: object
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Object deleted successfully
+        '301':
+          description: Redirect to another deployment
+
+  /{bucket}:
+    get:
+      summary: List objects
+      description: Lists objects in a bucket (S3 LIST)
+      operationId: listObjects
+      parameters:
+        - name: bucket
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: prefix
+          in: query
+          schema:
+            type: string
+        - name: marker
+          in: query
+          schema:
+            type: string
+        - name: max-keys
+          in: query
+          schema:
+            type: integer
+            default: 1000
+      responses:
+        '200':
+          description: List of objects
+        '301':
+          description: Redirect to another deployment
+
+  /health:
+    get:
+      summary: Health check
+      description: Returns the health status of the API Gateway
+      operationId: healthCheck
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: healthy
+                  timestamp:
+                    type: string
+                    format: date-time
+
+  /ready:
+    get:
+      summary: Readiness check
+      description: Returns the readiness status of the API Gateway
+      operationId: readinessCheck
+      responses:
+        '200':
+          description: Service is ready
+        '503':
+          description: Service is not ready
+

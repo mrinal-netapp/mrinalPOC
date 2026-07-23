@@ -1,0 +1,46 @@
+{{- /*
+ClusterIP Service exposing Keycloak HTTP (8080) and the management port
+(9000 -- KC 26 health/metrics endpoint).
+
+The API Gateway service in this repo reverse-proxies the public-facing
+`auth.*` host to this Service. Direct Ingress/Gateway resources are not
+created by this chart.
+*/}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "keycloak.fullname" . }}
+  labels:
+    {{- include "keycloak.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  selector:
+    {{- include "keycloak.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: http-api
+      port: {{ .Values.service.port }}
+      targetPort: http
+      protocol: TCP
+      appProtocol: http
+    {{- /*
+      Auxiliary port-80 alias for HTTP. In-cluster callers (e.g. Lakekeeper)
+      need a default-port URL because Keycloak's hostname-v2 provider with
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC=true STRIPS non-default ports from the
+      Host header when constructing backchannel URLs (jwks_uri, token_endpoint)
+      in the OIDC discovery doc. Result: a client that fetches discovery via
+      `keycloak.<ns>.svc:8080` gets back `http://keycloak.<ns>.svc/...` (no
+      port) and then fails to reach JWKS on port 80. Exposing port 80 here so
+      Lakekeeper can use `http://keycloak.<ns>.svc.cluster.local/realms/nemo`
+      directly — Host header carries no explicit port (80 is default for http),
+      KC returns URLs without port, and the JWKS fetch hits port 80 → pod 8080.
+    */}}
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP
+      appProtocol: http
+    - name: management
+      port: {{ .Values.service.managementPort }}
+      targetPort: management
+      protocol: TCP
+      appProtocol: tcp

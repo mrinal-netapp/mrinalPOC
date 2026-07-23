@@ -1,0 +1,125 @@
+enabled: true
+replicaCount: 1
+
+image:
+  repository: nemo/agent-service
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 8000
+  # metricsPort: dedicated Prometheus port served by the observability client lib.
+  # Must differ from the app port (8000). Set to 9090 to avoid conflict.
+  metricsPort: 9090
+
+resources:
+  limits:
+    cpu: 2000m
+    memory: 4Gi
+  requests:
+    cpu: 500m
+    memory: 1Gi
+
+# CONFIG_SERVICE_URL is set in deployment.yaml (FQDN to config-service in nemo.namespace).
+# Override with configServiceUrl if config-service runs elsewhere.
+configServiceUrl: ""
+
+# When true (e.g. redis.architecture: standalone), REDIS_SENTINEL_* entries in env are omitted.
+redisStandalone: false
+
+env:
+  - name: LLM_GATEWAY_URL
+    value: "http://bifrost-proxy:8080"
+  - name: KB_RETRIEVAL_SERVICE_URL
+    value: "http://kb-retrieval-service:5000"
+  - name: ANALYTICS_ENGINE_URL
+    value: "http://analytics-engine:5000"
+  # Phoenix REST API for span/trace queries (UI proxy). Points directly to Phoenix, not the collector.
+  - name: PHOENIX_API_URL
+    value: "http://phoenix.monitoring.svc.cluster.local:6006"
+  # Client lib Prometheus metrics port (must not conflict with app port 8000).
+  - name: AGENT_STUDIO_OBSERVABILITY_PROMETHEUS_METRICS_PORT
+    value: "9090"
+  # Write logs to stdout so the per-node DaemonSet collector can tail
+  # /var/log/pods and forward to Loki without any shared volume.
+  - name: AGENT_STUDIO_OBSERVABILITY_LOG_FILE_PATH
+    value: "/dev/stdout"
+  - name: AGENT_STUDIO_OBSERVABILITY_OTLP_LOGS_ENDPOINT
+    value: ""  # Injected from global.observability.otlpEndpoint at deploy time
+  # OTLP fallback when no AgentStudio project is in scope (e.g. startup). Per-request traces use URL project_id; REST proxy uses the same.
+  - name: PHOENIX_PROJECT_NAME
+    value: "default"
+  - name: REDIS_URL
+    value: "redis://redis-master.{{ .Values.global.platformNamespace | default \"agentstudio-platform\" }}.svc.cluster.local:6379/0"
+  - name: CONFIG_CACHE_TTL
+    value: "60"
+  - name: TASK_RESULT_TTL
+    value: "3600"
+  - name: SESSION_TTL
+    value: "86400"
+
+database:
+  host: "shared-postgresql.database.svc.cluster.local"
+  port: "5432"
+  name: "nemo"
+  user: "postgres"
+  password: "agentstudio-postgres-password"  # Dev default; use existingSecret for production
+  # Set existingSecret + existingSecretKey to source the password from a Secret
+  existingSecret: ""
+  existingSecretKey: "postgres-password"
+  poolSize: 3
+  maxOverflow: 2
+
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 8000
+  initialDelaySeconds: 15
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 3
+
+readinessProbe:
+  httpGet:
+    path: /ready
+    port: 8000
+  initialDelaySeconds: 10
+  periodSeconds: 5
+  timeoutSeconds: 3
+  failureThreshold: 3
+
+autoscaling:
+  enabled: true
+  minReplicas: 1
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+
+metrics:
+  path: /metrics
+  # port: scrape the dedicated Prometheus port served by the observability client lib.
+  port: metrics
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+
+namespace: ""
+serviceAccountName: ""
+podSecurityContext: {}
+securityContext: {}
+nodeSelector: {}
+affinity: {}
+tolerations: {}
+
+serviceAccount:
+  create: false
+  name: ""
+  azureClientId: ""
+
+workloadIdentity:
+  enabled: false
+
+# Global defaults for nil-safe sub-chart rendering; overridden by parent chart global.
+global:
+  observability:
+    otlpEndpoint: ""

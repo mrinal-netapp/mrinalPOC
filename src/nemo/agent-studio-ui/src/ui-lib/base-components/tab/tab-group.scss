@@ -1,0 +1,79 @@
+.tab-group {
+  display: flex;
+  width: 100%;
+  font-family: var(--font-family);
+}
+
+// orientation
+.tab-group--horizontal {
+  flex-direction: column;
+}
+
+.tab-group--vertical {
+  flex-direction: row;
+}
+
+// ===== Tab list =====
+.tab-group__list {
+  display: flex;
+  position: relative;
+  align-items: stretch;
+}
+
+.tab-group--horizontal .tab-group__list {
+  flex-direction: row;
+}
+
+.tab-group--vertical .tab-group__list {
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+// general variant: bottom border spans the full tabgroup width
+.tab-group__list--general {
+  border-bottom: 1px solid var(--border-main);
+}
+
+// card variant: no bottom border on the list, empty area is transparent
+.tab-group__list--card {
+  background: transparent;
+}
+
+// ===== Indicator (animated underline) =====
+.tab-group__indicator {
+  position: absolute;
+  background-color: var(--text-button-primary);
+  transition: all 0.2s ease;
+}
+
+// horizontal indicator: bottom line
+.tab-group--horizontal .tab-group__indicator {
+  bottom: 0;
+  left: var(--active-tab-left);
+  width: var(--active-tab-width);
+  height: 2px;
+}
+
+// vertical indicator: side line
+.tab-group--vertical .tab-group__indicator {
+  top: var(--active-tab-top);
+  height: var(--active-tab-height);
+  width: 2px;
+}
+
+// indicator handles the active underline — make individual tab borders transparent
+.tab-group--general .tab {
+  border-bottom-color: transparent;
+}
+
+// card: only the active tab's border is transparent (indicator handles it);
+// inactive tabs keep their 1px bottom border
+.tab-group--card .tab[data-active] {
+  border-bottom-color: transparent;
+}
+
+// ===== Tab content panel =====
+.tab-content {
+  outline: none;
+  padding: 16px 0;
+}

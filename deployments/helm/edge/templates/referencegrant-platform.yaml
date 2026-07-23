@@ -1,0 +1,21 @@
+{{- /*
+ReferenceGrant in agentstudio-platform that allows HTTPRoutes in
+agentstudio-edge to reference `lakekeeper` and `temporal-ui`.
+*/ -}}
+{{- if and .Values.gateway.enabled (eq (.Values.gateway.provider | default "nginx") "istio") -}}
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: ReferenceGrant
+metadata:
+  name: edge-to-platform
+  namespace: {{ include "nemo.platformNamespace" . }}
+  labels:
+    {{- include "edge.labels" . | nindent 4 }}
+spec:
+  from:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      namespace: {{ include "nemo.namespace" . }}
+  to:
+    - group: ""
+      kind: Service
+{{- end }}

@@ -1,0 +1,125 @@
+# GKE overlay for the WORKERS tier.
+#
+# GCNV-native Trident NAS (RWX) for the s3gateway PVCs; default cluster RWO class
+# for everything else in this tier.
+#
+# Why the s3gateway PVCs need RWX:
+#   In agentstudio-workers the s3gateway default-bucket PVC is mounted
+#   simultaneously by s3gateway itself plus connector-worker, dataset-worker and
+#   kb-worker (4 pods). ReadWriteOnce (the workers default) cannot satisfy that,
+#   so the bucket must be ReadWriteMany on an RWX-capable class (Filestore).
+#
+# Why all three s3gateway PVCs land on the NAS RWX class (not just the bucket):
+#   The subchart drives defaultBucket / metadata / pvcsBase from a single
+#   storage.accessMode knob. Setting it to ReadWriteMany forces all three to RWX,
+#   which a GKE PD RWO class cannot provision ("infeasible volume capabilities"),
+#   so each is pinned to the RWX NAS class. metadata/pvcsBase are tiny and
+#   s3gateway-only; a future subchart change giving per-PVC accessMode would let
+#   them drop back to RWO PD. (Standard-tier Filestore rounds each share up to
+#   1 TiB regardless of request size -- accepted cost for RWX.)
+#
+# Why global.storageClass is intentionally left unset:
+#   Letting it fall through to the cluster default (standard-rwo) keeps small RWO
+#   worker PVCs off Filestore's 1 TiB minimum. Only s3gateway is pinned to RWX.
+#
+# Prerequisites (one-time per cluster) and StorageClass creation are handled by
+# `make gke-ensure-storage-ready` (auto-run from the GKE deploy path).
+#
+# Workload Identity stays OFF (the base values.yaml default); the AKS overlay is
+# what turns it on. GKE Workload Identity is a planned follow-up.
+#
+# Why s3gateway + every pod that mounts its PVC need the SAN nodeSelector/toleration:
+#   Trident's GCNV driver only publishes an accessible_topology segment for
+#   csi.trident.netapp.io on the Ubuntu-based SAN node pool (san-ubuntu-pool);
+#   the default `general` pool runs COS, which Trident never advertises
+#   topology for. gcnv-nas-rwx uses WaitForFirstConsumer (see gcnv-nas-sc.yaml.tpl),
+#   so whichever node the scheduler tentatively places the FIRST pod referencing
+#   the PVC on becomes the topology hint Trident's provisioner uses. Left
+#   unconstrained, the scheduler defaults to a `general`/COS node and
+#   provisioning fails outright: "error generating accessibility requirements:
+#   no topology key found for node <cos-node>" (reproduced on
+#   gke-agentstudio-preprod — blocked the whole workers Helm release in
+#   pending-install). Pin every pod that mounts the shared bucket PVC
+#   (s3gateway itself, plus connector/dataset/eval/kb-worker, which all
+#   co-mount it) to the SAN pool so a valid topology hint is always available.
+#   Mirrors database/values-gke.yaml's shared-postgresql SAN pinning.
+_sanNodeSelector: &sanNodeSelector
+  agentstudio.netapp.io/san: "true"
+_sanTolerations: &sanTolerations
+  - key: "agentstudio.netapp.io/san"
+    operator: "Equal"
+    value: "true"
+    effect: "NoSchedule"
+
+s3gateway:
+  storage:
+    # RWX so s3gateway + connector/dataset/kb-worker can co-mount the bucket.
+    accessMode: ReadWriteMany
+  # Pin each PVC to the cluster-specific GCNV NAS RWX class so the subchart's
+  # "fall through to global.storageClass" branch is bypassed.
+  defaultBucket:
+    storageClass: gcnv-nas-rwx
+    # Keep the historical 1Ti request so Helm does not try to shrink an
+    # existing workers PVC on upgrade (PVC storage requests can only grow,
+    # never shrink). Also matches services/values-gke.yaml's
+    # defaultBucketPvc.size, which shares this same underlying GCNV volume.
+    size: 1Ti
+    # Authorize the services namespace to bind (Trident shareFromPVC) to this
+    # SAME GCNV volume, so kb-retrieval-service & artifact-service read the KB
+    # indexes kb-worker publishes here. Paired with services/values-gke.yaml
+    # defaultBucketPvc.shareFromPVC (which also emits the TridentVolumeReference).
+    shareToNamespaces:
+      - agentstudio-services
+  metadata:
+    storageClass: gcnv-nas-rwx
+    # Match values-aks.yaml's metadata size so the metadata PVC's requested
+    # capacity is consistent across clouds (avoids the same immutable-shrink
+    # risk as defaultBucket above if this ever needs bumping later).
+    size: 50Gi
+  pvcsBase:
+    storageClass: gcnv-nas-rwx
+  nodeSelector: *sanNodeSelector
+  tolerations: *sanTolerations
+
+# Dedicated ServiceAccounts for the worker pods (mirrors services/values-gke.yaml
+# and the AKS overlay). The base chart defaults serviceAccount.create=false, so
+# without these the pods run as the namespace `default` SA — which trips the
+# mesh's `admissionPolicies.denyDefaultServiceAccount` guardrail and gives every
+# worker the same shared SPIFFE identity. AKS gets named SAs for free via Azure
+# Workload Identity; on GKE we create them explicitly (no WI/azureClientId — only
+# the SPIFFE identity matters). SA name defaults to each worker's fullname.
+#
+# nodeSelector/tolerations here pin these workers to the SAN pool for the same
+# GCNV topology reason as s3gateway above (see the block comment at the top of
+# this file) — they all co-mount the s3gateway-default-bucket PVC.
+dataset-worker:
+  serviceAccount:
+    create: true
+  nodeSelector: *sanNodeSelector
+  tolerations: *sanTolerations
+
+kb-worker:
+  serviceAccount:
+    create: true
+  nodeSelector: *sanNodeSelector
+  tolerations: *sanTolerations
+
+connector-worker:
+  serviceAccount:
+    create: true
+  nodeSelector: *sanNodeSelector
+  tolerations: *sanTolerations
+# eval-worker needs its own ServiceAccount so it presents a stable SPIFFE
+# identity to the mesh `allow-services-to-bifrost` AuthorizationPolicy
+# (istio-mesh-policies) instead of the namespace `default` SA, which that
+# allow-list rejects with 403 RBAC: access denied (LLM-as-judge calls to
+# Bifrost fail). The SA name MUST be `workers-eval` to match the policy
+# principal (cluster.local/ns/agentstudio-workers/sa/workers-eval). Cloud
+# Workload Identity stays OFF (GKE WI is a planned follow-up, per the note
+# above); this is mesh identity only.
+eval-worker:
+  serviceAccount:
+    create: true
+    name: workers-eval
+  nodeSelector: *sanNodeSelector
+  tolerations: *sanTolerations

@@ -1,0 +1,128 @@
+{{- if .Values.samples.enabled }}
+---
+# Sample mesh-test namespace with frontend/backend pods.
+# Use to validate mTLS and AuthorizationPolicy before rolling out to app namespaces.
+# Enable with: --set samples.enabled=true
+# Clean up with: kubectl delete namespace mesh-test
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: mesh-test
+  labels:
+    istio-injection: enabled
+    {{- include "istio-mesh-policies.labels" . | nindent 4 }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: frontend
+  namespace: mesh-test
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: backend
+  namespace: mesh-test
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  namespace: mesh-test
+  labels:
+    app: backend
+    version: v1
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: backend
+  template:
+    metadata:
+      labels:
+        app: backend
+        version: v1
+    spec:
+      serviceAccountName: backend
+      containers:
+        - name: backend
+          image: hashicorp/http-echo:1.0.0
+          args:
+            - -listen=:8080
+            - -text=backend-ok
+          ports:
+            - name: http
+              containerPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend
+  namespace: mesh-test
+spec:
+  selector:
+    app: backend
+  ports:
+    - name: http-api
+      protocol: TCP
+      appProtocol: http
+      port: 8080
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  namespace: mesh-test
+  labels:
+    app: frontend
+    version: v1
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: frontend
+  template:
+    metadata:
+      labels:
+        app: frontend
+        version: v1
+    spec:
+      serviceAccountName: frontend
+      containers:
+        - name: frontend
+          image: curlimages/curl:8.9.1
+          command:
+            - /bin/sh
+            - -c
+            - sleep 360000
+---
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
+metadata:
+  name: default
+  namespace: mesh-test
+  labels:
+    {{- include "istio-mesh-policies.labels" . | nindent 4 }}
+spec:
+  mtls:
+    mode: PERMISSIVE
+---
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: backend-allow-frontend
+  namespace: mesh-test
+  labels:
+    {{- include "istio-mesh-policies.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      app: backend
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            principals:
+              - cluster.local/ns/mesh-test/sa/frontend
+{{- end }}

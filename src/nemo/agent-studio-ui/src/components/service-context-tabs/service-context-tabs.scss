@@ -1,0 +1,80 @@
+.service-context-tabs {
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--border-drop-shadow);
+  background-color: var(--shell-main-nav-bg);
+
+  .tab-group {
+    width: 100%;
+  }
+
+  .tab-group--vertical {
+    flex-direction: column;
+  }
+
+  .tab-group__list--general {
+    width: 100%;
+    border-bottom: 0;
+  }
+
+  .tab-group--vertical .tab-group__list {
+    align-items: stretch;
+    width: 100%;
+  }
+
+  .tab-group--vertical .tab-group__indicator {
+    display: none;
+  }
+
+  .tab-group--vertical .tab-variant-general {
+    position: relative;
+    display: flex;
+    width: 100%;
+    height: 48px;
+    padding: 0 24px;
+    border-bottom: 0;
+    justify-content: flex-start;
+
+    .tab__content {
+      justify-content: flex-start;
+    }
+
+    .tab__label {
+      text-align: left;
+      font-size: 14px;
+      font-weight: 600;
+    }
+
+    &:hover:not([data-disabled]) {
+      background-color: var(--shell-main-nav-bg-hover);
+    }
+
+    &[data-active] {
+      background-color: var(--shell-main-nav-bg-selected);
+      border-bottom-color: transparent;
+
+      .tab__icon,
+      .tab__label {
+        color: var(--shell-main-nav-icon-text-selected);
+      }
+
+      &::before {
+        content: "";
+        position: absolute;
+        left: 0;
+        top: 0;
+        bottom: 0;
+        width: 8px;
+        background-color: var(--shell-main-nav-icon-text-selected);
+      }
+    }
+
+    &[data-active]:hover:not([data-disabled]) {
+      background-color: var(--shell-main-nav-bg-hover);
+
+      .tab__icon,
+      .tab__label {
+        color: var(--shell-main-nav-icon-text-selected);
+      }
+    }
+  }
+}

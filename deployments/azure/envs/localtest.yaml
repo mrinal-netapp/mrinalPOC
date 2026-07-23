@@ -1,0 +1,110 @@
+# localtest.yaml -- throwaway environment for exercising `make infra` end-to-end.
+#
+#   make infra CLOUD=azure ENV=localtest ACTION=plan      # safe, read-only what-if
+#   make infra CLOUD=azure ENV=localtest ACTION=apply    # provisions REAL resources ($$)
+#   make infra CLOUD=azure ENV=localtest ACTION=destroy CONFIRM=localtest
+#
+# Fill subscriptionId + tenantId below with your localtest subscription. These are
+# identifiers, not secrets, but if you'd rather not commit them keep this file
+# local (it's resolved from disk; it does not have to be committed to run).
+#
+# WARNING: ACTION=apply stands up an AKS cluster + a 2 TiB ANF pool (Azure minimum; 1 TiB
+# is rejected) + ACR + Key Vault -- ANF in particular is costly. Use ACTION=plan to
+# whole path (auth + template build + parameter transform) for free, and only
+# run apply when you actually want live resources. Names marked "globally
+# unique" (registryName, keyVaultName) must not collide with anything existing.
+
+# ---- Runner-only keys ----
+env: localtest
+subscriptionId: "ae26acbb-72f9-440e-822f-b13ef3e4fec1"
+resourceGroup: rg-agentstudio-localtest-eus2-001
+stackName: agentstudio-localtest
+# deleteResources so a localtest teardown removes what the stack created.
+actionOnUnmanage: deleteResources
+endpoint: agentstudio.local
+
+# ---- main.bicep parameters ----
+location: eastus2
+tenantId: "8e21f23a-10b9-46fb-9d50-720ef604be98"
+
+networking:
+  vnetName: vnet-agentstudio-localtest-eus2
+  vnetAddressPrefix: 10.0.0.0/16
+  aksSubnetName: snet-aks
+  aksSubnetPrefix: 10.0.0.0/22
+  ilbSubnetName: snet-ilb
+  ilbSubnetPrefix: 10.0.4.0/24
+  anfSubnetName: snet-anf
+  anfSubnetPrefix: 10.0.8.0/24
+
+aks:
+  clusterName: aks-agentstudio-localtest-eus2
+  kubernetesVersion: "1.35"
+  dnsPrefix: agentstudio-localtest
+  nodePools:
+    - name: nodepool1
+      mode: System
+      vmSize: Standard_D4s_v5
+      count: 2
+      enableAutoScaling: true
+      minCount: 2
+      maxCount: 4
+      osDiskSizeGB: 0
+  autoUpgradeProfile:
+    upgradeChannel: none
+    nodeOSUpgradeChannel: NodeImage
+  autoScalerProfile: {}
+
+anf:
+  anfAccountName: anfagentstudiolocaltesteus2
+  pools:
+    - name: pool1
+      serviceLevel: Standard
+      sizeTiB: 2
+      qosType: Auto
+      coolAccessEnabled: false
+
+containerRegistry:
+  registryName: cragentstudiolocaltesteus2001
+  sku: Standard
+  adminUserEnabled: false
+  zoneRedundancyEnabled: false
+
+keyVault:
+  keyVaultName: kv-as-localtest-eus2-01
+  purgeProtectionEnabled: false
+  softDeleteRetentionInDays: 7
+
+# Keycloak Azure bootstrap (make aks-keycloak-provision). CI reads uamiName;
+# Entra broker (make aks-keycloak-entra-register) stays manual.
+keycloak:
+  uamiName: id-agentstudio-localtest-keycloak
+
+workloadIdentity:
+  uamiNamePrefix: id-agentstudio-localtest-
+  services:
+    - { name: agent-service,        namespace: agentstudio-services,    resources: [] }
+    - { name: apigateway-service,   namespace: agentstudio-services,    resources: [] }
+    - { name: config-service,       namespace: agentstudio-services,    resources: [] }
+    - { name: storage-manager,      namespace: agentstudio-services,    resources: [] }
+    - { name: workflow-engine,      namespace: agentstudio-services,    resources: [] }
+    - { name: kb-retrieval-service, namespace: agentstudio-services,    resources: [] }
+    - { name: analytics-engine,     namespace: agentstudio-services,    resources: [] }
+    - { name: analytics-mcp-server, namespace: agentstudio-services,    resources: [] }
+    - { name: artifact-service,     namespace: agentstudio-services,    resources: [] }
+    - { name: gui,                  namespace: agentstudio-edge,        resources: [] }
+    - { name: dataset-worker,       namespace: agentstudio-workers,     resources: [] }
+    - { name: kb-worker,            namespace: agentstudio-workers,     resources: [] }
+    - { name: connector-worker,     namespace: agentstudio-workers,     resources: [] }
+    - { name: bifrost,              namespace: agentstudio-llm-gateway, resources: [] }
+    - { name: temporal,             namespace: agentstudio-platform,    resources: [] }
+    - { name: s3gateway,            namespace: agentstudio-platform,    resources: [] }
+
+storage:
+  trident:
+    helmVersion: "100.2410.0"
+    namespace: trident
+  anf:
+    backendName: anf-backend-nfs
+    storageClassName: anf-nfs
+    exportRule: auto

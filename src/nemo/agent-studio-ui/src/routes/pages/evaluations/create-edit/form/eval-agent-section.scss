@@ -1,0 +1,53 @@
+@use "@/styles/mixins" as *;
+
+.eval-agent-properties {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 16px 0 0;
+  max-width: 616px;
+  width: 100%;
+
+  &__row {
+    display: flex;
+    align-items: flex-start;
+    gap: 16px;
+  }
+
+  &__label {
+    flex-shrink: 0;
+    width: 140px;
+    text-align: left;
+  }
+
+  &__value {
+    flex: 1;
+    min-width: 0;
+    margin: 0;
+    text-align: left;
+  }
+
+  @include mobile {
+    &__row {
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    &__label {
+      width: auto;
+    }
+  }
+}
+
+.eval-agent-section__option {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.eval-agent-section__option-icon {
+  flex-shrink: 0;
+  color: var(--text-secondary);
+}

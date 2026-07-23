@@ -1,0 +1,115 @@
+.dialog-demo {
+  padding: 32px;
+  font-family: var(--font-family);
+  color: var(--text-primary);
+  min-height: 100vh;
+}
+
+.dialog-demo__title {
+  font-size: 24px;
+  font-weight: 600;
+  margin: 0 0 32px;
+  color: var(--text-title);
+}
+
+.dialog-demo__section {
+  margin-bottom: 40px;
+}
+
+.dialog-demo__section-title {
+  font-size: 18px;
+  font-weight: 600;
+  margin: 0 0 8px;
+  color: var(--text-primary);
+}
+
+.dialog-demo__section-desc {
+  font-size: 14px;
+  color: var(--text-secondary);
+  margin: 0 0 16px;
+}
+
+.dialog-demo__row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.dialog-demo__state-label {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  padding: 8px 16px;
+  background: var(--background-content);
+  border: 1px solid var(--border-main);
+  border-radius: 4px;
+}
+
+// -- Form page demo --
+
+.dialog-demo__page-form {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  max-width: 640px;
+}
+
+.dialog-demo__form-row {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.dialog-demo__form-field {
+  flex: 1;
+  min-width: 240px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.dialog-demo__field-label {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.dialog-demo__role-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.dialog-demo__role-hint {
+  font-size: 13px;
+  color: var(--text-secondary);
+  font-style: italic;
+}
+
+.dialog-demo__role-select {
+  padding: 4px 0;
+}
+
+.dialog-demo__form-actions {
+  display: flex;
+  gap: 12px;
+  padding-top: 8px;
+}
+
+.dialog-demo__output {
+  margin-top: 24px;
+  padding: 16px;
+  background: var(--background-content);
+  border: 1px solid var(--border-main);
+  border-radius: 8px;
+}
+
+.dialog-demo__pre {
+  margin: 8px 0 0;
+  font-size: 13px;
+  font-family: monospace;
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  word-break: break-word;
+}

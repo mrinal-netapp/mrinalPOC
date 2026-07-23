@@ -1,0 +1,83 @@
+{{- /*
+X-Forwarded-Client-Cert (XFCC) injection ([B] in the mesh-identity design).
+
+One SIDECAR_INBOUND EnvoyFilter per authorizationPolicies.injectTargets workload.
+Each filter, on every inbound request to the target pod:
+
+  1. ALWAYS removes any client-supplied `x-forwarded-client-cert` header — so a
+     caller (browser, compromised peer, or an upstream hop) can never forge it;
+     and
+  2. re-injects `x-forwarded-client-cert` from the VERIFIED downstream mTLS peer
+     certificate URI SAN (the caller's SPIFFE id), emitted in the standard XFCC
+     key=value form `URI=spiffe://cluster.local/ns/<ns>/sa/<serviceaccount>`.
+     For plaintext connections (e.g. PERMISSIVE metrics scrape ports)
+     downstreamSslConnection() is nil, so the header is only stripped, never set.
+
+This mirrors Envoy's native `forward_client_cert_details` (SANITIZE_SET) output
+format so any consumer can parse it as standard XFCC (split on ';', read `URI=`).
+
+The companion AuthorizationPolicy allow-list ([A]) is what actually decides
+WHICH principals may reach the target; this filter only surfaces the verified
+identity to the app. Keeping the allow-list solely in [A] means a single source
+of truth.
+
+EnvoyFilter is alpha and has only ever been served at
+networking.istio.io/v1alpha3 (no stable v1) — mirrors edge
+envoyfilter-parity-headers-istio.yaml. Self-managed Istio places no restriction
+on EnvoyFilter; renders identically on AKS / GKE / EKS / kind.
+*/ -}}
+{{- $auth := .Values.authorizationPolicies | default dict -}}
+{{- if $auth.enabled }}
+{{- range $t := ($auth.injectTargets | default list) }}
+---
+apiVersion: networking.istio.io/v1alpha3
+kind: EnvoyFilter
+metadata:
+  name: xfcc-inject-{{ $t.name }}
+  namespace: {{ $t.namespace }}
+  labels:
+    {{- include "istio-mesh-policies.labels" $ | nindent 4 }}
+spec:
+  # Positive priority so this relative INSERT_BEFORE patch is processed AFTER
+  # Istio's default-priority filters are in place (the router anchor exists),
+  # making application deterministic across Istio upgrades (silences IST0151).
+  priority: 10
+  workloadSelector:
+    labels:
+      {{- range $k, $v := $t.selectorLabels }}
+      {{ $k }}: {{ $v }}
+      {{- end }}
+  configPatches:
+    - applyTo: HTTP_FILTER
+      match:
+        context: SIDECAR_INBOUND
+        listener:
+          filterChain:
+            filter:
+              name: envoy.filters.network.http_connection_manager
+              subFilter:
+                name: envoy.filters.http.router
+      patch:
+        operation: INSERT_BEFORE
+        value:
+          name: envoy.filters.http.lua
+          typed_config:
+            "@type": type.googleapis.com/envoy.extensions.filters.http.lua.v3.Lua
+            default_source_code:
+              inline_string: |
+                function envoy_on_request(handle)
+                  -- Strip any inbound value first: it is never trusted.
+                  handle:headers():remove("x-forwarded-client-cert")
+                  local ssl = handle:streamInfo():downstreamSslConnection()
+                  if ssl == nil then return end
+                  local sans = ssl:uriSanPeerCertificate()
+                  if sans ~= nil and #sans > 0 then
+                    -- First URI SAN is the caller's verified SPIFFE identity,
+                    -- e.g. spiffe://cluster.local/ns/<ns>/sa/<serviceaccount>.
+                    -- Emit in standard XFCC form so it parses like Envoy's own
+                    -- forward_client_cert_details output: URI=<spiffe>.
+                    handle:headers():add("x-forwarded-client-cert", "URI=" .. sans[1])
+                  end
+                end
+{{- end }}
+{{- end }}

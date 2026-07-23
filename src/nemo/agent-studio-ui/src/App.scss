@@ -1,0 +1,33 @@
+.app-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+}
+
+// Spacer that accounts for the fixed top bar
+.app-topbar-spacer {
+  height: var(--topbar-height);
+  flex-shrink: 0;
+}
+
+// Horizontal flex: sidebar + main content
+.app-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+// Main content area — fills remaining width after sidebar
+.app-main-content {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  padding: 24px 32px;
+  background-color: var(--background-main);
+
+  &--projects {
+    padding: 0;
+    overflow: hidden;
+  }
+}

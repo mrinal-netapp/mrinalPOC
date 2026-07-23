@@ -1,0 +1,65 @@
+# Example Trident backend config for ONTAP (on-prem) and FSx for NetApp ONTAP (FSxN).
+# Copy to trident-backends.yaml and set CONFIG_FILE to it. Do NOT commit real credentials.
+#
+# Usage:
+#   export ONTAP_USERNAME=vsadmin
+#   export ONTAP_PASSWORD=your-password
+#   make configure-ontap-storage CONFIG_FILE=deployments/storage/trident-backends.yaml
+#
+# For FSxN backends using AWS Secrets Manager, set credentials.name to the ARN and
+# credentials.type to awsarn (no env vars needed for that backend).
+
+tridentNamespace: trident
+installTrident: true
+tridentHelmVersion: "100.2410.0"
+
+backends:
+  # On-prem ONTAP NAS
+  # Optional: aggregate limits provisioning to one aggregate; storageClass.storagePools
+  # limits which aggregates (or backends) the StorageClass can use (regex or comma-separated).
+  - name: ontap-nas-backend
+    type: ontap
+    storageDriverName: ontap-nas
+    managementLIF: 10.0.0.1
+    svm: my_svm
+    dataLIF: 10.0.0.2
+    credentialsFromEnv: true
+    # aggregate: aggr1              # optional: use this aggregate for this backend
+    storageClass:
+      name: ontap-nas
+      default: false
+      # storagePools: "aggr1"        # optional: restrict StorageClass to aggregate(s); regex supported
+
+  # On-prem ONTAP SAN
+  - name: ontap-san-backend
+    type: ontap
+    storageDriverName: ontap-san
+    managementLIF: 10.0.0.1
+    svm: my_svm
+    credentialsFromEnv: true
+    # aggregate: aggr1              # optional: use this aggregate for this backend
+    storageClass:
+      name: ontap-san
+      # storagePools: "aggr1|aggr2" # optional: restrict to aggregate(s); regex supported
+
+  # AWS FSx for NetApp ONTAP NAS (credentials in AWS Secrets Manager)
+  - name: fsxn-nas-backend
+    type: fsxn
+    storageDriverName: ontap-nas
+    fsxFilesystemID: fs-0123456789abcdef
+    svm: my_fsxn_svm
+    credentials:
+      type: awsarn
+      name: "arn:aws:secretsmanager:us-west-2:123456789012:secret:fsxn-svm-xxxxxx"
+    storageClass:
+      name: fsxn-nas
+
+  # AWS FSx for NetApp ONTAP NAS (credentials from env; script creates K8s Secret)
+  # - name: fsxn-nas-backend-env
+  #   type: fsxn
+  #   storageDriverName: ontap-nas
+  #   fsxFilesystemID: fs-0123456789abcdef
+  #   svm: my_fsxn_svm
+  #   credentialsFromEnv: true
+  #   storageClass:
+  #     name: fsxn-nas-env

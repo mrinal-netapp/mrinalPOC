@@ -1,0 +1,17 @@
+apiVersion: v2
+name: database
+description: A Helm chart for shared PostgreSQL database (Bitnami StatefulSet)
+type: application
+version: 0.2.0
+appVersion: "18.4.0"
+keywords:
+  - agentstudio
+  - postgresql
+  - database
+maintainers:
+  - name: AgentStudio Team
+
+dependencies:
+  - name: postgresql
+    version: "18.7.11"
+    repository: "https://charts.bitnami.com/bitnami"

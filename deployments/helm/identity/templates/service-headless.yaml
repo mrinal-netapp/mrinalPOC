@@ -1,0 +1,27 @@
+{{- /*
+Headless Service used by Infinispan / JGroups for peer discovery between
+Keycloak replicas.
+
+Keycloak's DNS_PING discovery (KC_CACHE_STACK=kubernetes) reads the env
+var jgroups.dns.query; we point it at this headless Service's DNS name.
+ClusterIP=None ensures every pod IP is returned via DNS A records.
+
+Required for the StatefulSet's replicas >= 2 to actually cluster.
+*/}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "keycloak.fullname" . }}-headless
+  labels:
+    {{- include "keycloak.labels" . | nindent 4 }}
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    {{- include "keycloak.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: jgroups
+      port: {{ .Values.serviceHeadless.port }}
+      targetPort: jgroups
+      protocol: TCP
+      appProtocol: tcp

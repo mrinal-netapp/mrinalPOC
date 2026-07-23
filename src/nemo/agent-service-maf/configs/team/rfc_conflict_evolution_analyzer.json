@@ -1,0 +1,162 @@
+{
+  "_schema_version": "2.1.0",
+  "project_id": "550e8400-e29b-41d4-a716-446655440000",
+  "_description": "RFC Conflict & Evolution Analyzer: timeline → diff → conflict_detector → synthesizer. Each tool-using agent calls the knowledgeBase function binding (REST KB endpoint via the kb_retrieve registered function). Answers questions like 'How has TLS authentication evolved?' or 'Do RFC X and RFC Y conflict?'",
+  "agent": {
+    "framework": "maf",
+    "model": "azure/gpt-4.1-mini",
+    "temperature": 0.3,
+    "max_tokens": 8192,
+    "timeout_seconds": 600,
+    "metadata": {
+      "project": "agent-studio",
+      "version": "1.0.0",
+      "environment": "development"
+    }
+  },
+  "tool_bindings": [
+    {
+      "name": "knowledgeBase",
+      "type": "function",
+      "function_ref": "kb_retrieve",
+      "description": "Search the IETF RFC knowledge base. Returns up to top_k chunks with chunkId, content, score, metadata.",
+      "tags": ["retrieval", "rfc"],
+      "params": {
+        "kbId": "e3c3b018-3294-4069-be8d-0e8efbed4733",
+        "projectId": "550e8400-e29b-41d4-a716-446655440000",
+        "topK": 5,
+        "similarityThreshold": 0.5,
+        "headers": {
+          "x-agent-studio-context": "eyJwcm9qZWN0X2lkIjoiNTUwZTg0MDAtZTI5Yi00MWQ0LWE3MTYtNDQ2NjU1NDQwMDAwIiwidXNlcl9pZCI6InVzZXJAdGVzdC5jb20ifQ=="
+        }
+      }
+    }
+  ],
+  "semantic_kernel": {
+    "agents": [
+      {
+        "name": "timeline_agent",
+        "instructions": "You are an RFC Timeline Agent specializing in IETF RFC relationships. Given a user query about an RFC topic or specific RFC numbers:\n\n1. Call `knowledgeBase-kb_retrieve` EXACTLY ONCE with the user's query as the `query` argument. Do NOT supply `kbId` or `projectId` — configuration pins those values. The tool returns up to top_k chunks. Do NOT call the tool a second time.\n2. From the returned chunks, extract obsoletes/updates/replaces relationships and any RFC numbers mentioned.\n3. Map the chain of relationships (e.g., RFC 2246 → RFC 4346 → RFC 5246 → RFC 8446 for TLS) using only the data returned in step 1.\n4. Note which RFCs are current (active) vs. historic (obsoleted) based on the chunk text.\n\nOutput a structured timeline as plain text after the tool call:\n- RFC number, title, date if available, status\n- Relationship type (obsoletes, updates, extends, see-also)\n- Key sections that changed across versions\n\nIf the data is incomplete, say so explicitly — but DO NOT make a second tool call. After the single tool call, ALWAYS produce a final text response.",
+        "description": "Finds RFC chains by querying the knowledgeBase function binding and maps obsoletes/updates/replaces relationships into a structured timeline",
+        "model": "azure/gpt-4.1-mini",
+        "temperature": 0.2,
+        "max_tokens": 8192,
+        "tools": [],
+        "tool_bindings": ["knowledgeBase"],
+        "function_choice_behavior": "auto"
+      },
+      {
+        "name": "diff_agent",
+        "instructions": "You are an RFC Diff Agent specializing in extracting precise changes between RFC versions. Given the timeline from the previous agent:\n\n1. Call `knowledgeBase-kb_retrieve` AT MOST ONCE if you need extra detail about a specific RFC mentioned in the timeline. Otherwise skip the tool entirely and reason from the timeline text. If you DO call the tool, supply only `query` (a focused query string for the specific RFC detail you need). Do NOT supply `kbId` or `projectId` — configuration pins those values.\n2. For each pair of successive RFCs, extract what changed using only data already in your context.\n3. Categorize changes as: security fix, protocol extension, deprecation, clarification, new feature, or breaking change.\n4. Note any MUST/SHOULD/MAY requirement-level changes (per RFC 2119 keywords) when visible.\n\nOutput a structured diff summary per version transition:\n- Source RFC → Target RFC\n- Change category\n- Affected sections (if known)\n- Requirement-level changes (e.g., SHOULD → MUST) when visible\n- Backward compatibility impact\n\nALWAYS produce a final text response. DO NOT make more than one tool call.",
+        "description": "Extracts precise changes between successive RFC versions by optionally querying the knowledgeBase function binding for section-level detail",
+        "model": "azure/gpt-4.1-mini",
+        "temperature": 0.2,
+        "max_tokens": 8192,
+        "tools": [],
+        "tool_bindings": ["knowledgeBase"],
+        "function_choice_behavior": "auto"
+      },
+      {
+        "name": "conflict_detector",
+        "instructions": "You are an RFC Conflict Detector specializing in identifying contradictions and tensions across concurrent or related RFCs. Given the timeline and diffs from the previous agents:\n\n1. Optionally call `knowledgeBase-kb_retrieve` AT MOST ONCE if a specific cross-reference query would surface a missed RFC. Otherwise reason from the existing context. If you DO call the tool, supply only `query` (a focused cross-reference query string). Do NOT supply `kbId` or `projectId` — configuration pins those values.\n2. Compare requirements across concurrent RFCs that address overlapping topics.\n3. Flag direct contradictions, implicit conflicts, ambiguities, requirement mismatches.\n4. Note any known resolution mechanisms (e.g., later RFC takes precedence, errata issued).\n\nOutput a conflict report:\n- Conflict ID (sequential numbering)\n- RFCs involved\n- Conflict type: direct_contradiction | implicit_conflict | ambiguity | requirement_mismatch\n- Severity: critical | major | minor\n- Resolution status: resolved (cite how) | unresolved | implementation-dependent\n\nIf no conflicts are found, explicitly state that the RFC chain is internally consistent. ALWAYS produce a final text response. DO NOT make more than one tool call.",
+        "description": "Flags contradictions, implicit conflicts, and ambiguities by optionally cross-referencing the knowledgeBase function binding for overlapping RFCs",
+        "model": "azure/gpt-4.1-mini",
+        "temperature": 0.1,
+        "max_tokens": 8192,
+        "tools": [],
+        "tool_bindings": ["knowledgeBase"],
+        "function_choice_behavior": "auto"
+      },
+      {
+        "name": "synthesizer",
+        "instructions": "You are an RFC Evolution Synthesizer. Given the timeline, diffs, and conflict analysis from the previous agents, build a cohesive evolution narrative:\n\n1. Start with a brief executive summary answering the user's original question.\n2. Tell the story of how the standard evolved — what problems each version solved.\n3. Integrate the conflict analysis briefly.\n4. End with a concise recommendation section.\n\nKeep the response under 1500 words. Use clear section headings. Cite RFC numbers throughout.",
+        "description": "Builds a cohesive evolution narrative combining timeline, diffs, and conflict analysis into actionable insight",
+        "model": "azure/gpt-5.4",
+        "temperature": 0.5,
+        "max_tokens": 4096,
+        "tools": [],
+        "tool_bindings": [],
+        "function_choice_behavior": "none"
+      }
+    ],
+    "orchestration": {
+      "type": "sequential",
+      "agent_order": [
+        "timeline_agent",
+        "diff_agent",
+        "conflict_detector",
+        "synthesizer"
+      ],
+      "max_rounds": 4,
+      "termination_strategy": {
+        "type": "default",
+        "maximum_iterations": 4,
+        "automatic_reset": false
+      }
+    },
+    "default_function_choice_behavior": "auto",
+    "chat_history_max_messages": 100,
+    "enable_telemetry": false,
+    "session_ttl_seconds": 3600
+  },
+  "gateway": {
+    "url": "http://host.docker.internal:4001/v1",
+    "api_key": "",
+    "default_model": "azure/gpt-4.1-mini",
+    "request_timeout_seconds": 120,
+    "retry_on_timeout": true,
+    "max_retries": 2
+  },
+  "guardrails": {
+    "enabled": true,
+    "fail_open": false,
+    "input_guardrails": [
+      {
+        "name": "input_validation",
+        "type": "validation",
+        "enabled": true,
+        "priority": 1,
+        "action_on_trigger": "block",
+        "message": "Input does not meet validation requirements.",
+        "config": {
+          "max_length": 10000,
+          "min_length": 5
+        }
+      }
+    ],
+    "output_guardrails": [
+      {
+        "name": "output_length",
+        "type": "validation",
+        "enabled": true,
+        "priority": 1,
+        "action_on_trigger": "truncate",
+        "message": null,
+        "config": {
+          "max_chars": 80000
+        }
+      }
+    ],
+    "tool_guardrails": {
+      "default_policy": {
+        "mode": "denylist",
+        "tools": [],
+        "max_calls_per_request": 30
+      }
+    }
+  },
+  "memory": {
+    "enabled": true,
+    "storage_backend": "memory",
+    "buffer_type": "sliding_window",
+    "ttl_seconds": 3600,
+    "max_history_length": 100,
+    "max_tokens_per_session": 0,
+    "max_chars_per_session": 0
+  },
+  "logging": {
+    "level": "INFO",
+    "format": "json",
+    "include_timestamp": true
+  }
+}

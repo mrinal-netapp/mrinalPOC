@@ -1,0 +1,654 @@
+# Reusable integration-test workflow — the single CI entry point.
+#
+# Runs the pytest + allure-pytest integration harness (tests/integration)
+# against an already-deployed AgentStudio environment by running the pinned
+# integration-test image from ACR: `docker run <ACR>/integration-tests:<tree-hash>
+# [selector]`, then publishes the Allure results (via
+# tests/integration/scripts/publish_allure.py) to the shared Allure service.
+#
+# All callers (build-common.yml dev fan-out, nightly-integration.yml,
+# release.yml, promote.yml, and the ephemeral KIND / vCluster gates) use this
+# one workflow; they differ only in the GitHub Environment they target and the
+# Allure project label they pass. See docs/testing/integration-cicd.md.
+#
+# ─── How the image is selected (content-hash self-pinning) ────────────────────
+# scripts/integration-image-tag.sh computes the git tree hash of tests/integration/.
+# integration-image-build.yml pushes <ACR>/integration-tests:<tree-hash>; this
+# workflow recomputes the SAME hash at the ref under test and runs exactly that
+# tag, so the image always matches the checked-out harness code. If the tag is
+# not yet in ACR (e.g. a branch whose harness change hasn't been built), it is
+# built + pushed on the runner (build-on-miss) so the run is never blocked.
+#
+# ─── How callers wire this in ─────────────────────────────────────────────────
+#   uses: ./.github/workflows/integration-tests-container.yml
+#   with:
+#     cloud_environment: dev          # GitHub Environment for vars/secrets
+#     allure_project:    dev-aks      # Allure project id (per environment)
+#     pytest_selector:   ""           # optional; default = full suite
+#     image_tag:         1.0.0-dev.7  # optional; recorded in the Allure report
+#   secrets: inherit
+#
+# The per-environment configuration contract (vars/secrets) is documented in
+# docs/testing/integration-cicd.md.
+# ACR auth reuses the same Azure OIDC managed identity as build-common.yml
+# (AcrPull to run, AcrPush for build-on-miss). Each targeted GitHub Environment
+# (dev, dev-gke, dev-eks, stage, prod, ephemeral) must expose ACR_REGISTRY +
+# AZURE_CLIENT_ID / AZURE_TENANT_ID / AZURE_SUBSCRIPTION_ID so the image pull
+# authenticates in every environment.
+
+name: Integration tests (container)
+
+on:
+  workflow_call:
+    inputs:
+      cloud_environment:
+        description: "GitHub Environment to read test config (vars/secrets) from (e.g. dev, dev-gke, stage, prod)"
+        required: true
+        type: string
+      allure_project:
+        description: "Allure project id results are published under (one per environment, e.g. dev-aks, stage, pr-123)"
+        required: true
+        type: string
+      pytest_selector:
+        description: "Extra pytest args / markers / suite path. Empty = full suite."
+        required: false
+        type: string
+        default: ""
+      image_tag:
+        description: "Image tag under test (recorded in the Allure report for traceability)."
+        required: false
+        type: string
+        default: ""
+      notify_on_failure:
+        description: "Post failure notifications when the suite fails. Active channels are determined by configured secrets (e.g. TEAMS_INTEGRATION_WEBHOOK_URL)."
+        required: false
+        type: boolean
+        default: false
+      notify_always:
+        description: "Post a notification on every run (pass or fail), not just on failure. Used by nightly runs. Active channels are determined by configured secrets."
+        required: false
+        type: boolean
+        default: false
+      notify_github_login:
+        description: "PR-author GitHub login (display label for the mention). Empty = no author line."
+        required: false
+        type: string
+        default: ""
+      notify_email:
+        description: "PR-author email (Teams UPN) used as the @-mention id so they are pinged. Empty/noreply = plain-text author line, no ping."
+        required: false
+        type: string
+        default: ""
+      severity:
+        description: "Failure severity label for the Teams message: gate | advisory | nightly."
+        required: false
+        type: string
+        default: gate
+  workflow_dispatch:
+    inputs:
+      cloud_environment:
+        description: "GitHub Environment to read test config (vars/secrets) from"
+        required: true
+        type: string
+        default: dev
+      allure_project:
+        description: "Allure project id results are published under"
+        required: true
+        type: string
+        default: dev-aks
+      pytest_selector:
+        description: "Extra pytest args / markers / suite path. Empty = full suite."
+        required: false
+        type: string
+        default: ""
+      image_tag:
+        description: "Image tag under test (for report traceability)."
+        required: false
+        type: string
+        default: ""
+      notify_on_failure:
+        description: "Post failure notifications when the suite fails. Active channels are determined by configured secrets (e.g. TEAMS_INTEGRATION_WEBHOOK_URL)."
+        required: false
+        type: boolean
+        default: false
+      notify_always:
+        description: "Post a notification on every run (pass or fail), not just on failure. Used by nightly runs. Active channels are determined by configured secrets."
+        required: false
+        type: boolean
+        default: false
+      notify_github_login:
+        description: "PR-author GitHub login (display label for the mention). Empty = no author line."
+        required: false
+        type: string
+        default: ""
+      notify_email:
+        description: "PR-author email (Teams UPN) used as the @-mention id so they are pinged. Empty/noreply = plain-text author line, no ping."
+        required: false
+        type: string
+        default: ""
+      severity:
+        description: "Failure severity label for the Teams message: gate | advisory | nightly."
+        required: false
+        type: string
+        default: gate
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  # Serialise runs of the same Allure project so concurrent uploads don't race
+  # the report regeneration; different projects run in parallel.
+  group: integration-tests-${{ inputs.allure_project }}
+  cancel-in-progress: false
+
+jobs:
+  integration-tests:
+    name: pytest container (${{ inputs.allure_project }})
+    # Self-hosted netapp pool: reaches private gateways / Keycloak, pulls from
+    # ACR, and publishes to the Allure service (same pool as deploy jobs).
+    runs-on: [self-hosted, netapp]
+    environment: ${{ inputs.cloud_environment }}
+    timeout-minutes: 60
+    env:
+      # ─── ACR image resolution ───────────────────────────────────────────
+      ACR_REGISTRY: ${{ vars.ACR_REGISTRY }}
+      IMAGE_REPO: integration-tests
+      # ─── Target endpoint(s) ─────────────────────────────────────────────
+      ENDPOINT: ${{ vars.AGENTSTUDIO_ENDPOINT }}
+      API_BASE_URL: ${{ vars.INTEGRATION_API_BASE_URL }}
+      KEYCLOAK_TOKEN_URL: ${{ vars.INTEGRATION_KEYCLOAK_TOKEN_URL }}
+      AGENT_SERVICE_URL: ${{ vars.INTEGRATION_AGENT_SERVICE_URL }}
+      CONFIG_SERVICE_URL: ${{ vars.INTEGRATION_CONFIG_SERVICE_URL }}
+      # ─── Auth (Keycloak password grant) ─────────────────────────────────
+      # Public OAuth client for the password-grant suites (smoke + KB). Legacy
+      # INTEGRATION_KEYCLOAK_CLIENT_ID kept as a fallback for existing configs.
+      KEYCLOAK_PASSWORD_GRANT_CLIENT_ID: ${{ vars.INTEGRATION_KEYCLOAK_PASSWORD_GRANT_CLIENT_ID || vars.INTEGRATION_KEYCLOAK_CLIENT_ID || 'agent-studio-ui' }}
+      KEYCLOAK_USERNAME: ${{ secrets.INTEGRATION_KEYCLOAK_USERNAME }}
+      KEYCLOAK_PASSWORD: ${{ secrets.INTEGRATION_KEYCLOAK_PASSWORD }}
+      KEYCLOAK_CLIENT_ID: ${{ secrets.INTEGRATION_KEYCLOAK_CLIENT_ID }}
+      # ─── Auth (Keycloak service account; agent-service suites) ──────────
+      KEYCLOAK_INTERNAL_ISSUER: ${{ vars.INTEGRATION_KEYCLOAK_INTERNAL_ISSUER }}
+      KEYCLOAK_SERVICE_CLIENT_ID: ${{ vars.INTEGRATION_KEYCLOAK_SERVICE_CLIENT_ID }}
+      KEYCLOAK_SERVICE_CLIENT_SECRET: ${{ secrets.INTEGRATION_KEYCLOAK_SERVICE_CLIENT_SECRET }}
+      ENABLE_AUTH_CONFIG_SERVICE: ${{ vars.INTEGRATION_ENABLE_AUTH_CONFIG_SERVICE || 'true' }}
+      ENABLE_AUTH_AGENT_SERVICE: ${{ vars.INTEGRATION_ENABLE_AUTH_AGENT_SERVICE || 'true' }}
+      CURL_INSECURE: ${{ vars.INTEGRATION_CURL_INSECURE || '0' }}
+      INTEGRATION_CLEANUP: ${{ vars.INTEGRATION_CLEANUP || '1' }}
+      # ─── Azure OpenAI credential (agent-service instantiation suite) ─────
+      AZURE_OPENAI_API_KEY: ${{ secrets.INTEGRATION_AZURE_OPENAI_API_KEY }}
+      AZURE_OPENAI_ENDPOINT: ${{ vars.INTEGRATION_AZURE_OPENAI_ENDPOINT }}
+      AZURE_OPENAI_API_VERSION: ${{ vars.INTEGRATION_AZURE_OPENAI_API_VERSION }}
+      # ─── Provider model registration (models suite) ─────────────────────
+      # Optional: pin which provider deployment the registration test uses.
+      # Unset -> the test auto-discovers via list-available and uses the first.
+      MODEL_PROVIDER_MODEL_ID: ${{ vars.INTEGRATION_MODEL_PROVIDER_MODEL_ID }}
+      # ─── Optional agent model overrides (agent-service suites) ──────────
+      AGENT_MODEL_NAME: ${{ vars.INTEGRATION_AGENT_MODEL_NAME }}
+      AGENT_MODEL_PROVIDER: ${{ vars.INTEGRATION_AGENT_MODEL_PROVIDER }}
+      AGENT_MODEL_PROVIDER_MODEL_ID: ${{ vars.INTEGRATION_AGENT_MODEL_PROVIDER_MODEL_ID }}
+      AGENT_MODEL_TYPE: ${{ vars.INTEGRATION_AGENT_MODEL_TYPE }}
+      AGENT_MODEL_CLASS: ${{ vars.INTEGRATION_AGENT_MODEL_CLASS }}
+      OVERRIDE_MODEL_NAME: ${{ vars.INTEGRATION_OVERRIDE_MODEL_NAME }}
+      # ─── Project membership (members suite; self-skips when unset) ──────
+      # Target email for add/change-role/remove. The add path is
+      # resolve-or-create, so it provisions a Keycloak user in the target
+      # realm — kept a secret so the address isn't exposed in run logs.
+      MEMBER_TEST_EMAIL: ${{ secrets.INTEGRATION_MEMBER_TEST_EMAIL }}
+      LLM_MODEL_NAME: ${{ vars.INTEGRATION_LLM_MODEL_NAME }}
+      SKIP_AGENT_SERVICE_HEALTH_PROBE: ${{ vars.INTEGRATION_SKIP_AGENT_SERVICE_HEALTH_PROBE }}
+      # ─── Pre-provisioned resource IDs (suites reuse instead of creating) ─
+      # When set, agent-service / tools suites reuse these existing resources
+      # and skip the corresponding provisioning steps (self-provision if unset).
+      PROJECT_ID: ${{ vars.INTEGRATION_PROJECT_ID }}
+      AZURE_OPENAI_CRED_ID: ${{ vars.INTEGRATION_AZURE_OPENAI_CRED_ID }}
+      LLM_MODEL_ID: ${{ vars.INTEGRATION_LLM_MODEL_ID }}
+      INSURANCE_KB_ID: ${{ vars.INTEGRATION_INSURANCE_KB_ID }}
+      GCNV_KB_ID: ${{ vars.INTEGRATION_GCNV_KB_ID }}
+      WEATHER_MCP_ID: ${{ vars.INTEGRATION_WEATHER_MCP_ID }}
+      # ─── Remote MCP tools suite (suites/tools/remote; self-skip when unset) ─
+      WEATHER_MCP_SERVER_URL: ${{ vars.INTEGRATION_WEATHER_MCP_SERVER_URL }}
+      WEATHER_MCP_CONNECTION_TYPE: ${{ vars.INTEGRATION_WEATHER_MCP_CONNECTION_TYPE }}
+      WIKIPEDIA_MCP_SERVER_URL: ${{ vars.INTEGRATION_WIKIPEDIA_MCP_SERVER_URL }}
+      WIKIPEDIA_MCP_CONNECTION_TYPE: ${{ vars.INTEGRATION_WIKIPEDIA_MCP_CONNECTION_TYPE }}
+      WIKIPEDIA_MCP_API_KEY: ${{ secrets.INTEGRATION_WIKIPEDIA_MCP_API_KEY }}
+      # ─── Optional connector config (suites self-skip when unset) ─────────
+      S3_ENDPOINT: ${{ vars.INTEGRATION_S3_ENDPOINT }}
+      S3_BUCKET: ${{ vars.INTEGRATION_S3_BUCKET }}
+      S3_PREFIX: ${{ vars.INTEGRATION_S3_PREFIX }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.INTEGRATION_AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.INTEGRATION_AWS_SECRET_ACCESS_KEY }}
+      AWS_REGION: ${{ vars.INTEGRATION_AWS_REGION }}
+      POSTGRES_HOST: ${{ vars.INTEGRATION_POSTGRES_HOST }}
+      POSTGRES_PORT: ${{ vars.INTEGRATION_POSTGRES_PORT }}
+      POSTGRES_DATABASE: ${{ vars.INTEGRATION_POSTGRES_DATABASE }}
+      POSTGRES_SCHEMA: ${{ vars.INTEGRATION_POSTGRES_SCHEMA }}
+      POSTGRES_USERNAME: ${{ vars.INTEGRATION_POSTGRES_USERNAME }}
+      POSTGRES_PASSWORD: ${{ secrets.INTEGRATION_POSTGRES_PASSWORD }}
+      POSTGRES_SSL_MODE: ${{ vars.INTEGRATION_POSTGRES_SSL_MODE }}
+      POSTGRES_SOURCE_TABLE: ${{ vars.INTEGRATION_POSTGRES_SOURCE_TABLE }}
+      POSTGRES_SQL_QUERY: ${{ vars.INTEGRATION_POSTGRES_SQL_QUERY }}
+      POSTGRES_KB_TEXT_COLUMNS: ${{ vars.INTEGRATION_POSTGRES_KB_TEXT_COLUMNS }}
+      POSTGRES_E2E_SEARCH_QUERY: ${{ vars.INTEGRATION_POSTGRES_E2E_SEARCH_QUERY }}
+      MYSQL_HOST: ${{ vars.INTEGRATION_MYSQL_HOST }}
+      MYSQL_PORT: ${{ vars.INTEGRATION_MYSQL_PORT }}
+      MYSQL_DATABASE: ${{ vars.INTEGRATION_MYSQL_DATABASE }}
+      MYSQL_SCHEMA: ${{ vars.INTEGRATION_MYSQL_SCHEMA }}
+      MYSQL_USERNAME: ${{ vars.INTEGRATION_MYSQL_USERNAME }}
+      MYSQL_PASSWORD: ${{ secrets.INTEGRATION_MYSQL_PASSWORD }}
+      MYSQL_SSL_MODE: ${{ vars.INTEGRATION_MYSQL_SSL_MODE }}
+      MYSQL_SOURCE_TABLE: ${{ vars.INTEGRATION_MYSQL_SOURCE_TABLE }}
+      MYSQL_SQL_QUERY: ${{ vars.INTEGRATION_MYSQL_SQL_QUERY }}
+      MYSQL_KB_TEXT_COLUMNS: ${{ vars.INTEGRATION_MYSQL_KB_TEXT_COLUMNS }}
+      MYSQL_E2E_SEARCH_QUERY: ${{ vars.INTEGRATION_MYSQL_E2E_SEARCH_QUERY }}
+      # ─── Search / seed + timeouts / skips (KB suites; optional) ─────────
+      E2E_SEARCH_QUERY: ${{ vars.INTEGRATION_E2E_SEARCH_QUERY }}
+      S3COMPATIBLE_E2E_SEARCH_QUERY: ${{ vars.INTEGRATION_S3COMPATIBLE_E2E_SEARCH_QUERY }}
+      INTEGRATION_SEED_S3: ${{ vars.INTEGRATION_SEED_S3 }}
+      ACQUISITION_TIMEOUT_SEC: ${{ vars.INTEGRATION_ACQUISITION_TIMEOUT_SEC }}
+      KB_CREATION_TIMEOUT_SEC: ${{ vars.INTEGRATION_KB_CREATION_TIMEOUT_SEC }}
+      CONNECTION_TEST_TIMEOUT_SEC: ${{ vars.INTEGRATION_CONNECTION_TEST_TIMEOUT_SEC }}
+      SKIP_CONNECTION_TEST: ${{ vars.INTEGRATION_SKIP_CONNECTION_TEST }}
+      SKIP_ACQUISITION: ${{ vars.INTEGRATION_SKIP_ACQUISITION }}
+      SKIP_ANALYTICS: ${{ vars.INTEGRATION_SKIP_ANALYTICS }}
+      SKIP_SEARCH: ${{ vars.INTEGRATION_SKIP_SEARCH }}
+      # ─── Manual dataset upload (optional; defaults to built-in synthetic file) ─
+      MANUAL_UPLOAD_FILE_PATH: ${{ vars.INTEGRATION_MANUAL_UPLOAD_FILE_PATH }}
+      MANUAL_UPLOAD_FILE_NAME: ${{ vars.INTEGRATION_MANUAL_UPLOAD_FILE_NAME }}
+      MANUAL_UPLOAD_CONTENT_TYPE: ${{ vars.INTEGRATION_MANUAL_UPLOAD_CONTENT_TYPE }}
+      # ─── Azure cloud / ANF service principal (suites self-skip when unset) ─
+      # NOTE: these AZURE_* container vars are the TEST service principal
+      # (INTEGRATION_AZURE_SP_*), NOT the runner's ACR-OIDC vars.AZURE_CLIENT_ID.
+      AZURE_SUBSCRIPTION_ID: ${{ vars.INTEGRATION_AZURE_SUBSCRIPTION_ID }}
+      AZURE_TENANT_ID: ${{ vars.INTEGRATION_AZURE_TENANT_ID }}
+      AZURE_CLIENT_ID: ${{ vars.INTEGRATION_AZURE_SP_CLIENT_ID }}
+      AZURE_CLIENT_SECRET: ${{ secrets.INTEGRATION_AZURE_SP_CLIENT_SECRET }}
+      AZURE_DEFAULT_REGION: ${{ vars.INTEGRATION_AZURE_DEFAULT_REGION }}
+      AZURE_RESOURCE_GROUP: ${{ vars.INTEGRATION_AZURE_RESOURCE_GROUP }}
+      ANF_TEST_POOL_ARM_ID: ${{ vars.INTEGRATION_ANF_TEST_POOL_ARM_ID }}
+      ANF_TEST_VOLUME_ARM_ID: ${{ vars.INTEGRATION_ANF_TEST_VOLUME_ARM_ID }}
+      ANF_METRIC_CATEGORIES: ${{ vars.INTEGRATION_ANF_METRIC_CATEGORIES }}
+      ANF_ACQUISITION_TIMEOUT_SEC: ${{ vars.INTEGRATION_ANF_ACQUISITION_TIMEOUT_SEC }}
+      ANF_MCP_PROVISION_TIMEOUT_SEC: ${{ vars.INTEGRATION_ANF_MCP_PROVISION_TIMEOUT_SEC }}
+      ANF_MCP_ALLOW_WRITE: ${{ vars.INTEGRATION_ANF_MCP_ALLOW_WRITE }}
+      # ─── GCP GCNV metrics (suite self-skips when unset) ─────────────────
+      GCP_PROJECT_ID: ${{ vars.INTEGRATION_GCP_PROJECT_ID }}
+      GCP_DEFAULT_REGION: ${{ vars.INTEGRATION_GCP_DEFAULT_REGION }}
+      GCP_SERVICE_ACCOUNT_JSON: ${{ secrets.INTEGRATION_GCP_SERVICE_ACCOUNT_JSON }}
+      GCP_SERVICE_ACCOUNT_JSON_FILE: ${{ secrets.INTEGRATION_GCP_SERVICE_ACCOUNT_JSON_FILE }}
+      # ─── ONTAP metrics (suite self-skips when unset) ────────────────────
+      ONTAP_CLUSTER_URL: ${{ vars.INTEGRATION_ONTAP_CLUSTER_URL }}
+      ONTAP_USERNAME: ${{ vars.INTEGRATION_ONTAP_USERNAME }}
+      ONTAP_PASSWORD: ${{ secrets.INTEGRATION_ONTAP_PASSWORD }}
+      ONTAP_VERIFY_TLS: ${{ vars.INTEGRATION_ONTAP_VERIFY_TLS }}
+      ONTAP_DEFAULT_SVM: ${{ vars.INTEGRATION_ONTAP_DEFAULT_SVM }}
+      # ─── Allure publishing (runner-side; never passed into the container) ─
+      ALLURE_ENDPOINT: ${{ vars.ALLURE_ENDPOINT }}
+      ALLURE_PROJECT_ID: ${{ inputs.allure_project }}
+      ALLURE_USERNAME: ${{ secrets.ALLURE_USERNAME }}
+      ALLURE_PASSWORD: ${{ secrets.ALLURE_PASSWORD }}
+      ALLURE_VERIFY_TLS: ${{ vars.ALLURE_VERIFY_TLS || '1' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        # Only for the runner-side Allure publish step (publish_allure.py, stdlib).
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Resolve harness configuration
+        shell: bash -e {0}
+        run: |
+          # Fail fast on the two hard requirements so a misconfigured
+          # environment is an explicit error, not a confusing pytest crash.
+          missing=()
+          if [[ -z "$API_BASE_URL" && -z "$ENDPOINT" ]]; then
+            missing+=("AGENTSTUDIO_ENDPOINT (variable) or INTEGRATION_API_BASE_URL (variable)")
+          fi
+          [[ -n "$KEYCLOAK_USERNAME" ]] || missing+=("INTEGRATION_KEYCLOAK_USERNAME (secret)")
+          [[ -n "$KEYCLOAK_PASSWORD" ]] || missing+=("INTEGRATION_KEYCLOAK_PASSWORD (secret)")
+          if (( ${#missing[@]} > 0 )); then
+            echo "::error::Missing required '${{ inputs.cloud_environment }}' integration-test configuration:"
+            printf '  - %s\n' "${missing[@]}"
+            echo "See docs/testing/integration-cicd.md for the per-environment contract."
+            exit 1
+          fi
+          # Derive password-grant suites' URLs from the public endpoint when the
+          # explicit overrides are unset.
+          : "${API_BASE_URL:=https://app.${ENDPOINT}/config}"
+          : "${KEYCLOAK_TOKEN_URL:=https://auth.${ENDPOINT}/realms/nemo/protocol/openid-connect/token}"
+          {
+            echo "API_BASE_URL=$API_BASE_URL"
+            echo "KEYCLOAK_TOKEN_URL=$KEYCLOAK_TOKEN_URL"
+          } >> "$GITHUB_ENV"
+          echo "Integration test target (env=${{ inputs.cloud_environment }}, project=${{ inputs.allure_project }}):"
+          echo "  API_BASE_URL       : $API_BASE_URL"
+          echo "  KEYCLOAK_TOKEN_URL : $KEYCLOAK_TOKEN_URL"
+          echo "  CONFIG_SERVICE_URL : ${CONFIG_SERVICE_URL:-<unset; agent-service suites skip>}"
+          echo "  AGENT_SERVICE_URL  : ${AGENT_SERVICE_URL:-<unset; agent-service suites skip>}"
+          echo "  image tag          : ${{ inputs.image_tag }}"
+
+      - name: Ensure Azure CLI is installed
+        shell: bash -e {0}
+        run: |
+          if command -v az >/dev/null 2>&1; then
+            echo "az already installed: $(az version --only-show-errors --query '"azure-cli"' -o tsv)"
+            exit 0
+          fi
+          echo "Installing Azure CLI via apt (Microsoft repo)..."
+          if command -v sudo >/dev/null 2>&1; then SUDO="sudo"; else SUDO=""; fi
+          $SUDO apt-get update -y
+          $SUDO apt-get install -y ca-certificates curl apt-transport-https lsb-release gnupg
+          $SUDO install -m 0755 -d /etc/apt/keyrings
+          curl -sLS https://packages.microsoft.com/keys/microsoft.asc \
+            | gpg --dearmor \
+            | $SUDO tee /etc/apt/keyrings/microsoft.gpg >/dev/null
+          $SUDO chmod go+r /etc/apt/keyrings/microsoft.gpg
+          AZ_DIST="$(lsb_release -cs)"
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/microsoft.gpg] https://packages.microsoft.com/repos/azure-cli/ ${AZ_DIST} main" \
+            | $SUDO tee /etc/apt/sources.list.d/azure-cli.list >/dev/null
+          $SUDO apt-get update -y
+          $SUDO apt-get install -y azure-cli
+          az version --only-show-errors
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id:       ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id:       ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: ACR login
+        shell: bash -e {0}
+        run: |
+          ACR_NAME="${ACR_REGISTRY%%.*}"
+          az acr login --name "$ACR_NAME"
+
+      - name: Set up Docker Buildx
+        # Needed only for the build-on-miss fallback below; cheap to set up.
+        id: buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver: docker-container
+          driver-opts: network=host
+          install: false
+
+      - name: Resolve integration-test image (pull or build-on-miss)
+        id: image
+        shell: bash -e {0}
+        env:
+          BUILDER: ${{ steps.buildx.outputs.name }}
+          # Base image for the build-on-miss fallback. Overridden to an
+          # ACR-mirrored python (this job already `az acr login`s to ACR) so the
+          # docker-container builder never needs internal Artifactory creds to
+          # pull the base. Defaults to "<ACR_REGISTRY>/python:3.12-slim"; mirror
+          # it once via `az acr import` (see integration-image-build.yml header).
+          BASE_IMAGE: ${{ vars.INTEGRATION_BASE_IMAGE || format('{0}/python:3.12-slim', vars.ACR_REGISTRY) }}
+        run: |
+          TAG="$(scripts/integration-image-tag.sh)"
+          IMAGE="${ACR_REGISTRY}/${IMAGE_REPO}"
+          REF="${IMAGE}:${TAG}"
+          if docker pull "$REF" >/dev/null 2>&1; then
+            echo "Using prebuilt image: $REF"
+          else
+            echo "::notice::$REF not found in ACR; building on runner (build-on-miss)."
+            docker buildx build \
+              --builder "$BUILDER" \
+              --build-arg BASE_IMAGE="$BASE_IMAGE" \
+              --cache-from "type=registry,ref=${IMAGE}:buildcache" \
+              --cache-to   "type=registry,ref=${IMAGE}:buildcache,mode=max" \
+              --tag "$REF" \
+              --tag "${IMAGE}:latest" \
+              --push \
+              tests/integration
+            # docker-container driver doesn't load into the local daemon; pull
+            # the freshly pushed tag so `docker run` below can use it.
+            docker pull "$REF"
+          fi
+          echo "ref=$REF" >> "$GITHUB_OUTPUT"
+
+      - name: Build container env-file
+        id: envfile
+        shell: bash -e {0}
+        run: |
+          ENV_FILE="$RUNNER_TEMP/integration.env"
+          # Lines are bare variable NAMES (no `=`): `docker run --env-file`
+          # resolves each value from this job's environment at run time, so no
+          # secret value is ever written to disk. Only the harness-facing vars
+          # are forwarded; ALLURE_* stay on the runner for the publish step.
+          cat > "$ENV_FILE" <<'EOF'
+          API_BASE_URL
+          KEYCLOAK_TOKEN_URL
+          KEYCLOAK_PASSWORD_GRANT_CLIENT_ID
+          KEYCLOAK_USERNAME
+          KEYCLOAK_PASSWORD
+          KEYCLOAK_CLIENT_ID
+          KEYCLOAK_INTERNAL_ISSUER
+          KEYCLOAK_SERVICE_CLIENT_ID
+          KEYCLOAK_SERVICE_CLIENT_SECRET
+          AGENT_SERVICE_URL
+          CONFIG_SERVICE_URL
+          ENABLE_AUTH_CONFIG_SERVICE
+          ENABLE_AUTH_AGENT_SERVICE
+          CURL_INSECURE
+          INTEGRATION_CLEANUP
+          AZURE_OPENAI_API_KEY
+          AZURE_OPENAI_ENDPOINT
+          AZURE_OPENAI_API_VERSION
+          MODEL_PROVIDER_MODEL_ID
+          AGENT_MODEL_NAME
+          AGENT_MODEL_PROVIDER
+          AGENT_MODEL_PROVIDER_MODEL_ID
+          AGENT_MODEL_TYPE
+          AGENT_MODEL_CLASS
+          OVERRIDE_MODEL_NAME
+          MEMBER_TEST_EMAIL
+          LLM_MODEL_NAME
+          SKIP_AGENT_SERVICE_HEALTH_PROBE
+          PROJECT_ID
+          AZURE_OPENAI_CRED_ID
+          LLM_MODEL_ID
+          INSURANCE_KB_ID
+          GCNV_KB_ID
+          WEATHER_MCP_ID
+          WEATHER_MCP_SERVER_URL
+          WEATHER_MCP_CONNECTION_TYPE
+          WIKIPEDIA_MCP_SERVER_URL
+          WIKIPEDIA_MCP_CONNECTION_TYPE
+          WIKIPEDIA_MCP_API_KEY
+          S3_ENDPOINT
+          S3_BUCKET
+          S3_PREFIX
+          AWS_ACCESS_KEY_ID
+          AWS_SECRET_ACCESS_KEY
+          AWS_REGION
+          POSTGRES_HOST
+          POSTGRES_PORT
+          POSTGRES_DATABASE
+          POSTGRES_SCHEMA
+          POSTGRES_USERNAME
+          POSTGRES_PASSWORD
+          POSTGRES_SSL_MODE
+          POSTGRES_SOURCE_TABLE
+          POSTGRES_SQL_QUERY
+          POSTGRES_KB_TEXT_COLUMNS
+          POSTGRES_E2E_SEARCH_QUERY
+          MYSQL_HOST
+          MYSQL_PORT
+          MYSQL_DATABASE
+          MYSQL_SCHEMA
+          MYSQL_USERNAME
+          MYSQL_PASSWORD
+          MYSQL_SSL_MODE
+          MYSQL_SOURCE_TABLE
+          MYSQL_SQL_QUERY
+          MYSQL_KB_TEXT_COLUMNS
+          MYSQL_E2E_SEARCH_QUERY
+          E2E_SEARCH_QUERY
+          S3COMPATIBLE_E2E_SEARCH_QUERY
+          INTEGRATION_SEED_S3
+          ACQUISITION_TIMEOUT_SEC
+          KB_CREATION_TIMEOUT_SEC
+          CONNECTION_TEST_TIMEOUT_SEC
+          SKIP_CONNECTION_TEST
+          SKIP_ACQUISITION
+          SKIP_ANALYTICS
+          SKIP_SEARCH
+          MANUAL_UPLOAD_FILE_PATH
+          MANUAL_UPLOAD_FILE_NAME
+          MANUAL_UPLOAD_CONTENT_TYPE
+          AZURE_SUBSCRIPTION_ID
+          AZURE_TENANT_ID
+          AZURE_CLIENT_ID
+          AZURE_CLIENT_SECRET
+          AZURE_DEFAULT_REGION
+          AZURE_RESOURCE_GROUP
+          ANF_TEST_POOL_ARM_ID
+          ANF_TEST_VOLUME_ARM_ID
+          ANF_METRIC_CATEGORIES
+          ANF_ACQUISITION_TIMEOUT_SEC
+          ANF_MCP_PROVISION_TIMEOUT_SEC
+          ANF_MCP_ALLOW_WRITE
+          GCP_PROJECT_ID
+          GCP_DEFAULT_REGION
+          GCP_SERVICE_ACCOUNT_JSON
+          GCP_SERVICE_ACCOUNT_JSON_FILE
+          ONTAP_CLUSTER_URL
+          ONTAP_USERNAME
+          ONTAP_PASSWORD
+          ONTAP_VERIFY_TLS
+          ONTAP_DEFAULT_SVM
+          EOF
+          chmod 600 "$ENV_FILE"
+          echo "path=$ENV_FILE" >> "$GITHUB_OUTPUT"
+
+      - name: Run integration tests (container)
+        id: pytest
+        shell: bash
+        env:
+          IMAGE_REF: ${{ steps.image.outputs.ref }}
+          ENV_FILE: ${{ steps.envfile.outputs.path }}
+        run: |
+          set -o pipefail
+          REPORTS_DIR="$PWD/tests/integration/reports"
+          mkdir -p "$REPORTS_DIR/allure-results"
+          # Record environment metadata into the Allure report.
+          {
+            echo "Environment=${{ inputs.cloud_environment }}"
+            echo "AllureProject=${{ inputs.allure_project }}"
+            echo "ImageTag=${{ inputs.image_tag }}"
+            echo "ApiBaseUrl=${API_BASE_URL}"
+            echo "HarnessImage=${IMAGE_REF}"
+          } > "$REPORTS_DIR/allure-results/environment.properties"
+          # --network host: inherit the runner's DNS/routes so the container
+          #   reaches the private platform app/auth hosts + the Allure service.
+          # --env-file: harness config (bare names resolved from job env).
+          # -v: bind-mount reports so results are collected + published on the
+          #   runner. No selector => full suite (pytest.ini testpaths=suites).
+          docker run --rm --network host \
+            --env-file "$ENV_FILE" \
+            -v "$REPORTS_DIR:/work/reports" \
+            "$IMAGE_REF" ${{ inputs.pytest_selector }}
+
+      - name: Normalise report ownership
+        # The container runs as root, so bind-mounted report files land
+        # root-owned; hand them back to the runner user so the next checkout's
+        # workspace clean (and the artifact upload) don't hit permission errors.
+        if: always()
+        shell: bash
+        run: |
+          if command -v sudo >/dev/null 2>&1; then
+            sudo chown -R "$(id -u):$(id -g)" tests/integration/reports 2>/dev/null || true
+          fi
+
+      - name: Publish results to Allure
+        if: ${{ always() && env.ALLURE_ENDPOINT != '' }}
+        continue-on-error: true
+        working-directory: tests/integration
+        shell: bash
+        env:
+          ALLURE_RESULTS_DIR: reports/allure-results
+          ALLURE_EXECUTION_NAME: "${{ inputs.allure_project }} #${{ github.run_number }}"
+          ALLURE_EXECUTION_FROM: "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+        run: python3 scripts/publish_allure.py
+
+      - name: Report Allure URLs
+        # Surface the shared Allure links in the job summary + log so reviewers
+        # can jump straight to this run's results. Only when ALLURE_ENDPOINT is
+        # configured for the environment.
+        if: ${{ always() && env.ALLURE_ENDPOINT != '' }}
+        shell: bash
+        run: |
+          BASE="${ALLURE_ENDPOINT%/}"   # tolerate a trailing slash on the var
+          PROJECT_URL="${BASE}/allure-docker-service/projects/${ALLURE_PROJECT_ID}"
+          {
+            echo "## Allure report"
+            echo ""
+            echo "- Project (${ALLURE_PROJECT_ID}): ${PROJECT_URL}"
+            echo "- Dashboard (all projects): ${BASE}/"
+            if [[ "${ALLURE_VERIFY_TLS}" == "0" ]]; then
+              echo ""
+              echo "> Note: the Allure endpoint uses a self-signed certificate (\`ALLURE_VERIFY_TLS=0\`); your browser may warn on first visit."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "Allure project : ${PROJECT_URL}"
+          echo "Allure dashboard: ${BASE}/"
+
+      - name: Upload reports artifact
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-reports-${{ inputs.allure_project }}-${{ github.run_id }}
+          path: tests/integration/reports/
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Notify
+        # Fires when the caller opted in: `notify_always` posts on every run
+        # (pass or fail, used by nightly), while `notify_on_failure` posts only
+        # on failure (release gate/advisory). Cancelled runs never notify. The
+        # NOTIFY_* vars are channel-agnostic (notify_common.build_context); each
+        # channel script (teams_notify.py, …) reads its own transport secret and
+        # self-skips when unset. Adding a channel later = a new script line in
+        # this step, no new workflow inputs. Secrets can't be referenced in step
+        # `if:`, so an unset webhook is skipped inside the script, which never
+        # fails the job.
+        if: ${{ !cancelled() && (inputs.notify_always || (failure() && inputs.notify_on_failure)) }}
+        working-directory: tests/integration
+        shell: bash
+        env:
+          # ── Teams transport (channel-specific) ──
+          TEAMS_WEBHOOK_URL: ${{ secrets.TEAMS_INTEGRATION_WEBHOOK_URL }}
+          # ── Shared notification context (any channel) ──
+          # Pass/fail outcome so the message reads correctly on always-notify runs.
+          NOTIFY_STATUS: ${{ job.status }}
+          NOTIFY_SEVERITY: ${{ inputs.severity }}
+          NOTIFY_GITHUB_LOGIN: ${{ inputs.notify_github_login }}
+          NOTIFY_EMAIL: ${{ inputs.notify_email }}
+          NOTIFY_ENVIRONMENT: ${{ inputs.cloud_environment }}
+          NOTIFY_ALLURE_PROJECT: ${{ inputs.allure_project }}
+          NOTIFY_IMAGE_TAG: ${{ inputs.image_tag }}
+          NOTIFY_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          NOTIFY_WORKFLOW_NAME: ${{ github.workflow }}
+          NOTIFY_RUN_NUMBER: ${{ github.run_number }}
+          NOTIFY_EVENT_NAME: ${{ github.event_name }}
+          NOTIFY_REF_NAME: ${{ github.ref_name }}
+          NOTIFY_COMMIT_SHA: ${{ github.sha }}
+          # Results summary + failed-test list are parsed from the JUnit XML the
+          # container writes into the bind-mounted reports dir.
+          NOTIFY_JUNIT_PATH: reports/junit.xml
+          # Matches the artifact uploaded above; surfaced as a fact + a
+          # "Download report bundle" button linking to the run's artifacts.
+          NOTIFY_ARTIFACT_NAME: integration-reports-${{ inputs.allure_project }}-${{ github.run_id }}
+          # ALLURE_ENDPOINT is inherited from job env and enables the report link.
+        run: python3 scripts/teams_notify.py
+
+      - name: Cleanup
+        if: always()
+        shell: bash
+        run: |
+          rm -f "$RUNNER_TEMP/integration.env" || true
+          az logout 2>/dev/null || true
+          az account clear 2>/dev/null || true

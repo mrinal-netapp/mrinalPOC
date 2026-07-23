@@ -1,0 +1,5233 @@
+openapi: 3.0.3
+info:
+  title: AgentStudio Services API
+  version: 1.0.0
+  description: Consolidated API documentation for all AgentStudio services (Config
+    Service)
+servers:
+- url: http://localhost:8080
+  description: AgentStudio Gateway (local)
+- url: https://agentstudio.local:8443
+  description: AgentStudio Gateway (local development)
+security:
+- bearerAuth: []
+- oauth2:
+  - openid
+  - profile
+  - email
+paths:
+  /config/api/v1/setup/status:
+    get:
+      summary: Get setup status
+      tags:
+      - Setup
+      description: Returns whether Keycloak realm setup is complete and admin console
+        URL/credentials
+      operationId: getSetupStatus
+      responses:
+        '200':
+          description: Setup status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  isSetupComplete:
+                    type: boolean
+                  adminConsoleUrl:
+                    type: string
+                  adminCredentials:
+                    type: object
+                    properties:
+                      username:
+                        type: string
+                      password:
+                        type: string
+                  realmName:
+                    type: string
+  /config/api/v1/projects:
+    post:
+      summary: Create project
+      tags:
+      - Projects
+      description: Creates a new project
+      operationId: createProject
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateProjectRequest'
+      responses:
+        '201':
+          description: Project created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Project'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    get:
+      summary: List projects
+      tags:
+      - Projects
+      description: Lists all projects
+      operationId: listProjects
+      responses:
+        '200':
+          description: List of projects
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  projects:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Project'
+  /config/api/v1/projects/{projectId}:
+    get:
+      summary: Get project
+      tags:
+      - Projects
+      description: Gets a project by ID
+      operationId: getProject
+      parameters:
+      - name: projectId
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Project details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Project'
+        '404':
+          description: Project not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    put:
+      summary: Update project
+      tags:
+      - Projects
+      description: Updates a project
+      operationId: updateProject
+      parameters:
+      - name: projectId
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateProjectRequest'
+      responses:
+        '200':
+          description: Updated project
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Project'
+        '404':
+          description: Project not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    delete:
+      summary: Delete project
+      tags:
+      - Projects
+      description: Deletes a project
+      operationId: deleteProject
+      parameters:
+      - name: projectId
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '204':
+          description: Project deleted
+        '404':
+          description: Project not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /config/api/v1/projects/{projectId}/members:
+    post:
+      summary: Add project member
+      tags:
+      - Projects
+      description: Invite a user as a project member
+      operationId: addProjectMember
+      parameters:
+      - name: projectId
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - user_id
+              properties:
+                user_id:
+                  type: string
+                role:
+                  type: string
+                  enum:
+                  - admin
+                  - member
+                  default: member
+      responses:
+        '201':
+          description: Member added
+        '400':
+          description: Invalid request
+        '404':
+          description: Project not found
+        '409':
+          description: User already a member
+    get:
+      summary: List project members
+      tags:
+      - Projects
+      operationId: listProjectMembers
+      parameters:
+      - name: projectId
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: List of members
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  members:
+                    type: array
+        '404':
+          description: Project not found
+  /config/api/v1/projects/{projectId}/members/{userId}:
+    delete:
+      summary: Remove project member
+      tags:
+      - Projects
+      operationId: removeProjectMember
+      parameters:
+      - name: projectId
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: userId
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '204':
+          description: Member removed
+        '404':
+          description: Project or member not found
+  /config/api/v1/projects/{projectId}/members/{userId}/role:
+    patch:
+      summary: Update project member role
+      tags:
+      - Projects
+      operationId: updateProjectMemberRole
+      parameters:
+      - name: projectId
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: userId
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - role
+              properties:
+                role:
+                  type: string
+                  enum:
+                  - admin
+                  - member
+      responses:
+        '200':
+          description: Role updated
+        '400':
+          description: Invalid role
+        '404':
+          description: Project or member not found
+  /config/api/v1/projects/{projectId}/service-account:
+    post:
+      summary: Create or get project service account
+      tags:
+      - Projects
+      description: Creates a Keycloak client (service account) for the project; idempotent
+      operationId: createProjectServiceAccount
+      parameters:
+      - name: projectId
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '201':
+          description: Service account created
+        '200':
+          description: Service account already exists
+        '404':
+          description: Project not found
+    get:
+      summary: Get project service account
+      tags:
+      - Projects
+      operationId: getProjectServiceAccount
+      parameters:
+      - name: projectId
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Service account (includes clientSecret)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  projectId:
+                    type: string
+                  clientId:
+                    type: string
+                  clientSecret:
+                    type: string
+                  createdAt:
+                    type: string
+                    format: date-time
+        '404':
+          description: Project or service account not found
+  /config/api/v1/projects/{projectId}/buckets:
+    post:
+      summary: Create bucket
+      tags:
+      - Buckets
+      description: Registers a new bucket in a project
+      operationId: createBucket
+      parameters:
+      - name: projectId
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateBucketRequest'
+      responses:
+        '201':
+          description: Bucket created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Bucket'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Project not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Bucket already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    get:
+      summary: List buckets
+      tags:
+      - Buckets
+      description: Lists all buckets in a project
+      operationId: listBuckets
+      parameters:
+      - name: projectId
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: List of buckets
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  buckets:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Bucket'
+  /config/api/v1/projects/{projectId}/buckets/{bucketName}:
+    get:
+      summary: Get bucket
+      tags:
+      - Buckets
+      description: Gets a bucket by name
+      operationId: getBucket
+      parameters:
+      - name: projectId
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: bucketName
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Bucket details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Bucket'
+        '404':
+          description: Bucket not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    put:
+      summary: Update bucket
+      tags:
+      - Buckets
+      description: Updates a bucket
+      operationId: updateBucket
+      parameters:
+      - name: projectId
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: bucketName
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateBucketRequest'
+      responses:
+        '200':
+          description: Updated bucket
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Bucket'
+        '404':
+          description: Bucket not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    delete:
+      summary: Delete bucket
+      tags:
+      - Buckets
+      description: Deletes a bucket
+      operationId: deleteBucket
+      parameters:
+      - name: projectId
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: bucketName
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '204':
+          description: Bucket deleted
+        '404':
+          description: Bucket not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /config/api/v1/projects/{projectId}/buckets/{bucketName}/health:
+    get:
+      summary: Get bucket health
+      tags:
+      - Health
+      description: Gets health status for a bucket across all deployments
+      operationId: getBucketHealth
+      parameters:
+      - name: projectId
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: bucketName
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Bucket health information
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  bucket_health:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/BucketHealth'
+        '404':
+          description: Bucket not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /config/api/v1/deployments:
+    post:
+      summary: Register deployment
+      tags:
+      - Deployments
+      description: Registers a new regional deployment
+      operationId: createDeployment
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateDeploymentRequest'
+      responses:
+        '201':
+          description: Deployment registered
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Deployment'
+        '200':
+          description: Deployment updated (re-registration)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Deployment'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    get:
+      summary: List deployments
+      tags:
+      - Deployments
+      description: Lists all registered deployments
+      operationId: listDeployments
+      responses:
+        '200':
+          description: List of deployments
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deployments:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Deployment'
+  /config/api/v1/deployments/{deploymentId}:
+    get:
+      summary: Get deployment
+      tags:
+      - Deployments
+      description: Gets a deployment by ID
+      operationId: getDeployment
+      parameters:
+      - name: deploymentId
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Deployment details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Deployment'
+        '404':
+          description: Deployment not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    put:
+      summary: Update deployment
+      tags:
+      - Deployments
+      description: Updates a deployment
+      operationId: updateDeployment
+      parameters:
+      - name: deploymentId
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateDeploymentRequest'
+      responses:
+        '200':
+          description: Updated deployment
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Deployment'
+        '404':
+          description: Deployment not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    delete:
+      summary: Deregister deployment
+      tags:
+      - Deployments
+      description: Deregisters a deployment
+      operationId: deleteDeployment
+      parameters:
+      - name: deploymentId
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '204':
+          description: Deployment deregistered
+        '404':
+          description: Deployment not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /config/api/v1/deployments/{deploymentId}/buckets:
+    get:
+      summary: Get deployment buckets
+      tags:
+      - Deployments
+      description: Gets bucket assignments for a deployment with role information
+      operationId: getDeploymentBuckets
+      parameters:
+      - name: deploymentId
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: since
+        in: query
+        schema:
+          type: integer
+        description: Config version for incremental updates
+      responses:
+        '200':
+          description: Deployment configuration
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeploymentConfigResponse'
+        '404':
+          description: Deployment not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /config/api/v1/deployments/{deploymentId}/config:
+    get:
+      summary: Get deployment config
+      tags:
+      - Deployments
+      description: Gets full deployment configuration
+      operationId: getDeploymentConfig
+      parameters:
+      - name: deploymentId
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: since
+        in: query
+        schema:
+          type: integer
+        description: Config version for incremental updates
+      responses:
+        '200':
+          description: Deployment configuration
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeploymentConfigResponse'
+        '404':
+          description: Deployment not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /config/api/v1/buckets/{projectId}/{bucketName}/routing:
+    get:
+      summary: Get bucket routing
+      tags:
+      - Deployments
+      description: Gets routing information for a bucket (all deployments serving
+        it)
+      operationId: getBucketRouting
+      parameters:
+      - name: projectId
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: bucketName
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Routing information
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BucketRoutingResponse'
+        '404':
+          description: Bucket not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /config/api/v1/storage-classes:
+    get:
+      summary: List storage classes
+      tags:
+      - StorageClasses
+      description: Lists all available StorageClasses aggregated from active deployments
+      operationId: listStorageClasses
+      responses:
+        '200':
+          description: List of available StorageClasses
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  storage_classes:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/StorageClass'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /config/api/v1/deployments/{deploymentId}/metrics:
+    post:
+      summary: Submit metrics
+      tags:
+      - Health
+      description: Submits metrics from a regional deployment
+      operationId: submitMetrics
+      parameters:
+      - name: deploymentId
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Metrics'
+      responses:
+        '200':
+          description: Metrics accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: accepted
+        '404':
+          description: Deployment not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /config/api/v1/deployments/{deploymentId}/health:
+    post:
+      summary: Report health
+      tags:
+      - Health
+      description: Reports health status from a regional deployment
+      operationId: reportHealth
+      parameters:
+      - name: deploymentId
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HealthReport'
+      responses:
+        '200':
+          description: Health report accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: accepted
+        '404':
+          description: Deployment not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /config/api/v1/projects/{projectId}/connectors:
+    get:
+      summary: List connectors
+      tags:
+      - Connectors
+      parameters:
+      - in: path
+        name: projectId
+        required: true
+        schema:
+          type: string
+      - in: query
+        name: limit
+        schema:
+          type: integer
+          default: 20
+      - in: query
+        name: skip
+        schema:
+          type: integer
+          default: 0
+      - in: query
+        name: field
+        schema:
+          type: string
+      - in: query
+        name: value
+        schema:
+          type: string
+      - in: query
+        name: nameRegex
+        schema:
+          type: string
+      responses:
+        '200':
+          description: List of connectors
+    post:
+      summary: Create a connector
+      tags:
+      - Connectors
+      parameters:
+      - in: path
+        name: projectId
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Connector'
+      responses:
+        '201':
+          description: Created
+  /config/api/v1/projects/{projectId}/connectors/{id}:
+    get:
+      summary: Get connector by ID
+      tags:
+      - Connectors
+      parameters:
+      - in: path
+        name: projectId
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Connector
+        '404':
+          description: Not found
+    put:
+      summary: Update connector by ID
+      tags:
+      - Connectors
+      parameters:
+      - in: path
+        name: projectId
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Connector'
+      responses:
+        '200':
+          description: Updated
+        '404':
+          description: Not found
+    delete:
+      summary: Delete connector by ID
+      tags:
+      - Connectors
+      parameters:
+      - in: path
+        name: projectId
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Deleted
+        '404':
+          description: Not found
+  /config/api/v1/projects/{projectId}/connectors/{id}/history:
+    get:
+      summary: Get connector version history
+      tags:
+      - Connectors
+      parameters:
+      - in: path
+        name: projectId
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: List of version history entries
+        '404':
+          description: Not found
+  /config/api/v1/projects/{projectId}/connectors/{id}/restore-version:
+    post:
+      summary: Restore connector to a previous version
+      tags:
+      - Connectors
+      parameters:
+      - in: path
+        name: projectId
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                version:
+                  type: number
+      responses:
+        '200':
+          description: Connector restored
+        '404':
+          description: Not found
+  /config/api/v1/projects/{projectId}/datasets:
+    get:
+      summary: List datasets
+      tags:
+      - DataSets
+      parameters:
+      - in: path
+        name: projectId
+        required: true
+        schema:
+          type: string
+      - in: query
+        name: limit
+        schema:
+          type: integer
+          default: 20
+      - in: query
+        name: skip
+        schema:
+          type: integer
+          default: 0
+      - in: query
+        name: field
+        schema:
+          type: string
+      - in: query
+        name: value
+        schema:
+          type: string
+      - in: query
+        name: nameRegex
+        schema:
+          type: string
+      - in: query
+        name: includeCatalog
+        schema:
+          type: boolean
+          default: false
+        description: Include catalog table metadata in response
+      - in: query
+        name: includeManifest
+        schema:
+          type: boolean
+          default: false
+        description: Deprecated - use includeCatalog instead. Included for backward
+          compatibility.
+      responses:
+        '200':
+          description: List of datasets
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/DataSet'
+    post:
+      summary: Create a dataset
+      tags:
+      - DataSets
+      parameters:
+      - in: path
+        name: projectId
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DataSet'
+      responses:
+        '201':
+          description: Dataset created. If uploadedFiles are provided, a draft manifest
+            is automatically created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DataSet'
+  /config/api/v1/projects/{projectId}/datasets/{id}:
+    get:
+      summary: Get dataset by ID
+      tags:
+      - DataSets
+      parameters:
+      - in: path
+        name: projectId
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Dataset with latest manifest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DataSet'
+        '404':
+          description: Not found
+    put:
+      summary: Update dataset by ID
+      tags:
+      - DataSets
+      parameters:
+      - in: path
+        name: projectId
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DataSet'
+      responses:
+        '200':
+          description: Dataset updated. If uploadedFiles are provided, existing draft
+            manifest is committed and a new draft manifest is created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DataSet'
+        '404':
+          description: Not found
+    delete:
+      summary: Delete dataset by ID
+      tags:
+      - DataSets
+      parameters:
+      - in: path
+        name: projectId
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Deleted
+        '404':
+          description: Not found
+  /config/api/v1/projects/{projectId}/datasets/{id}/history:
+    get:
+      summary: Get dataset version history
+      tags:
+      - DataSets
+      parameters:
+      - in: path
+        name: projectId
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: List of version history entries
+        '404':
+          description: No history found
+  /config/api/v1/projects/{projectId}/datasets/{id}/restore-version:
+    post:
+      summary: Restore dataset to a previous version
+      tags:
+      - DataSets
+      parameters:
+      - in: path
+        name: projectId
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - version
+              properties:
+                version:
+                  type: number
+      responses:
+        '200':
+          description: Dataset restored
+        '400':
+          description: Invalid request
+        '404':
+          description: Not found
+  /config/api/v1/projects/{projectId}/datasets/{id}/status:
+    put:
+      summary: Update dataset status (internal/workflow)
+      tags:
+      - DataSets
+      description: Updates status to creating, created, or errorred; used by workflow/processors
+      parameters:
+      - in: path
+        name: projectId
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - status
+              properties:
+                status:
+                  type: string
+                  enum:
+                  - creating
+                  - created
+                  - errorred
+                errorMessage:
+                  type: string
+      responses:
+        '200':
+          description: Status updated
+        '400':
+          description: Invalid status
+        '404':
+          description: Not found
+  /config/api/v1/projects/{projectId}/datasets/{id}/import:
+    post:
+      summary: Trigger dataset import workflow
+      tags:
+      - DataSets
+      description: Starts import workflow after files are uploaded to the dataset
+      parameters:
+      - in: path
+        name: projectId
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '202':
+          description: Import workflow started
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  workflowId:
+                    type: string
+                  status:
+                    type: string
+                  datasetId:
+                    type: string
+        '404':
+          description: Dataset not found
+  /config/api/v1/projects/{projectId}/datasets/{dataSetId}/manifests:
+    get:
+      summary: List all manifests for a dataset
+      tags:
+      - Manifests
+      parameters:
+      - in: path
+        name: projectId
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: dataSetId
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: List of manifests
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/DataSetManifest'
+    post:
+      summary: Create a new manifest for a dataset
+      tags:
+      - Manifests
+      parameters:
+      - in: path
+        name: projectId
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: dataSetId
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                uris:
+                  type: array
+                  items:
+                    type: string
+                metadata:
+                  type: object
+                schema:
+                  type: object
+                  description: Optional schema definition for the manifest
+      responses:
+        '201':
+          description: Manifest created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DataSetManifest'
+        '400':
+          description: Bad request
+        '404':
+          description: Dataset not found
+        '409':
+          description: Draft manifest already exists for this dataset
+  /config/api/v1/projects/{projectId}/datasets/{dataSetId}/manifests/from/{sourceManifestId}:
+    post:
+      summary: Create a new manifest from another manifest
+      tags:
+      - Manifests
+      parameters:
+      - in: path
+        name: projectId
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: dataSetId
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - in: path
+        name: sourceManifestId
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                targetDataSetId:
+                  type: string
+                  format: uuid
+                  description: Target dataset ID (defaults to current dataset)
+                metadata:
+                  type: object
+                  description: Metadata for the new manifest (defaults to source manifest's
+                    metadata)
+                schema:
+                  type: object
+                  description: Optional schema definition for the manifest (defaults
+                    to source manifest's schema)
+      responses:
+        '201':
+          description: Manifest created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DataSetManifest'
+        '400':
+          description: Bad request
+        '404':
+          description: Source manifest or dataset not found
+        '409':
+          description: Draft manifest already exists for target dataset
+  /config/api/v1/projects/{projectId}/datasets/{dataSetId}/manifests/{id}:
+    get:
+      summary: Get manifest by ID
+      tags:
+      - Manifests
+      parameters:
+      - in: path
+        name: projectId
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: dataSetId
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+          pattern: ^[0-9a-z]{8,12}$
+          description: Workspace ID (Base36, 8-12 characters)
+      responses:
+        '200':
+          description: Manifest details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DataSetManifest'
+        '404':
+          description: Manifest not found
+  /config/api/v1/projects/{projectId}/datasets/{dataSetId}/manifests/{id}/files:
+    patch:
+      summary: Add files to a manifest (draft only) - returns pre-signed URLs
+      tags:
+      - Manifests
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - fileNames
+              properties:
+                fileNames:
+                  type: array
+                  items:
+                    type: string
+      responses:
+        '200':
+          description: Returns array of file info with pre-signed URLs
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id:
+                      type: string
+                      format: uuid
+                    preSignedUrl:
+                      type: string
+                    fileName:
+                      type: string
+        '400':
+          description: Bad request or manifest not in draft status
+        '404':
+          description: Manifest not found
+  /config/api/v1/projects/{projectId}/datasets/{dataSetId}/manifests/{id}/status:
+    put:
+      summary: Update manifest status
+      tags:
+      - Manifests
+      parameters:
+      - in: path
+        name: projectId
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: dataSetId
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+          pattern: ^[0-9a-z]{8,12}$
+          description: Workspace ID (Base36, 8-12 characters)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - status
+              properties:
+                status:
+                  type: string
+                  enum:
+                  - draft
+                  - committed
+                  - deprecated
+      responses:
+        '200':
+          description: Status updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DataSetManifest'
+        '400':
+          description: Bad request
+        '404':
+          description: Manifest not found
+  /config/api/v1/projects/{projectId}/datasets/{dataSetId}/manifests/{id}/metadata:
+    put:
+      summary: Update manifest metadata (draft only)
+      tags:
+      - Manifests
+      parameters:
+      - in: path
+        name: projectId
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: dataSetId
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+          pattern: ^[0-9a-z]{8,12}$
+          description: Workspace ID (Base36, 8-12 characters)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - metadata
+              properties:
+                metadata:
+                  type: object
+      responses:
+        '200':
+          description: Metadata updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DataSetManifest'
+        '400':
+          description: Bad request or manifest not in draft status
+        '404':
+          description: Manifest not found
+  /config/api/v1/projects/{projectId}/datasets/{dataSetId}/manifests/{id}/schema:
+    put:
+      summary: Update manifest schema (draft only)
+      tags:
+      - Manifests
+      parameters:
+      - in: path
+        name: projectId
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: dataSetId
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+          pattern: ^[0-9a-z]{8,12}$
+          description: Workspace ID (Base36, 8-12 characters)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                schema:
+                  type: object
+                  additionalProperties: true
+                  description: Optional schema definition for the manifest
+      responses:
+        '200':
+          description: Schema updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DataSetManifest'
+        '400':
+          description: Bad request or manifest not in draft status
+        '404':
+          description: Manifest not found
+  /config/api/v1/projects/{projectId}/datasets/{dataSetId}/manifests/{id}/files/{fileId}:
+    delete:
+      summary: Delete a file from a manifest (draft only)
+      tags:
+      - Manifests
+      parameters:
+      - in: path
+        name: projectId
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: dataSetId
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+          pattern: ^[0-9a-z]{8,12}$
+          description: Workspace ID (Base36, 8-12 characters)
+      - in: path
+        name: fileId
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: File deleted successfully
+        '400':
+          description: Bad request or manifest not in draft status
+        '404':
+          description: Manifest or file not found
+  /config/api/v1/search:
+    post:
+      summary: Top-level search for any entity
+      tags:
+      - Search
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                entityType:
+                  type: string
+                  enum:
+                  - datasources
+                  - datasets
+                fields:
+                  type: object
+                nameRegex:
+                  type: string
+                limit:
+                  type: integer
+                skip:
+                  type: integer
+      responses:
+        '200':
+          description: List of matching entities
+  /config/api/v1/projects/{projectId}/knowledgebases:
+    get:
+      summary: List knowledge bases
+      tags:
+      - KnowledgeBases
+      parameters:
+      - in: path
+        name: projectId
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: List of knowledge bases
+    post:
+      summary: Create a knowledge base
+      tags:
+      - KnowledgeBases
+      parameters:
+      - in: path
+        name: projectId
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/KnowledgeBase'
+      responses:
+        '201':
+          description: Created
+  /config/api/v1/projects/{projectId}/knowledgebases/{id}:
+    get:
+      summary: Get knowledge base by ID
+      tags:
+      - KnowledgeBases
+      parameters:
+      - in: path
+        name: projectId
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Knowledge base
+        '404':
+          description: Not found
+    put:
+      summary: Update knowledge base by ID
+      tags:
+      - KnowledgeBases
+      parameters:
+      - in: path
+        name: projectId
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/KnowledgeBase'
+      responses:
+        '200':
+          description: Updated
+        '404':
+          description: Not found
+    delete:
+      summary: Delete knowledge base by ID
+      tags:
+      - KnowledgeBases
+      parameters:
+      - in: path
+        name: projectId
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Deleted
+        '404':
+          description: Not found
+  /config/api/v1/projects/{projectId}/knowledgebases/{id}/history:
+    get:
+      summary: Get knowledge base version history
+      tags:
+      - KnowledgeBases
+      parameters:
+      - in: path
+        name: projectId
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: List of version history entries
+        '404':
+          description: Not found
+  /config/api/v1/projects/{projectId}/knowledgebases/{id}/restore-version:
+    post:
+      summary: Restore knowledge base to a previous version
+      tags:
+      - KnowledgeBases
+      parameters:
+      - in: path
+        name: projectId
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                version:
+                  type: number
+      responses:
+        '200':
+          description: Knowledge base restored
+        '404':
+          description: Not found
+  /config/api/v1/projects/{projectId}/knowledgebases/{id}/create:
+    post:
+      summary: Trigger knowledge base creation (processing)
+      tags:
+      - KnowledgeBases
+      description: Starts KB processing workflow to build the vector index
+      parameters:
+      - in: path
+        name: projectId
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '202':
+          description: Creation workflow started
+        '404':
+          description: Not found
+  /config/api/v1/mcp-server-catalog:
+    get:
+      summary: List MCP Server Catalog
+      tags:
+      - MCP Servers
+      description: Returns the list of pre-approved MCP servers available for managed
+        deployment.
+      responses:
+        '200':
+          description: Catalog entries
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/MCPServerCatalogEntry'
+  /config/api/v1/projects/{projectId}/mcp-servers:
+    get:
+      summary: List MCP Servers
+      tags:
+      - MCP Servers
+      parameters:
+      - in: path
+        name: projectId
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: List of MCP servers
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/MCPServer'
+    post:
+      summary: Create MCP Server
+      tags:
+      - MCP Servers
+      parameters:
+      - in: path
+        name: projectId
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MCPServer'
+      responses:
+        '201':
+          description: Created
+  /config/api/v1/projects/{projectId}/mcp-servers/{id}:
+    get:
+      summary: Get MCP Server by ID
+      tags:
+      - MCP Servers
+      parameters:
+      - in: path
+        name: projectId
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: MCP Server
+        '404':
+          description: Not found
+    put:
+      summary: Update MCP Server by ID
+      tags:
+      - MCP Servers
+      parameters:
+      - in: path
+        name: projectId
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MCPServer'
+      responses:
+        '200':
+          description: Updated
+        '404':
+          description: Not found
+    delete:
+      summary: Delete MCP Server by ID
+      tags:
+      - MCP Servers
+      parameters:
+      - in: path
+        name: projectId
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Deleted
+        '404':
+          description: Not found
+  /config/api/v1/projects/{projectId}/mcp-servers/{id}/test-connection:
+    post:
+      summary: Test MCP Server connection via Bifrost gateway
+      tags:
+      - MCP Servers
+      parameters:
+      - in: path
+        name: projectId
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Connection test result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  status:
+                    type: string
+  /config/api/v1/projects/{projectId}/mcp-servers/{id}/tools:
+    get:
+      summary: List tools available from MCP Server
+      tags:
+      - MCP Servers
+      parameters:
+      - in: path
+        name: projectId
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: List of discovered tools
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    name:
+                      type: string
+                    description:
+                      type: string
+                    inputSchema:
+                      type: object
+  /config/api/v1/projects/{projectId}/mcp-servers/{id}/history:
+    get:
+      summary: Get MCP Server version history
+      tags:
+      - MCP Servers
+      parameters:
+      - in: path
+        name: projectId
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: List of version history entries
+        '404':
+          description: Not found
+  /config/api/v1/projects/{projectId}/mcp-servers/{id}/runtime-status:
+    get:
+      summary: Get runtime status of a managed MCP server
+      tags:
+      - MCP Servers
+      parameters:
+      - in: path
+        name: projectId
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Runtime status info
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RuntimeStatusInfo'
+        '400':
+          description: Not a managed server
+        '404':
+          description: Not found
+  /config/api/v1/projects/{projectId}/mcp-servers/{id}/restore-version:
+    post:
+      summary: Restore MCP Server to a previous version
+      tags:
+      - MCP Servers
+      parameters:
+      - in: path
+        name: projectId
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                version:
+                  type: number
+      responses:
+        '200':
+          description: MCP Server restored
+        '404':
+          description: Not found
+  /config/api/v1/projects/{projectId}/models:
+    get:
+      summary: List models in a project
+      description: 'Returns all models registered in the project, ordered by `createdAt`
+
+        descending. By default each row is enriched with a
+
+        `dependentsSummary` describing how many other entities reference the
+
+        model; pass `include=dependentsSummary=false` to skip that lookup.
+
+        '
+      tags:
+      - Models
+      parameters:
+      - in: path
+        name: projectId
+        required: true
+        schema:
+          type: string
+      - in: query
+        name: modelClass
+        schema:
+          type: string
+        description: Filter by functional class (e.g. `reasoning`, `balanced`, `fast`,
+          `code`)
+      - in: query
+        name: modelType
+        schema:
+          type: string
+          enum:
+          - llm
+          - embedding
+        description: Filter by model type
+      - in: query
+        name: include
+        schema:
+          type: string
+          enum:
+          - dependentsSummary=false
+        description: 'Reserved for response shaping. Pass
+
+          `dependentsSummary=false` to suppress the per-row
+
+          `dependentsSummary` field. Any other value (or absence) keeps
+
+          the summary enabled.
+
+          '
+      responses:
+        '200':
+          description: List of models (optionally enriched with `dependentsSummary`)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Model'
+        '500':
+          description: Internal error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    post:
+      summary: Create a model
+      description: "Creates a model and, when the Bifrost LLM gateway is enabled,\n\
+        registers it upstream so it can be routed by id. Validation rules:\n\n* `name`\
+        \ is required and must be unique within the project.\n* For remote providers\
+        \ (`openai`, `openai_compatible`, `aws_bedrock`,\n  `azure`, `google`) a `credentialId`\
+        \ referencing a project\n  Credential is required when the gateway is enabled.\n\
+        * For provider `ollama`, an `endpoint` (URL of the Ollama server) is required when the gateway\n  is enabled.\n\
+        \nOn success the server populates `id`, `gatewayModelId`, and a\n`rateCardOverride._gateway`\
+        \ block reflecting the gateway\nregistration.\n"
+      tags:
+      - Models
+      parameters:
+      - in: path
+        name: projectId
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateModelRequest'
+      responses:
+        '201':
+          description: Model created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Model'
+        '400':
+          description: Validation error or missing credential/endpoint for the chosen
+            provider
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Referenced credential not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: A model with this name already exists in the project
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal error or credential secret could not be read
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /config/api/v1/projects/{projectId}/models/list-available:
+    post:
+      summary: List models advertised by a provider
+      description: 'Calls the provider adapter to enumerate models the supplied
+
+        credential can access. For credential-free providers (e.g. `ollama`) `credentialId` may
+
+        be omitted. Results are not persisted — clients can use them to
+
+        populate the model picker before calling `POST /models`.
+
+        '
+      tags:
+      - Models
+      parameters:
+      - in: path
+        name: projectId
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ListAvailableModelsRequest'
+      responses:
+        '200':
+          description: Models exposed by the provider
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListAvailableModelsResponse'
+        '400':
+          description: Missing or unknown provider
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Referenced credential not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal error or credential secret could not be read
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /config/api/v1/projects/{projectId}/models/classes:
+    get:
+      summary: List distinct model classes used in this project
+      description: Returns the set of `modelClass` values currently assigned to models
+        in the project, sorted ascending.
+      tags:
+      - Models
+      parameters:
+      - in: path
+        name: projectId
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Distinct `modelClass` strings
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: string
+        '500':
+          description: Internal error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /config/api/v1/projects/{projectId}/models/{id}:
+    get:
+      summary: Get a model by id
+      description: "Returns the stored model plus a few computed fields:\n\n* `gatewayModelId`\
+        \ is backfilled from the stored provider/model\n  pair when the column predates\
+        \ the registration that captured it.\n* `contextWindow`, `maxOutputTokens`,\
+        \ and `supportsExtendedOutput`\n  come from the static provider catalog when\
+        \ a match exists for\n  `(provider, providerModelId)`.\n"
+      tags:
+      - Models
+      parameters:
+      - in: path
+        name: projectId
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: Model (enriched with static catalog metadata)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Model'
+        '404':
+          description: Model not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    put:
+      summary: Update a model
+      description: 'Updates display fields and metadata on an existing model. Provider,
+
+        credential, and endpoint changes are not propagated to the upstream
+
+        gateway; switching those values requires deleting and re-registering
+
+        the model.
+
+        '
+      tags:
+      - Models
+      parameters:
+      - in: path
+        name: projectId
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateModelRequest'
+      responses:
+        '200':
+          description: Updated model
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Model'
+        '400':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Model not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: A model with this name already exists in the project
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    delete:
+      summary: Delete a model
+      description: 'Deletes a model. The request is rejected with `409 HAS_DEPENDENTS`
+
+        when any other entity (agents, agent teams, knowledge bases, ...)
+
+        still references this model — clients should resolve the dependents
+
+        listed in the response and retry. When the Bifrost gateway is
+
+        enabled the model is also de-registered upstream.
+
+        '
+      tags:
+      - Models
+      parameters:
+      - in: path
+        name: projectId
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '204':
+          description: Model deleted
+        '404':
+          description: Model not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Model still has dependents; remove or rewire them and retry
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HasDependentsError'
+        '500':
+          description: Internal error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /config/api/v1/projects/{projectId}/models/{id}/infer:
+    post:
+      summary: Run a chat completion against a registered LLM model
+      description: "Routes a chat completion through the configured Bifrost LLM gateway\n\
+        using this model's id. Falls back to `provider/providerModelId`\nrouting when\
+        \ the gateway reports that the id-based routing rule is\nmissing (legacy rows).\
+        \ Only LLM models may be invoked.\n\nLimits enforced by the route:\n* `messages`\
+        \ must be a non-empty array (max 64 entries).\n* Each message must have `role\
+        \ ∈ {system, user, assistant}` and a\n  non-empty `content` string (max 20000\
+        \ characters).\n* `temperature` (if provided) must be a number; `maxTokens`\
+        \ (if\n  provided) must be a positive integer.\n"
+      tags:
+      - Models
+      parameters:
+      - in: path
+        name: projectId
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InferRequest'
+      responses:
+        '200':
+          description: Completion result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InferResponse'
+        '400':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Model not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Model is not an LLM (e.g. embedding model)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '502':
+          description: LLM gateway not configured, or upstream gateway returned an
+            error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '504':
+          description: Upstream gateway timed out
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /config/api/v1/projects/{projectId}/models/{id}/dependents:
+    get:
+      summary: List entities that depend on this model (paginated)
+      description: 'Returns a keyset-paginated page of entities that reference this
+
+        model via the reference-edge catalog. Use this endpoint to inspect
+
+        what is blocking deletion when `DELETE /models/{id}` returns
+
+        `409 HAS_DEPENDENTS`.
+
+        '
+      tags:
+      - Models
+      parameters:
+      - in: path
+        name: projectId
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - in: query
+        name: limit
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 200
+          default: 50
+        description: Page size; capped at 200.
+      - in: query
+        name: cursor
+        schema:
+          type: string
+        description: Opaque cursor returned by a previous page (`nextCursor`).
+      - in: query
+        name: kind
+        schema:
+          type: string
+          enum:
+          - agent
+          - agent_team
+          - knowledge_base
+          - mcp_server
+          - pipeline
+          - dataset
+          - workspace
+          - model
+        description: Filter dependents by source entity kind.
+      responses:
+        '200':
+          description: Page of dependents
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DependentsPage'
+        '404':
+          description: Model not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /config/api/v1/projects/{projectId}/models/{id}/history:
+    get:
+      summary: Get model version history
+      description: Returns all snapshots of the model, ordered by `version` descending.
+        Each entry contains the full Model payload at that version under `data`.
+      tags:
+      - Models
+      parameters:
+      - in: path
+        name: projectId
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: List of version history entries
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ModelHistory'
+        '500':
+          description: Internal error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /config/api/v1/projects/{projectId}/models/{id}/restore-version:
+    post:
+      summary: Restore model to a previous version
+      description: 'Overwrites the current model with the snapshot taken at the given
+
+        history `version`. `id`, `createdAt`, and `updatedAt` are preserved.
+
+        '
+      tags:
+      - Models
+      parameters:
+      - in: path
+        name: projectId
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - version
+              properties:
+                version:
+                  type: number
+                  description: Version number to restore (see `GET /history`).
+      responses:
+        '200':
+          description: Model restored
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  restored:
+                    type: boolean
+                  data:
+                    $ref: '#/components/schemas/Model'
+        '400':
+          description: Missing or invalid `version` in body
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Model or version not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /config/api/v1/projects/{projectId}/pipelines:
+    get:
+      summary: List pipelines
+      tags:
+      - Pipelines
+      parameters:
+      - in: path
+        name: projectId
+        required: true
+        schema:
+          type: string
+      - in: query
+        name: limit
+        schema:
+          type: integer
+          default: 20
+      - in: query
+        name: skip
+        schema:
+          type: integer
+          default: 0
+      - in: query
+        name: type
+        schema:
+          type: string
+          enum:
+          - Data
+          - API
+        description: Filter pipelines by type
+      responses:
+        '200':
+          description: List of pipelines
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Pipeline'
+    post:
+      summary: Create a pipeline
+      tags:
+      - Pipelines
+      parameters:
+      - in: path
+        name: projectId
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Pipeline'
+      responses:
+        '201':
+          description: Created
+  /config/api/v1/projects/{projectId}/pipelines/{id}:
+    get:
+      summary: Get pipeline by ID
+      tags:
+      - Pipelines
+      parameters:
+      - in: path
+        name: projectId
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Pipeline
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Pipeline'
+        '404':
+          description: Not found
+    put:
+      summary: Update pipeline by ID
+      tags:
+      - Pipelines
+      parameters:
+      - in: path
+        name: projectId
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Pipeline'
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Pipeline'
+        '404':
+          description: Not found
+    delete:
+      summary: Delete pipeline by ID
+      tags:
+      - Pipelines
+      parameters:
+      - in: path
+        name: projectId
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Deleted
+        '404':
+          description: Not found
+  /config/api/v1/projects/{projectId}/pipelines/{id}/history:
+    get:
+      summary: Get pipeline version history
+      tags:
+      - Pipelines
+      parameters:
+      - in: path
+        name: projectId
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: List of version history entries
+        '404':
+          description: Not found
+  /config/api/v1/projects/{projectId}/pipelines/{id}/restore-version:
+    post:
+      summary: Restore pipeline to a previous version
+      tags:
+      - Pipelines
+      parameters:
+      - in: path
+        name: projectId
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                version:
+                  type: number
+      responses:
+        '200':
+          description: Pipeline restored
+        '404':
+          description: Not found
+  /config/api/v1/projects/{projectId}/pipelines/{id}/execute:
+    post:
+      summary: Execute pipeline
+      tags:
+      - Pipelines
+      parameters:
+      - in: path
+        name: projectId
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '202':
+          description: Execution started
+        '404':
+          description: Not found
+  /config/api/v1/projects/{projectId}/pipelines/{id}/executions:
+    get:
+      summary: List pipeline executions
+      tags:
+      - Pipelines
+      parameters:
+      - in: path
+        name: projectId
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: List of executions
+        '404':
+          description: Not found
+  /config/api/v1/projects/{projectId}/pipelines/{id}/executions/{executionId}:
+    get:
+      summary: Get pipeline execution by ID
+      tags:
+      - Pipelines
+      parameters:
+      - in: path
+        name: projectId
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: executionId
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Execution details
+        '404':
+          description: Not found
+  /config/api/v1/projects/{projectId}/pipelines/{id}/executions/{executionId}/cancel:
+    post:
+      summary: Cancel pipeline execution
+      tags:
+      - Pipelines
+      parameters:
+      - in: path
+        name: projectId
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: executionId
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Cancel requested
+        '404':
+          description: Not found
+  /config/api/v1/projects/{projectId}/workspace-templates:
+    get:
+      summary: List workspace templates
+      tags:
+      - WorkspaceTemplates
+      parameters:
+      - in: path
+        name: projectId
+        required: true
+        schema:
+          type: string
+      - in: query
+        name: activeOnly
+        schema:
+          type: boolean
+          default: true
+      responses:
+        '200':
+          description: List of workspace templates
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/WorkspaceTemplate'
+    post:
+      summary: Create a new workspace template
+      tags:
+      - WorkspaceTemplates
+      parameters:
+      - in: path
+        name: projectId
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateWorkspaceTemplateRequest'
+      responses:
+        '201':
+          description: Template created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkspaceTemplate'
+        '400':
+          description: Bad request
+        '409':
+          description: Template with this name already exists
+  /config/api/v1/projects/{projectId}/workspace-templates/{id}:
+    get:
+      summary: Get workspace template by ID
+      tags:
+      - WorkspaceTemplates
+      parameters:
+      - in: path
+        name: projectId
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+          pattern: ^[0-9a-z]{8,12}$
+          description: Workspace ID (Base36, 8-12 characters)
+      responses:
+        '200':
+          description: Workspace template details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkspaceTemplate'
+        '404':
+          description: Template not found
+    put:
+      summary: Update workspace template
+      tags:
+      - WorkspaceTemplates
+      parameters:
+      - in: path
+        name: projectId
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+          pattern: ^[0-9a-z]{8,12}$
+          description: Workspace ID (Base36, 8-12 characters)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateWorkspaceTemplateRequest'
+      responses:
+        '200':
+          description: Template updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkspaceTemplate'
+        '404':
+          description: Template not found
+    delete:
+      summary: Delete workspace template (soft delete)
+      tags:
+      - WorkspaceTemplates
+      parameters:
+      - in: path
+        name: projectId
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+          pattern: ^[0-9a-z]{8,12}$
+          description: Workspace ID (Base36, 8-12 characters)
+      responses:
+        '200':
+          description: Template deleted successfully
+        '404':
+          description: Template not found
+        '400':
+          description: Template is in use
+  /config/api/v1/projects/{projectId}/workspaces:
+    get:
+      summary: List workspaces
+      tags:
+      - Workspaces
+      parameters:
+      - in: path
+        name: projectId
+        required: true
+        schema:
+          type: string
+      - in: query
+        name: status
+        schema:
+          type: string
+          enum:
+          - new
+          - creating
+          - running
+          - stopping
+          - stopped
+          - error
+      responses:
+        '200':
+          description: List of workspaces
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Workspace'
+    post:
+      summary: Create a new workspace
+      tags:
+      - Workspaces
+      parameters:
+      - in: path
+        name: projectId
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateWorkspaceRequest'
+      responses:
+        '201':
+          description: Workspace created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Workspace'
+        '400':
+          description: Bad request
+        '409':
+          description: Workspace with this name already exists
+  /config/api/v1/projects/{projectId}/workspaces/{id}:
+    get:
+      summary: Get workspace by ID
+      tags:
+      - Workspaces
+      parameters:
+      - in: path
+        name: projectId
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+          pattern: ^[0-9a-z]{8,12}$
+          description: Workspace ID (Base36, 8-12 characters)
+      responses:
+        '200':
+          description: Workspace details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Workspace'
+        '404':
+          description: Workspace not found
+    put:
+      summary: Update workspace
+      tags:
+      - Workspaces
+      parameters:
+      - in: path
+        name: projectId
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+          pattern: ^[0-9a-z]{8,12}$
+          description: Workspace ID (Base36, 8-12 characters)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateWorkspaceRequest'
+      responses:
+        '200':
+          description: Workspace updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Workspace'
+        '404':
+          description: Workspace not found
+    delete:
+      summary: Delete workspace
+      tags:
+      - Workspaces
+      parameters:
+      - in: path
+        name: projectId
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+          pattern: ^[0-9a-z]{8,12}$
+          description: Workspace ID (Base36, 8-12 characters)
+      responses:
+        '200':
+          description: Workspace deleted successfully
+        '404':
+          description: Workspace not found
+        '400':
+          description: Workspace is running
+  /config/api/v1/projects/{projectId}/workspaces/{id}/launch:
+    post:
+      summary: Launch workspace
+      tags:
+      - Workspaces
+      parameters:
+      - in: path
+        name: projectId
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+          pattern: ^[0-9a-z]{8,12}$
+          description: Workspace ID (Base36, 8-12 characters)
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                endpoint:
+                  type: string
+                podName:
+                  type: string
+                deploymentId:
+                  type: string
+      responses:
+        '200':
+          description: Workspace launched successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Workspace'
+        '404':
+          description: Workspace not found
+        '400':
+          description: Workspace is already running
+  /config/api/v1/projects/{projectId}/workspaces/{id}/stop:
+    post:
+      summary: Stop workspace
+      tags:
+      - Workspaces
+      parameters:
+      - in: path
+        name: projectId
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+          pattern: ^[0-9a-z]{8,12}$
+          description: Workspace ID (Base36, 8-12 characters)
+      responses:
+        '200':
+          description: Workspace stop initiated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Workspace'
+        '404':
+          description: Workspace not found
+  /config/api/v1/projects/{projectId}/workspaces/{id}/token:
+    put:
+      summary: Update workspace token
+      tags:
+      - Workspaces
+      description: Updates the workspace access token (e.g. for Jupyter server)
+      parameters:
+      - in: path
+        name: projectId
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - token
+              properties:
+                token:
+                  type: string
+      responses:
+        '200':
+          description: Token updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Workspace'
+        '404':
+          description: Workspace not found
+  /config/api/v1/internal/workspaces/{id}/status:
+    put:
+      summary: Update workspace status (internal)
+      tags:
+      - Internal
+      description: Used by the workspace orchestrator to report workspace status changes
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                status:
+                  type: string
+                  enum:
+                  - new
+                  - creating
+                  - running
+                  - stopping
+                  - stopped
+                  - error
+                endpoint:
+                  type: string
+                podName:
+                  type: string
+                deploymentId:
+                  type: string
+                errorMessage:
+                  type: string
+      responses:
+        '200':
+          description: Status updated
+        '404':
+          description: Workspace not found
+  /config/api/v1/workspaces:
+    get:
+      summary: Query workspaces for management
+      tags:
+      - Internal
+      description: Used by the workspace orchestrator to poll for workspaces to manage
+        (filter by status, deploymentId, deploymentType)
+      parameters:
+      - in: query
+        name: status
+        schema:
+          type: string
+        description: Comma-separated statuses (e.g. new,creating,stopping)
+      - in: query
+        name: deploymentId
+        schema:
+          type: string
+      - in: query
+        name: deploymentType
+        schema:
+          type: string
+        description: Must be "nemo"
+      responses:
+        '200':
+          description: List of workspaces matching the query
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Workspace'
+components:
+  schemas:
+    Connector:
+      type: object
+      required:
+      - name
+      - description
+      - type
+      - connectionInfo
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        type:
+          type: string
+          enum:
+          - filestore
+          - objectstore
+          - database
+          - stream
+        connectionInfo:
+          type: object
+        authInfo:
+          type: object
+        protocol:
+          type: string
+          enum:
+          - NFS
+          - SMB
+    Model:
+      type: object
+      description: 'A model registration in a project. Remote-provider models are
+        also
+
+        registered with the Bifrost LLM gateway when it is enabled; that
+
+        registration metadata is mirrored in `rateCardOverride._gateway` and
+
+        the routable id is captured in `gatewayModelId`.
+
+        '
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+          description: Server-assigned UUID. Stable across renames.
+        projectId:
+          type: string
+          readOnly: true
+          description: Project that owns the model. Sourced from the URL on create.
+        name:
+          type: string
+          description: Unique (per project) human/programmatic identifier.
+        displayName:
+          type: string
+        provider:
+          type: string
+          enum:
+          - openai
+          - openai_compatible
+          - aws_bedrock
+          - azure
+          - google
+          - local
+          description: Upstream provider key. Drives how credentials and endpoints
+            are interpreted.
+        providerModelId:
+          type: string
+          description: 'Model id as known by the provider, e.g. `gpt-4o-mini`,
+
+            `anthropic.claude-3-5-sonnet-20241022-v2:0`. Used for routing
+
+            and for looking up static catalog metadata.
+
+            '
+        providerDeploymentName:
+          type: string
+          description: 'Upstream deployment/inference name when distinct from
+
+            `providerModelId`. For gateway providers that expose a deployment
+
+            routing map (e.g. Bifrost azure_key_config.deployments), this is the
+
+            upstream id Bifrost forwards to. When omitted the gateway falls back
+
+            to identity routing.
+
+            '
+        gatewayModelId:
+          type: string
+          readOnly: true
+          description: 'Ready-to-send model id for Bifrost, computed at registration
+
+            time as `<bifrost-provider>/<providerModelId>` (e.g.
+
+            `azure/gpt-4o-mini-model`). Consumed verbatim by callers so
+
+            the provider prefix lives in config, not in each runtime hop.
+
+            '
+        credentialId:
+          type: string
+          format: uuid
+          description: 'Reference to a project `Credential` for remote providers.
+
+            Required when the LLM gateway is enabled and `provider` is
+
+            one of `openai`, `openai_compatible`, `aws_bedrock`, `azure`,
+
+            `google`.
+
+            '
+        modelType:
+          type: string
+          enum:
+          - llm
+          - embedding
+        modelClass:
+          type: string
+          description: Functional classification (e.g. `reasoning`, `balanced`, `fast`,
+            `code`).
+        rateCardOverride:
+          type: object
+          description: 'Free-form pricing/rate overrides. The server adds a
+
+            `_gateway` sub-object reflecting Bifrost registration
+
+            (`gatewayProvider`, `keyName`, `keyId`, `bifrostTeamId`,
+            `bifrostVirtualKeyId`)
+
+            after a successful create.
+
+            '
+        model_info:
+          type: object
+          properties:
+            architecture:
+              type: string
+            base_model:
+              type: string
+            variant:
+              type: string
+            parameters:
+              type: string
+            quantization:
+              type: string
+            size:
+              type: number
+        endpoint:
+          type: string
+          description: Provider endpoint URL (e.g. Ollama server URL). Required for the `ollama` provider
+            when the LLM gateway is enabled.
+        auth:
+          type: object
+          description: Legacy inline auth payload. Prefer `credentialId`.
+          properties:
+            access_token:
+              type: string
+            secret_key:
+              type: string
+        limits:
+          type: object
+          properties:
+            tpm:
+              type: number
+            timeout:
+              type: number
+            stream_timeout:
+              type: number
+            max_retries:
+              type: number
+        contextWindow:
+          type: integer
+          readOnly: true
+          description: Static catalog metadata for `(provider, providerModelId)`.
+            Populated on `GET /models/{id}`.
+        maxOutputTokens:
+          type: integer
+          readOnly: true
+          description: Static catalog metadata for `(provider, providerModelId)`.
+            Populated on `GET /models/{id}`.
+        supportsExtendedOutput:
+          type: boolean
+          readOnly: true
+          description: Static catalog metadata for `(provider, providerModelId)`.
+            Populated on `GET /models/{id}`.
+        dependentsSummary:
+          allOf:
+          - $ref: '#/components/schemas/DependentsSummary'
+          readOnly: true
+          description: 'Per-row dependents summary returned on `GET /models` unless
+            the
+
+            caller opts out via `include=dependentsSummary=false`. Counts
+
+            entities (agents, agent teams, knowledge bases, ...) that
+
+            reference this model.
+
+            '
+        createdAt:
+          type: string
+          format: date-time
+          readOnly: true
+        updatedAt:
+          type: string
+          format: date-time
+          readOnly: true
+      required:
+      - name
+    CreateModelRequest:
+      type: object
+      description: 'Payload accepted by `POST /api/v1/projects/{projectId}/models`.
+        Any
+
+        field marked `readOnly` on the `Model` schema is ignored on input.
+
+        '
+      required:
+      - name
+      properties:
+        name:
+          type: string
+        displayName:
+          type: string
+        provider:
+          type: string
+          enum:
+          - openai
+          - openai_compatible
+          - aws_bedrock
+          - azure
+          - google
+          - local
+        providerModelId:
+          type: string
+        providerDeploymentName:
+          type: string
+        credentialId:
+          type: string
+          format: uuid
+        modelType:
+          type: string
+          enum:
+          - llm
+          - embedding
+        modelClass:
+          type: string
+        endpoint:
+          type: string
+        model_info:
+          $ref: '#/components/schemas/ModelInfo'
+        auth:
+          $ref: '#/components/schemas/ModelAuth'
+        limits:
+          $ref: '#/components/schemas/ModelLimits'
+        rateCardOverride:
+          type: object
+    UpdateModelRequest:
+      type: object
+      description: 'Payload accepted by `PUT /api/v1/projects/{projectId}/models/{id}`.
+
+        All fields are optional and only the provided ones are written;
+
+        credential/provider/endpoint changes are *not* re-propagated to the
+
+        gateway — delete and recreate the model for those.
+
+        '
+      properties:
+        name:
+          type: string
+        displayName:
+          type: string
+        provider:
+          type: string
+          enum:
+          - openai
+          - openai_compatible
+          - aws_bedrock
+          - azure
+          - google
+          - local
+        providerModelId:
+          type: string
+        providerDeploymentName:
+          type: string
+        gatewayModelId:
+          type: string
+        credentialId:
+          type: string
+          format: uuid
+        modelType:
+          type: string
+          enum:
+          - llm
+          - embedding
+        modelClass:
+          type: string
+        endpoint:
+          type: string
+        model_info:
+          $ref: '#/components/schemas/ModelInfo'
+        auth:
+          $ref: '#/components/schemas/ModelAuth'
+        limits:
+          $ref: '#/components/schemas/ModelLimits'
+        rateCardOverride:
+          type: object
+    ModelInfo:
+      type: object
+      properties:
+        architecture:
+          type: string
+        base_model:
+          type: string
+        variant:
+          type: string
+        parameters:
+          type: string
+        quantization:
+          type: string
+        size:
+          type: number
+    ModelAuth:
+      type: object
+      properties:
+        access_token:
+          type: string
+        secret_key:
+          type: string
+    ModelLimits:
+      type: object
+      properties:
+        tpm:
+          type: number
+        timeout:
+          type: number
+        stream_timeout:
+          type: number
+        max_retries:
+          type: number
+    ModelHistory:
+      type: object
+      description: A single immutable snapshot of a `Model` taken on every successful
+        create/update.
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        entityId:
+          type: string
+          format: uuid
+          description: UUID of the model this snapshot belongs to.
+        version:
+          type: integer
+          description: Monotonically increasing version number per model.
+        data:
+          $ref: '#/components/schemas/Model'
+        modifiedAt:
+          type: string
+          format: date-time
+        modifiedBy:
+          type: string
+          nullable: true
+        op:
+          type: string
+          nullable: true
+          description: Operation that produced the snapshot (e.g. `create`, `update`,
+            `restore`).
+      required:
+      - entityId
+      - version
+      - data
+    ListAvailableModelsRequest:
+      type: object
+      required:
+      - provider
+      properties:
+        provider:
+          type: string
+          enum:
+          - openai
+          - openai_compatible
+          - aws_bedrock
+          - azure
+          - google
+          - local
+        credentialId:
+          type: string
+          format: uuid
+          description: Required for remote providers; the secret is resolved server-side.
+        type:
+          type: string
+          enum:
+          - llm
+          - embedding
+          description: Optional filter applied by the adapter.
+    ListAvailableModelsResponse:
+      type: object
+      properties:
+        provider:
+          type: string
+        models:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProviderModelEntry'
+    ProviderModelEntry:
+      type: object
+      description: Normalized model item returned by a provider adapter.
+      required:
+      - id
+      - name
+      - type
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        type:
+          type: string
+          enum:
+          - llm
+          - embedding
+        description:
+          type: string
+        contextWindow:
+          type: integer
+        maxOutputTokens:
+          type: integer
+        supportsExtendedOutput:
+          type: boolean
+        rateCard:
+          type: object
+          properties:
+            inputPricePerToken:
+              type: number
+            outputPricePerToken:
+              type: number
+            currency:
+              type: string
+        metadata:
+          type: object
+          additionalProperties: true
+    InferRequest:
+      type: object
+      required:
+      - messages
+      properties:
+        messages:
+          type: array
+          minItems: 1
+          maxItems: 64
+          items:
+            $ref: '#/components/schemas/InferMessage'
+        temperature:
+          type: number
+        maxTokens:
+          type: integer
+          minimum: 1
+          description: Forwarded to the gateway as `max_tokens`.
+    InferMessage:
+      type: object
+      required:
+      - role
+      - content
+      properties:
+        role:
+          type: string
+          enum:
+          - system
+          - user
+          - assistant
+        content:
+          type: string
+          minLength: 1
+          maxLength: 20000
+    InferResponse:
+      type: object
+      properties:
+        response:
+          type: string
+          description: Concatenated assistant content returned by the gateway.
+        latencyMs:
+          type: integer
+          description: End-to-end gateway round-trip latency measured in the route.
+        modelName:
+          type: string
+          description: Resolved model label as reported by the gateway (falls back
+            to `displayName`/`name`).
+        usage:
+          type: object
+          properties:
+            promptTokens:
+              type: integer
+            completionTokens:
+              type: integer
+            totalTokens:
+              type: integer
+    DependentItem:
+      type: object
+      required:
+      - kind
+      - id
+      properties:
+        kind:
+          type: string
+          description: Source entity kind (e.g. `agent`, `agent_team`, `knowledge_base`,
+            `mcp_server`).
+        id:
+          type: string
+          description: Source entity id.
+        name:
+          type: string
+          nullable: true
+          description: Resolved display name; `null` when the source row could not
+            be looked up.
+        relation:
+          type: string
+          description: Edge label describing how the source references the target.
+    DependentsPage:
+      type: object
+      required:
+      - items
+      - totalByKind
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/DependentItem'
+        nextCursor:
+          type: string
+          nullable: true
+          description: Opaque base64url cursor for the next page, or `null` when exhausted.
+        totalByKind:
+          type: object
+          additionalProperties:
+            type: integer
+          description: Total dependents grouped by source kind. Independent of the
+            current page.
+    DependentsSummary:
+      type: object
+      required:
+      - total
+      - byKind
+      properties:
+        total:
+          type: integer
+          description: Total number of edges pointing at this target.
+        byKind:
+          type: object
+          additionalProperties:
+            type: integer
+          description: Per-kind counts of source entities.
+    HasDependentsError:
+      type: object
+      required:
+      - error
+      - code
+      properties:
+        error:
+          type: string
+        code:
+          type: string
+          enum:
+          - HAS_DEPENDENTS
+        dependents:
+          $ref: '#/components/schemas/DependentsPage'
+    DataSet:
+      type: object
+      required:
+      - name
+      - description
+      - type
+      - kind
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        type:
+          type: string
+          enum:
+          - acquired
+          - manual
+        originConnector:
+          type: string
+        kind:
+          type: string
+          enum:
+          - unstructured
+          - structured
+        bucketName:
+          type: string
+          readOnly: true
+          description: Populated by the server from the project home_dir; ignored
+            on create/update requests.
+        uploadedFiles:
+          type: array
+          items:
+            type: string
+          description: Deprecated - files are now managed through manifests
+        filterSpec:
+          type: object
+        fileProcessors:
+          type: array
+          items:
+            type: string
+        sqlQuery:
+          type: string
+        manifest:
+          $ref: '#/components/schemas/DataSetManifest'
+          description: Latest manifest (draft or committed) containing files for this
+            dataset
+    DataSetManifest:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        dataSetId:
+          type: string
+          format: uuid
+        manifestId:
+          type: integer
+          description: Monotonically increasing manifest version number
+        status:
+          type: string
+          enum:
+          - draft
+          - committed
+          - deprecated
+          description: Manifest status - only draft manifests can be modified
+        metadata:
+          type: object
+          additionalProperties: true
+          description: Optional metadata for the manifest
+        schema:
+          type: object
+          additionalProperties: true
+          description: Optional schema definition for the manifest
+        files:
+          type: array
+          items:
+            $ref: '#/components/schemas/DataSetManifestFile'
+          description: List of files in this manifest
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    DataSetManifestFile:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        manifestId:
+          type: string
+          format: uuid
+        fileName:
+          type: string
+          description: Original file name
+        uri:
+          type: string
+          description: S3 URI or file path (e.g., s3://bucket/path/to/file)
+        createdAt:
+          type: string
+          format: date-time
+    KnowledgeBase:
+      type: object
+      required:
+      - name
+      - sourceDataset
+      - embeddingModel
+      - chunkSize
+      - vectorSize
+      - dataType
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        sourceDataset:
+          type: string
+        embeddingModel:
+          type: string
+        chunkSize:
+          type: integer
+        vectorSize:
+          type: integer
+        dataType:
+          type: string
+    Project:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        metadata:
+          type: object
+          additionalProperties: true
+    CreateProjectRequest:
+      type: object
+      required:
+      - name
+      properties:
+        name:
+          type: string
+        metadata:
+          type: object
+          additionalProperties: true
+    UpdateProjectRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        metadata:
+          type: object
+          additionalProperties: true
+    Bucket:
+      type: object
+      properties:
+        namespace_id:
+          type: string
+        name:
+          type: string
+        region:
+          type: string
+        volume_info:
+          type: object
+          properties:
+            type:
+              type: string
+            endpoint:
+              type: string
+            mount_options:
+              type: array
+              items:
+                type: string
+            provisioning_mode:
+              type: string
+              enum:
+              - static
+              - dynamic
+            storage_class_name:
+              type: string
+            storage_size:
+              type: string
+            parameters:
+              type: object
+              additionalProperties:
+                type: string
+            access_modes:
+              type: array
+              items:
+                type: string
+                enum:
+                - ReadWriteOnce
+                - ReadWriteMany
+                - ReadOnlyMany
+                - ReadWriteOncePod
+              description: 'Access modes for PVC. If not specified, system will automatically
+                select
+
+                the best mode based on StorageClass provisioner capabilities.
+
+                Prefers ReadWriteMany for shared access across pods.
+
+                '
+        auth_info:
+          type: object
+          properties:
+            type:
+              type: string
+            username:
+              type: string
+            password_encrypted:
+              type: string
+          additionalProperties: true
+        protocol:
+          type: string
+        deployment_config:
+          type: object
+          properties: {}
+          additionalProperties: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        metadata:
+          type: object
+          additionalProperties: true
+    CreateBucketRequest:
+      type: object
+      required:
+      - name
+      - region
+      - volume_info
+      - auth_info
+      - protocol
+      properties:
+        name:
+          type: string
+        region:
+          type: string
+        volume_info:
+          type: object
+          required:
+          - type
+          properties:
+            type:
+              type: string
+            endpoint:
+              type: string
+              description: Required for static provisioning
+            mount_options:
+              type: array
+              items:
+                type: string
+            provisioning_mode:
+              type: string
+              enum:
+              - static
+              - dynamic
+              default: static
+              description: Volume provisioning mode
+            storage_class_name:
+              type: string
+              description: Required for dynamic provisioning
+            storage_size:
+              type: string
+              description: Required for dynamic provisioning (e.g., "10Gi", "100Gi")
+              pattern: ^\d+[KMGTPE]i?$
+            parameters:
+              type: object
+              additionalProperties:
+                type: string
+              description: Provisioner-specific parameters
+            access_modes:
+              type: array
+              items:
+                type: string
+                enum:
+                - ReadWriteOnce
+                - ReadWriteMany
+                - ReadOnlyMany
+                - ReadWriteOncePod
+              description: 'Access modes for PVC. If not specified, system will automatically
+                select
+
+                the best mode based on StorageClass provisioner capabilities.
+
+                Prefers ReadWriteMany for shared access across pods.
+
+                '
+        auth_info:
+          type: object
+          required:
+          - type
+          properties:
+            type:
+              type: string
+            username:
+              type: string
+            password_encrypted:
+              type: string
+          additionalProperties: true
+        protocol:
+          type: string
+        deployment_config:
+          type: object
+          properties: {}
+          additionalProperties: true
+        metadata:
+          type: object
+          additionalProperties: true
+    UpdateBucketRequest:
+      type: object
+      properties:
+        region:
+          type: string
+        volume_info:
+          type: object
+          properties:
+            type:
+              type: string
+            endpoint:
+              type: string
+            mount_options:
+              type: array
+              items:
+                type: string
+            provisioning_mode:
+              type: string
+              enum:
+              - static
+              - dynamic
+            storage_class_name:
+              type: string
+            storage_size:
+              type: string
+              pattern: ^\d+[KMGTPE]i?$
+            parameters:
+              type: object
+              additionalProperties:
+                type: string
+        auth_info:
+          type: object
+          properties:
+            type:
+              type: string
+            username:
+              type: string
+            password_encrypted:
+              type: string
+          additionalProperties: true
+        protocol:
+          type: string
+        deployment_config:
+          type: object
+          properties: {}
+          additionalProperties: true
+        metadata:
+          type: object
+          additionalProperties: true
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+        code:
+          type: string
+    MCPServerCatalogEntry:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        category:
+          type: string
+          enum:
+          - infrastructure
+          - database
+          - filesystem
+          - development
+          - general
+        image:
+          type: string
+        defaultTag:
+          type: string
+        envSchema:
+          type: array
+          items:
+            type: object
+            properties:
+              name:
+                type: string
+              description:
+                type: string
+              required:
+                type: boolean
+              secret:
+                type: boolean
+        securityProfile:
+          type: string
+          enum:
+          - strict
+          - network-access
+        resourcePreset:
+          type: string
+          enum:
+          - small
+          - medium
+          - large
+        requiresRBAC:
+          type: boolean
+    RuntimeStatusInfo:
+      type: object
+      properties:
+        runtimeStatus:
+          type: string
+        phase:
+          type: string
+        ready:
+          type: boolean
+        restartCount:
+          type: integer
+        message:
+          type: string
+    MCPServer:
+      type: object
+      required:
+      - name
+      properties:
+        id:
+          type: string
+          format: uuid
+        projectId:
+          type: string
+        name:
+          type: string
+          description: Alphanumeric with underscores only
+        description:
+          type: string
+        deploymentType:
+          type: string
+          enum:
+          - remote
+          - managed
+          default: remote
+        catalogId:
+          type: string
+          description: ID of the catalog entry (for managed servers)
+        managedConfig:
+          type: object
+          properties:
+            resourcePreset:
+              type: string
+              enum:
+              - small
+              - medium
+              - large
+            envOverrides:
+              type: object
+              additionalProperties:
+                type: string
+            volumeSize:
+              type: string
+        k8sResourceName:
+          type: string
+        runtimeStatus:
+          type: string
+          enum:
+          - provisioning
+          - running
+          - failed
+          - deleting
+        transport:
+          type: string
+          enum:
+          - http
+          - sse
+          - stdio
+        url:
+          type: string
+        command:
+          type: string
+        args:
+          type: array
+          items:
+            type: string
+        env:
+          type: object
+        authType:
+          type: string
+          enum:
+          - none
+          - api_key
+          - bearer_token
+          - basic
+          - oauth2
+          default: none
+        credentialId:
+          type: string
+          format: uuid
+        authorizationUrl:
+          type: string
+        tokenUrl:
+          type: string
+        staticHeaders:
+          type: object
+        extraHeaders:
+          type: array
+          items:
+            type: string
+        allowedTools:
+          type: array
+          items:
+            type: string
+        disallowedTools:
+          type: array
+          items:
+            type: string
+        specPath:
+          type: string
+        llmproxyGatewayServerId:
+          type: string
+        llmproxyGatewayServerName:
+          type: string
+        syncStatus:
+          type: string
+          enum:
+          - synced
+          - pending
+          - error
+        status:
+          type: string
+          enum:
+          - connected
+          - disconnected
+          - error
+          - unknown
+        timeout:
+          type: number
+          default: 600000
+        trust:
+          type: boolean
+          default: false
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    Pipeline:
+      type: object
+      required:
+      - name
+      - graph
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        type:
+          type: string
+          enum:
+          - Data
+          - API
+          default: Data
+          description: Pipeline type (Data or API)
+        graph:
+          type: object
+          properties:
+            nodes:
+              type: array
+              items:
+                type: object
+                properties:
+                  id:
+                    type: string
+                  type:
+                    type: string
+                    description: Node type (any string value allowed)
+                  config:
+                    type: object
+                  metadata:
+                    type: object
+            edges:
+              type: array
+              items:
+                type: object
+                properties:
+                  from:
+                    type: string
+                  to:
+                    type: string
+                  config:
+                    type: object
+    Deployment:
+      type: object
+      properties:
+        id:
+          type: string
+        region:
+          type: string
+        endpoint:
+          type: string
+        capacity:
+          type: object
+          properties:
+            max_buckets:
+              type: integer
+            max_storage_tb:
+              type: integer
+        storage_classes:
+          type: array
+          items:
+            type: string
+          description: List of StorageClass names supported by this deployment
+        capabilities:
+          type: array
+          items:
+            type: string
+        registered_at:
+          type: string
+          format: date-time
+        last_health_check:
+          type: string
+          format: date-time
+        status:
+          type: string
+          enum:
+          - healthy
+          - unhealthy
+          - unknown
+    CreateDeploymentRequest:
+      type: object
+      required:
+      - id
+      - region
+      - endpoint
+      properties:
+        id:
+          type: string
+        region:
+          type: string
+        endpoint:
+          type: string
+        capacity:
+          type: object
+          properties:
+            max_buckets:
+              type: integer
+            max_storage_tb:
+              type: integer
+        capabilities:
+          type: array
+          items:
+            type: string
+        storage_classes:
+          type: array
+          items:
+            type: string
+          description: List of StorageClass names supported by this deployment
+    UpdateDeploymentRequest:
+      type: object
+      properties:
+        region:
+          type: string
+        endpoint:
+          type: string
+        capacity:
+          type: object
+          properties:
+            max_buckets:
+              type: integer
+            max_storage_tb:
+              type: integer
+        capabilities:
+          type: array
+          items:
+            type: string
+        storage_classes:
+          type: array
+          items:
+            type: string
+          description: List of StorageClass names supported by this deployment
+    StorageClass:
+      type: object
+      properties:
+        name:
+          type: string
+          description: Name of the StorageClass
+        provisioner:
+          type: string
+          description: Provisioner for the StorageClass
+    DeploymentConfigResponse:
+      type: object
+      properties:
+        deployment_id:
+          type: string
+        buckets:
+          type: array
+          items:
+            $ref: '#/components/schemas/BucketConfig'
+        config_version:
+          type: integer
+    BucketConfig:
+      type: object
+      properties:
+        namespace_id:
+          type: string
+        bucket_name:
+          type: string
+        region:
+          type: string
+        volume_info:
+          type: object
+          properties:
+            type:
+              type: string
+            endpoint:
+              type: string
+            mount_options:
+              type: array
+              items:
+                type: string
+            provisioning_mode:
+              type: string
+              enum:
+              - static
+              - dynamic
+            storage_class_name:
+              type: string
+            storage_size:
+              type: string
+            parameters:
+              type: object
+              additionalProperties:
+                type: string
+            access_modes:
+              type: array
+              items:
+                type: string
+                enum:
+                - ReadWriteOnce
+                - ReadWriteMany
+                - ReadOnlyMany
+                - ReadWriteOncePod
+        auth_info:
+          type: object
+          properties:
+            type:
+              type: string
+            username:
+              type: string
+            password_encrypted:
+              type: string
+          additionalProperties: true
+        protocol:
+          type: string
+        role:
+          type: string
+          enum:
+          - primary
+          - secondary
+        other_deployments:
+          type: array
+          items:
+            type: object
+            properties:
+              deployment_id:
+                type: string
+              role:
+                type: string
+                enum:
+                - primary
+                - secondary
+    BucketRoutingResponse:
+      type: object
+      properties:
+        bucket_name:
+          type: string
+        namespace_id:
+          type: string
+        deployments:
+          type: array
+          items:
+            $ref: '#/components/schemas/RoutingDeploymentInfo'
+        routing_strategy:
+          type: string
+          enum:
+          - load_balance
+          - failover
+          - geographic
+        updated_at:
+          type: string
+          format: date-time
+    RoutingDeploymentInfo:
+      type: object
+      properties:
+        deployment_id:
+          type: string
+        role:
+          type: string
+          enum:
+          - primary
+          - secondary
+        priority:
+          type: integer
+        endpoint:
+          type: string
+        health_status:
+          type: string
+          enum:
+          - healthy
+          - unhealthy
+          - unknown
+        load_balance_weight:
+          type: integer
+        last_health_check:
+          type: string
+          format: date-time
+    Metrics:
+      type: object
+      properties:
+        deployment_id:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        metrics:
+          type: object
+          properties:
+            request_latency_p50_ms:
+              type: number
+            request_latency_p95_ms:
+              type: number
+            request_latency_p99_ms:
+              type: number
+            requests_per_second:
+              type: number
+            error_rate:
+              type: number
+            cpu_usage_percent:
+              type: number
+            memory_usage_percent:
+              type: number
+            disk_io_utilization:
+              type: number
+        bucket_metrics:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              requests:
+                type: integer
+              errors:
+                type: integer
+              storage_bytes:
+                type: integer
+    HealthReport:
+      type: object
+      properties:
+        deployment_id:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        healthy:
+          type: boolean
+        status_message:
+          type: string
+        volume_mount_status:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              mounted:
+                type: boolean
+              status:
+                type: string
+        bucket_health:
+          type: array
+          items:
+            $ref: '#/components/schemas/BucketHealth'
+    BucketHealth:
+      type: object
+      properties:
+        namespace_id:
+          type: string
+        bucket_name:
+          type: string
+        deployment_id:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        healthy:
+          type: boolean
+        status_message:
+          type: string
+        volume_mount_status:
+          type: object
+          properties:
+            mounted:
+              type: boolean
+            status:
+              type: string
+    WorkspaceTemplate:
+      type: object
+      required:
+      - name
+      - description
+      - type
+      - environment
+      properties:
+        id:
+          type: string
+          format: uuid
+        projectId:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        type:
+          type: string
+          enum:
+          - jupyterlab
+          - vscode
+          - custom
+        environment:
+          type: object
+          properties:
+            baseImage:
+              type: string
+            pythonVersion:
+              type: string
+            nodeVersion:
+              type: string
+            libraries:
+              type: array
+              items:
+                type: object
+                properties:
+                  name:
+                    type: string
+                  version:
+                    type: string
+                  packageManager:
+                    type: string
+                    enum:
+                    - pip
+                    - conda
+                    - npm
+            environmentVariables:
+              type: object
+              additionalProperties:
+                type: string
+        jupyterConfig:
+          type: object
+          properties:
+            extensions:
+              type: array
+              items:
+                type: string
+            settings:
+              type: object
+              additionalProperties: true
+        resources:
+          type: object
+          properties:
+            cpu:
+              type: string
+            memory:
+              type: string
+            storage:
+              type: string
+            gpu:
+              type: boolean
+        startupScript:
+          type: string
+        isActive:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    CreateWorkspaceTemplateRequest:
+      type: object
+      required:
+      - name
+      - description
+      - type
+      - environment
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        type:
+          type: string
+          enum:
+          - jupyterlab
+          - vscode
+          - custom
+        environment:
+          type: object
+          properties:
+            baseImage:
+              type: string
+            pythonVersion:
+              type: string
+            nodeVersion:
+              type: string
+            libraries:
+              type: array
+              items:
+                type: object
+                properties:
+                  name:
+                    type: string
+                  version:
+                    type: string
+                  packageManager:
+                    type: string
+                    enum:
+                    - pip
+                    - conda
+                    - npm
+            environmentVariables:
+              type: object
+              additionalProperties:
+                type: string
+        jupyterConfig:
+          type: object
+        resources:
+          type: object
+        startupScript:
+          type: string
+    UpdateWorkspaceTemplateRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        type:
+          type: string
+          enum:
+          - jupyterlab
+          - vscode
+          - custom
+        environment:
+          type: object
+        jupyterConfig:
+          type: object
+        resources:
+          type: object
+        startupScript:
+          type: string
+        isActive:
+          type: boolean
+    Workspace:
+      type: object
+      required:
+      - templateId
+      - name
+      properties:
+        id:
+          type: string
+          pattern: ^[0-9a-z]{8,12}$
+          description: Workspace ID (Base36, 8-12 characters)
+          example: a3k9mp2xq7
+        projectId:
+          type: string
+        templateId:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+        status:
+          type: string
+          enum:
+          - creating
+          - running
+          - stopping
+          - stopped
+          - error
+        endpoint:
+          type: string
+        podName:
+          type: string
+        deploymentId:
+          type: string
+        bucketName:
+          type: string
+        pvcName:
+          type: string
+        metadata:
+          type: object
+          properties:
+            lastSyncAt:
+              type: string
+            imageTag:
+              type: string
+            libraryInstallStatus:
+              type: string
+              enum:
+              - pending
+              - installing
+              - completed
+              - failed
+            errorMessage:
+              type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        lastAccessedAt:
+          type: string
+          format: date-time
+    CreateWorkspaceRequest:
+      type: object
+      required:
+      - templateId
+      - name
+      properties:
+        templateId:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+        bucketName:
+          type: string
+    UpdateWorkspaceRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        bucketName:
+          type: string
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Enter your JWT token obtained from Keycloak. You can get a token
+        by logging into the GUI and copying the token from browser developer tools,
+        or by using the OAuth2 flow below.
+    oauth2:
+      type: oauth2
+      description: OAuth2 authentication via Keycloak. Click Authorize and login with
+        your credentials.
+      flows:
+        authorizationCode:
+          authorizationUrl: https://auth.agentstudio.local:8443/realms/nemo/protocol/openid-connect/auth
+          tokenUrl: https://auth.agentstudio.local:8443/realms/nemo/protocol/openid-connect/token
+          scopes:
+            openid: OpenID Connect scope
+            profile: User profile information
+            email: User email address

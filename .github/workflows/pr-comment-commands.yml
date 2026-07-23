@@ -1,0 +1,346 @@
+# PR slash-command bot. Translates `/skip-l3` and `/requires-l3` comments
+# into PR labels, then dispatches the gate (and, for `/requires-l3`,
+# auto-assign) to re-evaluate.
+#
+# Labels are the single source of truth (visible in the sidebar, in the
+# API, in audit logs); removing the label by hand also works.
+#
+# Explicit workflow_dispatch is required: GitHub suppresses pull_request
+# events triggered by GITHUB_TOKEN actions to prevent loops, so labels
+# applied here would not fire `pull_request.labeled` on the gate.
+#
+# Grammar — first non-empty line is the command; the rest of that line
+# plus any subsequent non-empty lines form the justification:
+#   /skip-l3 [cancel] <reason>
+#   /requires-l3 [cancel] <reason>
+#
+# Examples:
+#   /skip-l3 reverts feat regression from #1234 — original L3 still applies
+#   /requires-l3 touches the auth flow; pulling L3 in despite fix: prefix
+#   /skip-l3
+#   This PR only changes vendored generated code; L3 review is not useful.
+#
+# Justification is mandatory (>= 15 chars). The whole point of these
+# commands is audit, so bare commands are rejected.
+#
+# Authorization:
+#   /skip-l3      — @ORG/eng-l2 or @ORG/eng-l3 only (downgrades the bar).
+#   /requires-l3  — anyone with write access (only strengthens the bar).
+#
+# Token: /skip-l3's team-membership check needs `read:org`, which
+# GITHUB_TOKEN lacks. We mint a short-lived installation token from the
+# same `agentstudio-review-gate` App as review-level-gate.yml (secrets
+# REVIEW_GATE_APP_ID / REVIEW_GATE_APP_KEY). Auto-revoked at job end.
+
+name: PR Comment Commands
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  pull-requests: write   # add/remove labels
+  issues: write          # reactions + reply comments
+  contents: read
+  actions: write         # workflow_dispatch the gate + auto-assign
+
+concurrency:
+  # Per-comment group: never cancel a command mid-flight; comments can
+  # safely process in parallel.
+  group: pr-comment-commands-${{ github.event.comment.id }}
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    name: Apply command
+    runs-on: ubuntu-latest
+    # Coarse pre-filter; strict parsing happens in the script.
+    if: >-
+      github.event.issue.pull_request != null &&
+      (
+        contains(github.event.comment.body, '/skip-l3') ||
+        contains(github.event.comment.body, '/requires-l3')
+      )
+    steps:
+      # Same App + secrets as review-level-gate.yml (Members:Read) — used
+      # by the /skip-l3 team-membership check. Auto-revoked at job end.
+      # If the mint fails the job fails fast; the script's "missing token"
+      # branch is a defensive fallback, not the primary error path.
+      - name: Mint org-read token
+        id: app-token
+        if: contains(github.event.comment.body, '/skip-l3')   # only /skip-l3 needs team-membership lookup
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.REVIEW_GATE_APP_ID }}
+          private-key: ${{ secrets.REVIEW_GATE_APP_KEY }}
+          owner: ${{ github.repository_owner }}
+
+      - name: Parse, authorize, apply
+        uses: actions/github-script@v7
+        env:
+          ORG: ${{ github.repository_owner }}
+          # App token, used only for the team-membership call below.
+          # Repo-scoped writes (labels, issues, workflow_dispatch) go
+          # through GITHUB_TOKEN so we don't expand the App's scopes.
+          ORG_READ_TOKEN: ${{ steps.app-token.outputs.token }}
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            // Don't `require("@actions/github")` to spawn a second Octokit —
+            // github-script@v7 bundles its deps into dist/index.js with no
+            // node_modules at runtime (MODULE_NOT_FOUND). The one call
+            // that needs the org-read token uses plain fetch() inline.
+            const org = process.env.ORG;
+            const orgToken = process.env.ORG_READ_TOKEN;
+
+            const comment = context.payload.comment;
+            const actor   = comment.user.login;
+            const prNum   = context.issue.number;
+
+            // ─── 1. Parse the command + justification ────────────
+            // First non-empty line is the command (optionally `cancel`,
+            // optionally with an inline reason); subsequent non-empty
+            // lines extend the justification. Word-boundary lookahead on
+            // `cancel` so `/skip-l3 cancellation …` parses as cmd+reason,
+            // not as a cancel with "lation …" as the reason.
+            const MIN_REASON_LENGTH = 15;
+
+            const body  = (comment.body || "").replace(/\r\n/g, "\n");
+            const lines = body.split("\n");
+            const firstIdx = lines.findIndex(l => l.trim().length > 0);
+            if (firstIdx < 0) {
+              core.info("Comment is empty. Exiting.");
+              return;
+            }
+            const firstLine = lines[firstIdx].trim();
+            const m = firstLine.match(
+              /^\/(skip-l3|requires-l3)(?:\s+(cancel)(?=\s|$))?\s*(.*?)\s*$/
+            );
+            if (!m) {
+              core.info(`No recognised command on first line: "${firstLine}". Exiting.`);
+              return;
+            }
+            const [, label, action, inlineReason] = m;
+            const removing = action === "cancel";
+            const cmd      = `/${label}${removing ? " cancel" : ""}`;
+
+            // Reason = remainder of first line + subsequent non-empty
+            // lines. Keep newlines for display; collapse whitespace for
+            // the length check so padding can't satisfy it.
+            const reasonLines = [
+              inlineReason,
+              ...lines.slice(firstIdx + 1).map(s => s.trim()),
+            ].filter(Boolean);
+            const reasonText = reasonLines.join("\n");
+            const reasonLen  = reasonText.replace(/\s+/g, " ").trim().length;
+
+            // Helpers for the back-channel UX.
+            async function react(content) {
+              try {
+                await github.rest.reactions.createForIssueComment({
+                  ...context.repo,
+                  comment_id: comment.id,
+                  content,
+                });
+              } catch (err) {
+                core.warning(`Failed to add "${content}" reaction: ${err.message}`);
+              }
+            }
+            async function reply(text) {
+              await github.rest.issues.createComment({
+                ...context.repo,
+                issue_number: prNum,
+                body: text,
+              });
+            }
+
+            // ─── 2. Require a justification ──────────────────────
+            // Runs before auth API calls so malformed comments don't
+            // burn rate limit on team-membership lookups.
+            if (reasonLen < MIN_REASON_LENGTH) {
+              await react("-1");
+              await reply([
+                `@${actor}, \`${cmd}\` requires a justification of at least ${MIN_REASON_LENGTH} characters explaining why this override is appropriate for this PR.`,
+                ``,
+                `Re-post in either of these forms:`,
+                ``,
+                "```",
+                `${cmd} <reason on the same line>`,
+                "```",
+                ``,
+                `or`,
+                ``,
+                "```",
+                `${cmd}`,
+                `<reason on the line below — multi-line OK>`,
+                "```",
+              ].join("\n"));
+              core.info(`Rejected: ${actor} ran ${cmd} with reason of length ${reasonLen} (min ${MIN_REASON_LENGTH}).`);
+              return;
+            }
+
+            // ─── 3. Authorize ────────────────────────────────────
+            // Plain fetch() — see env block for why we don't use a
+            // second Octokit. Returns true/false authoritatively, or
+            // null if the org token is missing.
+            async function isInTeam(slug, username) {
+              if (!orgToken) return null;
+              const url = `https://api.github.com/orgs/${org}/teams/${slug}/memberships/${username}`;
+              const res = await fetch(url, {
+                headers: {
+                  "Authorization": `Bearer ${orgToken}`,
+                  "Accept": "application/vnd.github+json",
+                  "X-GitHub-Api-Version": "2022-11-28",
+                  "User-Agent": "agentstudio-review-gate",
+                },
+              });
+              if (res.status === 404) return false;
+              if (!res.ok) {
+                const text = await res.text().catch(() => "");
+                throw new Error(
+                  `GET ${url} → ${res.status} ${res.statusText}` +
+                  (text ? `: ${text.slice(0, 200)}` : "")
+                );
+              }
+              const data = await res.json();
+              return data.state === "active";
+            }
+            async function hasWriteAccess(username) {
+              try {
+                const res = await github.rest.repos.getCollaboratorPermissionLevel({
+                  ...context.repo, username,
+                });
+                return ["admin", "maintain", "write"].includes(res.data.permission);
+              } catch (err) {
+                if (err.status === 404) return false;
+                throw err;
+              }
+            }
+
+            let authorized = false;
+            let denyReason = "";
+
+            if (label === "skip-l3") {
+              if (!orgToken) {
+                await react("confused");
+                await reply(
+                  `@${actor}, \`${cmd}\` needs to verify team membership but no ` +
+                  "org-read token was minted. Ask a repo admin to check the " +
+                  "`REVIEW_GATE_APP_ID` / `REVIEW_GATE_APP_KEY` secrets and the " +
+                  "`agentstudio-review-gate` GitHub App installation."
+                );
+                return;
+              }
+              const [inL2, inL3] = await Promise.all([
+                isInTeam("eng-l2", actor),
+                isInTeam("eng-l3", actor),
+              ]);
+              authorized = inL2 || inL3;
+              denyReason = `membership in \`@${org}/eng-l2\` or \`@${org}/eng-l3\``;
+            } else {
+              authorized = await hasWriteAccess(actor);
+              denyReason = "write access to this repository";
+            }
+
+            if (!authorized) {
+              await react("-1");
+              await reply(`@${actor}, you need ${denyReason} to run \`${cmd}\`.`);
+              core.info(`Denied: ${actor} attempted ${cmd} without sufficient permissions.`);
+              return;
+            }
+
+            // ─── 4. Apply the label change ───────────────────────
+            // skip-l3 and requires-l3 are mutually exclusive overrides:
+            // when applying one, drop the other so the PR state is
+            // unambiguous (otherwise the gate's outcome would depend on
+            // whichever label happened to be checked last).
+            const opposite = label === "skip-l3" ? "requires-l3" : "skip-l3";
+            let removedOpposite = false;
+
+            if (removing) {
+              try {
+                await github.rest.issues.removeLabel({
+                  ...context.repo,
+                  issue_number: prNum,
+                  name: label,
+                });
+                core.info(`Removed "${label}" from PR #${prNum}.`);
+              } catch (err) {
+                if (err.status === 404) {
+                  core.info(`Label "${label}" was not present on PR #${prNum}; nothing to remove.`);
+                } else {
+                  throw err;
+                }
+              }
+            } else {
+              await github.rest.issues.addLabels({
+                ...context.repo,
+                issue_number: prNum,
+                labels: [label],
+              });
+              core.info(`Applied "${label}" to PR #${prNum}.`);
+
+              try {
+                await github.rest.issues.removeLabel({
+                  ...context.repo,
+                  issue_number: prNum,
+                  name: opposite,
+                });
+                removedOpposite = true;
+                core.info(`Also removed conflicting "${opposite}" from PR #${prNum}.`);
+              } catch (err) {
+                if (err.status !== 404) throw err;
+              }
+            }
+
+            // ─── 5. Re-fire downstream workflows ─────────────────
+            // GITHUB_TOKEN-applied labels don't fire pull_request.labeled,
+            // so the gate (and sometimes auto-assign) need an explicit nudge.
+            const dispatchRef = context.payload.repository.default_branch;
+
+            await github.rest.actions.createWorkflowDispatch({
+              ...context.repo,
+              workflow_id: "review-level-gate.yml",
+              ref: dispatchRef,
+              inputs: { pr_number: String(prNum) },
+            });
+            core.info(`Dispatched review-level-gate.yml for PR #${prNum}.`);
+
+            // Re-assign reviewers only when L3 was just turned ON; the
+            // skip path and cancellations don't change who's requested.
+            if (label === "requires-l3" && !removing) {
+              await github.rest.actions.createWorkflowDispatch({
+                ...context.repo,
+                workflow_id: "auto-assign-reviewers.yml",
+                ref: dispatchRef,
+                inputs: { pr_number: String(prNum) },
+              });
+              core.info(`Dispatched auto-assign-reviewers.yml for PR #${prNum}.`);
+            }
+
+            // ─── 6. Acknowledge success ──────────────────────────
+            // Audit comment that quotes the justification, so the reason
+            // sits next to the action in the PR timeline.
+            const verb = removing ? "Removed" : "Applied";
+            const quotedReason = reasonLines.map(l => `> ${l}`).join("\n");
+            const replyLines = [`${verb} label \`${label}\` per \`${cmd}\` from @${actor}.`];
+            if (removedOpposite) {
+              replyLines.push(
+                ``,
+                `_Also removed the conflicting \`${opposite}\` label — \`skip-l3\` and \`requires-l3\` are mutually exclusive._`,
+              );
+            }
+            replyLines.push(``, `**Justification:**`, quotedReason);
+            await reply(replyLines.join("\n"));
+            await react("+1");
+
+            const summaryAction = removing
+              ? `removed label \`${label}\`.`
+              : `applied label \`${label}\`${removedOpposite ? ` (and removed conflicting \`${opposite}\`)` : ""}.`;
+            core.summary
+              .addHeading("PR Comment Command")
+              .addRaw(`\`${cmd}\` by @${actor} on PR #${prNum} -> `)
+              .addRaw(summaryAction)
+              .addBreak()
+              .addRaw(`**Justification:** ${reasonText}`)
+              .write();

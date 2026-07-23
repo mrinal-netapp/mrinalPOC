@@ -1,0 +1,37 @@
+.member-list-name-link {
+  padding: 0;
+  border: none;
+  background: none;
+  font-family: var(--font-family);
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 20px;
+  color: var(--text-button-primary);
+  cursor: pointer;
+  text-align: left;
+
+  &:hover {
+    text-decoration: underline;
+  }
+
+  &:disabled {
+    color: var(--text-disabled);
+    cursor: not-allowed;
+    text-decoration: none;
+  }
+}
+
+.member-list-last-active {
+  display: inline-flex;
+  align-items: center;
+  font-family: var(--font-family);
+  font-size: 14px;
+  line-height: 20px;
+
+  &--never {
+    padding: 2px 8px;
+    border-radius: 4px;
+    color: var(--text-primary);
+    background: var(--background-tag-purple, #f3e8ff);
+  }
+}

@@ -1,0 +1,2 @@
+AgentStudio data-management integration test upload.
+This file is baked into the integration-test image for optional MANUAL_UPLOAD_FILE_PATH in CI.

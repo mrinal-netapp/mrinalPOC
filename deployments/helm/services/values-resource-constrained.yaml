@@ -1,0 +1,213 @@
+# Resource-constrained overlay for the services tier.
+# Targets local dev clusters (KIND, Docker Desktop, k3d, minikube) and
+# especially Apple Silicon hosts where TEI's upstream amd64 image runs
+# under QEMU/Rosetta emulation with high cold-start cost.
+#
+# Use:
+#   helm upgrade --install agentstudio-services deployments/helm/services \
+#     -f deployments/helm/services/values.yaml \
+#     -f deployments/helm/services/values-local.yaml \
+#     -f deployments/helm/services/values-resource-constrained.yaml
+#
+# To use the multi-arch custom image, build it once
+# (see deployments/docker/text-embeddings-inference/README.md) and uncomment
+# the agentstudio-tei-models block below.
+
+text-embeddings-inference:
+  enabled: true
+  # ─────────────────────────────────────────────────────────────────────
+  # ⚠️  IMPORTANT: this `models:` list is a FULL REPLACEMENT of the chart's
+  # default models list (Helm does not deep-merge lists). When a new
+  # built-in is added to `BuiltinModels.ts` AND the chart's values.yaml,
+  # this overlay must be updated in parallel — otherwise the new model is
+  # silently absent on local clusters and runtime embedding calls fail
+  # with 'connection refused'.
+  # ─────────────────────────────────────────────────────────────────────
+  # Only MiniLM runs by default on constrained local clusters; other
+  # built-ins get Services (for Bifrost registration) but scale to 0 until
+  # explicitly needed — `kubectl scale deploy/tei-<key> --replicas=1`.
+  models:
+    - key: minilm
+      hfModelId: sentence-transformers/all-MiniLM-L6-v2
+      dimensions: 384
+      autoTruncate: true
+      maxBatchTokens: 16384
+      replicaCount: 1
+      resources:
+        requests:
+          cpu: 250m
+          memory: 512Mi
+        limits:
+          cpu: 1000m
+          memory: 3Gi
+      autoscaling:
+        enabled: false
+        minReplicas: 1
+        maxReplicas: 1
+        targetCPUUtilizationPercentage: 90
+
+    - key: bge-small-en-v1-5
+      hfModelId: BAAI/bge-small-en-v1.5
+      dimensions: 384
+      autoTruncate: true
+      maxBatchTokens: 16384
+      replicaCount: 0
+      resources:
+        requests:
+          cpu: 250m
+          memory: 512Mi
+        limits:
+          cpu: 1000m
+          memory: 3Gi
+      autoscaling:
+        enabled: false
+
+    - key: all-minilm-l12-v2
+      hfModelId: sentence-transformers/all-MiniLM-L12-v2
+      dimensions: 384
+      autoTruncate: true
+      maxBatchTokens: 16384
+      replicaCount: 0
+      resources:
+        requests:
+          cpu: 250m
+          memory: 512Mi
+        limits:
+          cpu: 1000m
+          memory: 3Gi
+      autoscaling:
+        enabled: false
+
+    - key: bge-base-en-v1-5
+      hfModelId: BAAI/bge-base-en-v1.5
+      dimensions: 768
+      autoTruncate: true
+      maxBatchTokens: 16384
+      replicaCount: 0
+      resources:
+        requests:
+          cpu: 250m
+          memory: 768Mi
+        limits:
+          cpu: 1000m
+          memory: 4Gi
+      autoscaling:
+        enabled: false
+
+    - key: all-mpnet-base-v2
+      hfModelId: sentence-transformers/all-mpnet-base-v2
+      dimensions: 768
+      autoTruncate: true
+      maxBatchTokens: 16384
+      replicaCount: 0
+      resources:
+        requests:
+          cpu: 250m
+          memory: 768Mi
+        limits:
+          cpu: 1000m
+          memory: 4Gi
+      autoscaling:
+        enabled: false
+
+    - key: bge-large-en-v1-5
+      hfModelId: BAAI/bge-large-en-v1.5
+      dimensions: 1024
+      autoTruncate: true
+      maxBatchTokens: 8192
+      replicaCount: 0
+      resources:
+        requests:
+          cpu: 250m
+          memory: 1Gi
+        limits:
+          cpu: 1000m
+          memory: 5Gi
+      autoscaling:
+        enabled: false
+
+    - key: paraphrase-minilm-l3-v2
+      hfModelId: sentence-transformers/paraphrase-MiniLM-L3-v2
+      dimensions: 384
+      autoTruncate: true
+      maxBatchTokens: 16384
+      replicaCount: 0
+      resources:
+        requests:
+          cpu: 250m
+          memory: 512Mi
+        limits:
+          cpu: 1000m
+          memory: 2Gi
+      autoscaling:
+        enabled: false
+
+    - key: paraphrase-multilingual-minilm-l12-v2
+      hfModelId: sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
+      dimensions: 384
+      autoTruncate: true
+      maxBatchTokens: 16384
+      replicaCount: 0
+      resources:
+        requests:
+          cpu: 250m
+          memory: 512Mi
+        limits:
+          cpu: 1000m
+          memory: 3Gi
+      autoscaling:
+        enabled: false
+
+    - key: paraphrase-multilingual-mpnet-base-v2
+      hfModelId: sentence-transformers/paraphrase-multilingual-mpnet-base-v2
+      dimensions: 768
+      autoTruncate: true
+      maxBatchTokens: 16384
+      replicaCount: 0
+      resources:
+        requests:
+          cpu: 250m
+          memory: 768Mi
+        limits:
+          cpu: 1000m
+          memory: 4Gi
+      autoscaling:
+        enabled: false
+
+    - key: multi-qa-minilm-l6-cos-v1
+      hfModelId: sentence-transformers/multi-qa-MiniLM-L6-cos-v1
+      dimensions: 384
+      autoTruncate: true
+      maxBatchTokens: 16384
+      replicaCount: 0
+      resources:
+        requests:
+          cpu: 250m
+          memory: 512Mi
+        limits:
+          cpu: 1000m
+          memory: 3Gi
+      autoscaling:
+        enabled: false
+
+  # Uncomment after building the native multi-arch image:
+  # image:
+  #   repository: agentstudio-tei-models
+  #   tag: "cpu-1.7"
+  #   pullPolicy: IfNotPresent
+
+  # Disable NetworkPolicy on local clusters where the policy controller
+  # may not be installed (KIND default CNI lacks it).
+  networkPolicy:
+    enabled: false
+
+# kb-retrieval can be scaled down on local clusters — embeddings no longer
+# happen in-process, so memory pressure is lower than the pre-port shape.
+kb-retrieval-service:
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi

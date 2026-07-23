@@ -1,0 +1,21 @@
+# GKE overlay for the PLATFORM tier.
+#
+# Storage falls through to the cluster default StorageClass (no per-PVC override
+# needed here — see mk/tier-helm.mk GKE_PLATFORM_EXTRA for the lakekeeper OIDC /
+# init-image --set wiring). This overlay exists solely to create the dedicated
+# ServiceAccounts.
+#
+# Dedicated ServiceAccounts (mirrors the AKS overlay, minus Azure WI/clientId).
+# The base chart defaults serviceAccount.create=false, so without these the
+# s3gateway / temporal pods run as the namespace `default` SA — tripping the
+# mesh's `admissionPolicies.denyDefaultServiceAccount` guardrail and giving the
+# pods a shared SPIFFE identity. AKS gets named SAs for free via Azure Workload
+# Identity; on GKE we create them explicitly (only the SPIFFE identity matters).
+s3gateway:
+  serviceAccount:
+    create: true
+
+temporal:
+  serviceAccountName: temporal
+  serviceAccount:
+    create: true

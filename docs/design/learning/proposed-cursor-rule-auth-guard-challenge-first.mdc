@@ -1,0 +1,40 @@
+---
+description: Auth/guard work — challenge design first, minimum diff, no blind doc implementation
+globs: src/nemo/**/middleware/**,src/nemo/**/unifiedGuard*,docs/design/*guard*
+alwaysApply: false
+---
+
+# Proposed Cursor rule — auth / guard (not installed)
+
+> **Review copy for PR #152.** When approved, install at:
+> `.cursor/rules/auth-guard-challenge-first.mdc`
+>
+> `.cursor/` is gitignored; this file is versioned under `docs/design/learning/` for review.
+
+# Auth / guard changes — challenge before code
+
+## Canonical model (Agent Studio)
+
+- **Merged:** mesh allow-list (#274) gates **which principals** may call east-west.
+- **App guard:** JWT with `email` → enforce user scope only; **no email / no token → `next()`**.
+- **Deferred:** mesh DENY for JWT on sensitive paths → separate hardening PR (#320), not mixed into guard PRs.
+- **Active spec:** `simplified-guard-mesh-first.md`. Do not reintroduce `internalAllowed`, `*Dual` policy keys, `/internal` URL twins, or XFCC/`X-Service-Caller` parsing unless the user explicitly requests them.
+
+## Two phases (default)
+
+**Phase 1 — user has not said `go`:** Read the cited design doc only. Answer: minimum implementation, what to delete from the old approach, risks of deferred work, file list + rough size. **No edits, no commits.**
+
+**Phase 2 — user said `go`:** Implement **only** the approved slice. Respect file allow-list, test list, and non-goals from the prompt. Stop when tests pass; do not "finish" unrelated doc sections.
+
+## Minimize diff
+
+- Prefer deleting redundant machinery over adding policy keys or route twins.
+- If two policy names are byte-identical, use one name.
+- If > ~300 lines changed, stop and explain before continuing.
+- One PR = one architectural decision (app guard vs mesh DENY vs SA-token removal).
+
+## When user asks "implement &lt;doc&gt;"
+
+Stop and ask (or answer in prose) whether Phase 1 is done. If the doc conflicts with mesh-first, say which wins — do not implement the heavier model by default.
+
+Prompt template: `docs/design/learning/cursor-two-phase-implementation.md`

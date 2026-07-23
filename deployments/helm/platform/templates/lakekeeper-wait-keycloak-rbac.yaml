@@ -1,0 +1,36 @@
+{{- if and .Values.keycloak.setup.enabled .Values.lakekeeper.enabled }}
+{{- /*
+  RBAC so Lakekeeper pods can wait for the keycloak-setup Job to complete (init container runs kubectl wait).
+  The Lakekeeper SA (from the lakekeeper dependency chart) needs get/list on the keycloak-setup job.
+*/}}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "nemo.fullname" . }}-lakekeeper-wait-keycloak
+  namespace: {{ include "nemo.namespace" . }}
+  labels:
+    {{- include "nemo.labels" . | nindent 4 }}
+rules:
+- apiGroups: ["batch"]
+  resources: ["jobs"]
+  resourceNames:
+    - {{ include "nemo.fullname" . }}-keycloak-setup
+  verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "nemo.fullname" . }}-lakekeeper-wait-keycloak
+  namespace: {{ include "nemo.namespace" . }}
+  labels:
+    {{- include "nemo.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "nemo.fullname" . }}-lakekeeper-wait-keycloak
+subjects:
+- kind: ServiceAccount
+  name: {{ .Values.lakekeeper.catalog.serviceAccountName | default .Values.lakekeeper.fullnameOverride | default "lakekeeper" }}
+  namespace: {{ include "nemo.namespace" . }}
+{{- end }}

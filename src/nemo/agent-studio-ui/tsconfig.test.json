@@ -1,0 +1,45 @@
+{
+  "extends": "./tsconfig.app.json",
+  "compilerOptions": {
+    "composite": true,
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.test.tsbuildinfo",
+    "types": [
+      "vite/client",
+      "vitest/globals",
+      "@testing-library/jest-dom"
+    ]
+  },
+  "include": [
+    "src/**/*.test.ts",
+    "src/**/*.test.tsx",
+    "src/utils/unit-tests",
+    "src/utils/**/*.ts",
+    "src/ui-lib/base-components/**/*.tsx",
+    "src/ui-lib/base-components/**/*.ts",
+    "src/components/**/*.tsx",
+    "src/components/**/*.ts",
+    "src/routes/**/*.tsx",
+    "src/routes/**/*.ts",
+    "src/store/**/*.ts",
+    "src/store/**/*.tsx",
+    "src/api/**/*.ts",
+    "src/api/**/*.tsx",
+    "src/constants/**/*.ts",
+    "src/consts/**/*.ts",
+    "src/modals/**/*.ts",
+    "src/modals/**/*.tsx",
+    "src/ui-lib/lib/**/*.ts",
+    "src/ui-lib/types/**/*.ts",
+    "src/App.tsx",
+    "src/contexts/**/*.tsx",
+    "src/contexts/**/*.ts"
+  ],
+  "exclude": [
+    "src/ui-lib/base-components/**/*.demo.tsx",
+    "src/ui-lib/base-components/**/*.demo.ts",
+    "src/ui-lib/base-components/z-raw-files/**",
+    "src/api/data-sources.demo.tsx",
+    "src/api/datasets.demo.tsx",
+    "src/api/knowledge-bases.demo.tsx"
+  ]
+}

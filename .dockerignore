@@ -1,0 +1,134 @@
+# Repo-root .dockerignore — excludes from EVERY docker build whose context is
+# the repo root (currently: every nemo service whose Dockerfile uses
+# `src/nemo/<svc>/...` relative paths). Per-image .dockerignore files exist
+# under src/images/<img>/ for builds whose context is the image directory;
+# those are NOT shadowed by this file, they continue to apply at their own
+# scope.
+#
+# Goal: cut the build context from ~470M (incl. .git) to ~50M. The slowest
+# image (kb-retrieval-service, Rust) ships every byte of context to the
+# BuildKit daemon on every `docker buildx build .` — until this file landed,
+# that included the 211M .git history that no Dockerfile ever COPYs from.
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Version control / CI metadata. None of this is COPYed by any Dockerfile.
+# .git alone is 211M (nearly half the repo).
+# ──────────────────────────────────────────────────────────────────────────────
+.git
+.gitignore
+.gitattributes
+.github
+.gitlab
+**/.git
+.hg
+.svn
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Editor / IDE noise. Never copied.
+# ──────────────────────────────────────────────────────────────────────────────
+.idea
+.vscode
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+.history
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Language build artifacts.
+# Each Dockerfile builds these fresh inside the container, so shipping the
+# host's copy is pure context-transfer waste — and worse, the host artifacts
+# are usually built for the wrong platform (host arch vs. container arch).
+# ──────────────────────────────────────────────────────────────────────────────
+
+# Rust
+**/target
+**/Cargo.lock.bak
+
+# Node / TypeScript
+**/node_modules
+**/.next
+**/.nuxt
+**/.svelte-kit
+**/.turbo
+**/dist
+**/build
+**/coverage
+**/.eslintcache
+**/.parcel-cache
+**/tsconfig.tsbuildinfo
+**/npm-debug.log*
+**/yarn-debug.log*
+**/yarn-error.log*
+**/pnpm-debug.log*
+**/.yarn/cache
+**/.yarn/install-state.gz
+
+# Python
+**/__pycache__
+**/*.py[cod]
+**/*$py.class
+**/*.egg-info
+**/.eggs
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+**/.tox
+**/.coverage
+**/.coverage.*
+**/htmlcov
+**/.hypothesis
+**/.venv
+**/venv
+**/env
+**/ENV
+**/pip-log.txt
+**/pip-delete-this-directory.txt
+
+# Go
+**/vendor
+**/*.test
+**/*.out
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Service-local scratch / generated content that lives next to source files.
+# ──────────────────────────────────────────────────────────────────────────────
+
+# Local secrets / env overrides — never bake into images
+.env.local
+.env.*.local
+**/.env.local
+**/.env.*.local
+
+# Tmp / scratch
+tmp
+temp
+**/tmp
+**/temp
+.cache
+**/.cache
+
+# Pre-built tarballs that shouldn't sneak into the image
+*.tar
+*.tar.gz
+*.tgz
+*.zip
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Docker / Helm artifacts that never need to be inside an image.
+# (Helm charts ARE part of the operator image — those are explicitly COPYed,
+# so leave deployments/ alone.)
+# ──────────────────────────────────────────────────────────────────────────────
+*.dockerignore.bak
+
+# Documentation rarely needs to be inside the runtime image. Most Dockerfiles
+# don't COPY docs/ explicitly; but some do (e.g. operator embeds docs). Don't
+# blanket-exclude — let individual Dockerfiles add their own .dockerignore.
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Worktrees — Claude-driven background tasks create git worktrees alongside
+# the repo. These are full copies of the tree and would double the context.
+# ──────────────────────────────────────────────────────────────────────────────
+.worktrees
+**/.worktrees

@@ -1,0 +1,21 @@
+# --- Local secrets / env ---
+.env.local
+.env
+
+# --- Python virtualenv & caches ---
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# --- Generated test reports ---
+reports/
+
+# --- OS / editor ---
+.DS_Store
+
+/spec
+.env.local.bkp

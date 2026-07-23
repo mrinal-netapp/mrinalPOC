@@ -1,0 +1,16 @@
+.eval-run-overview {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  min-width: 0;
+
+  &__actions {
+    display: flex;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+}
+
+// Scorecard row styles live in eval-run-metric-sections.scss (shared with the
+// run results dialog via the RunOverviewCard component).

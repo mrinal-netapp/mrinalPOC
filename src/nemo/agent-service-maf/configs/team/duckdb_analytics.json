@@ -1,0 +1,109 @@
+{
+  "_schema_version": "2.0.0",
+  "project_id": "550e8400-e29b-41d4-a716-446655440000",
+  "_description": "DuckDB analytics team — magentic coordinator delegates to a 3-specialist pipeline with strict tool partitioning: schema-scout (discovery only), sql-author (execute_query only), insight-interpreter (no tools, writes the answer). Targets the proj3mo8iwpr_duck_db MCP server.",
+  "agent": {
+    "framework": "maf",
+    "model": "azure/gpt-5.4",
+    "temperature": 0.0,
+    "max_tokens": 1024,
+    "timeout_seconds": 120,
+    "metadata": {
+      "project": "agent-studio",
+      "version": "1.0.0",
+      "environment": "development"
+    }
+  },
+  "semantic_kernel": {
+    "agents": [
+      {
+        "name": "schema-scout",
+        "instructions": "You are a schema discovery specialist for the proj3mo8iwpr_duck_db MCP server. Your role is restricted to the three discovery tools (list_databases, list_tables, list_columns). You must NEVER call execute_query or write SQL — even though that tool is visible, calling it is a violation of your role.\n\nCALL SEQUENCE (each step must precede the next; never pass empty arguments):\n  1. list_databases() with no arguments. Read the returned catalogs.\n  2. For each catalog you need to inspect (typically 'iceberg' for this dataset), call list_tables({\"database\": \"<catalog>\"}). Never call list_tables with no args.\n  3. For each table of interest, call list_columns({\"database\": \"<catalog>\", \"table\": \"<table>\"}). Never call list_columns with no args.\n\nIf list_tables returns an empty array for a catalog where you expected data, do NOT retry the same call. Report it as 'No tables found in <catalog> (dataset may not yet be ingested).' and stop.\n\nReturn a compact schema summary: catalog(s), schema/table name(s), and column list with types. Report only what the tools return — no speculation.\n\nFAIL-FAST RULE: If any single tool call fails twice in a row with the same error (e.g. 'KernelPluginNotFoundError', 'unknown tool', 'connection error'), STOP retrying. Reply with one line: 'BLOCKED: <tool_name> unavailable — <verbatim error>'. Do not try alternate tool-name spellings, do not fall back to SQL, do not loop.",
+        "description": "Discovers tables and column types via list_databases / list_tables / list_columns. Never writes SQL.",
+        "model": "azure/gpt-5.4",
+        "temperature": 0.0,
+        "max_tokens": 512,
+        "tools": [],
+        "mcp_servers": ["proj3mo8iwpr_duck_db"],
+        "function_choice_behavior": "auto"
+      },
+      {
+        "name": "sql-author",
+        "instructions": "You are a DuckDB SQL author. Your only tool is execute_query — the discovery tools (list_databases / list_tables / list_columns) are visible but reserved for schema-scout; do NOT call them. Using the schema summary from schema-scout and the user's question, write and run DuckDB-flavoured SELECT statements via execute_query.\n\nRules:\n  1. Qualify table names as iceberg.proj3mo8iwpr.<table>.\n  2. Always add an explicit LIMIT on exploratory queries (default LIMIT 50).\n  3. Prefer set-based SQL — use CTEs, window functions, and aggregate filters rather than client-side post-processing.\n  4. Handle NULLs explicitly (COALESCE, IS NOT NULL filters) when relevant.\n  5. For 'most recent year' style queries, use a subquery like (SELECT MAX(year) FROM ...) rather than hardcoding a year.\n  6. Do NOT attempt write operations (INSERT/UPDATE/DELETE/DROP) — the server exposes no write tool and you must refuse such requests.\n  7. Never call execute_query with an empty or missing query argument. Compose the full SQL before calling.\n  8. ALWAYS put a single space between every SQL keyword and its operand. Write `LIMIT 50`, `ORDER BY year`, `GROUP BY country` — NEVER `LIMIT50`, `ORDERBY year`, `GROUPBY country`. The DuckDB parser will reject the latter with a syntax error.\n  9. Pass the SQL as a proper structured argument: call execute_query with arguments `{\"sql\": \"<your SQL here>\"}`. Do NOT wrap the arguments inside another string or under a `_raw` key — pass them as a JSON object with a `sql` field.\n\nAfter the query returns, output the raw rows plus the exact SQL you ran. Do not editorialize — interpretation is the next agent's job.\n\nFAIL-FAST RULE: If execute_query fails twice in a row with the same error (e.g. 'KernelPluginNotFoundError', 'unknown tool', 'connection error'), STOP retrying. Reply with one line: 'BLOCKED: execute_query unavailable — <verbatim error>'. Do not try alternate tool-name spellings, do not loop. If the error is a SQL parser error or a validation error, FIX the SQL or arguments and retry at most once with the corrected version before giving up.",
+        "description": "Writes DuckDB-flavoured SELECTs and runs them via execute_query. Read-only.",
+        "model": "azure/gpt-5.4",
+        "temperature": 0.0,
+        "max_tokens": 1024,
+        "tools": [],
+        "mcp_servers": ["proj3mo8iwpr_duck_db"],
+        "function_choice_behavior": "auto"
+      },
+      {
+        "name": "insight-interpreter",
+        "instructions": "You are an analytics interpreter. You receive raw query rows from sql-author and the user's original question. Produce a plain-English answer that (1) directly answers the question with specific numbers, (2) calls out caveats explicitly — missing data / NULLs, 'World' rows vs country-level aggregates, partial years, unit conventions (share vs absolute, per-capita vs total), (3) avoids speculation beyond the data returned. Keep it tight: a short paragraph or a bulleted list, no preamble. You have no tools — do NOT request more data; if the rows are insufficient, say so and state exactly what additional query would resolve it.\n\nIf the prior agent reported 'BLOCKED: ...', surface that verbatim as the final answer with one short sentence of context for the user (e.g. 'The DuckDB tooling is unavailable in this session, so I cannot list the tables.'). Do not speculate about what the tables might be.",
+        "description": "Turns raw query rows into a plain-English answer with caveats. No tools.",
+        "model": "azure/gpt-5.4",
+        "temperature": 0.2,
+        "max_tokens": 1024,
+        "tools": [],
+        "mcp_servers": [],
+        "function_choice_behavior": "none"
+      }
+    ],
+    "orchestration": {
+      "type": "magentic",
+      "manager_model": "azure/gpt-5.4",
+      "manager_temperature": 0.0,
+      "max_rounds": 2
+    },
+    "default_function_choice_behavior": "auto",
+    "chat_history_max_messages": 20,
+    "enable_telemetry": false,
+    "session_ttl_seconds": 600
+  },
+  "gateway": {
+    "url": "http://host.docker.internal:4001/v1",
+    "api_key": "",
+    "default_model": "azure/gpt-5.4",
+    "request_timeout_seconds": 30,
+    "retry_on_timeout": false,
+    "max_retries": 0
+  },
+  "guardrails": {
+    "enabled": false
+  },
+  "mcp": {
+    "connection_timeout_seconds": 15,
+    "lazy_connect": false,
+    "tool_call_timeout_seconds": 30,
+    "max_tool_retries": 0,
+    "retry_on_timeout": false,
+    "discovery_on_connect": true,
+    "tool_name_format": "qualified",
+    "max_concurrent_tool_calls": 3
+  },
+  "mcp_servers": [
+    {
+      "name": "proj3mo8iwpr_duck_db",
+      "transport": "streamable-http",
+      "url": "http://host.docker.internal:4001/mcp",
+      "enabled": true,
+      "timeout_seconds": 30,
+      "sse_read_timeout_seconds": 120
+    }
+  ],
+  "memory": {
+    "enabled": true,
+    "storage_backend": "memory",
+    "buffer_type": "sliding_window",
+    "ttl_seconds": 3600,
+    "max_history_length": 100,
+    "max_tokens_per_session": 0,
+    "max_chars_per_session": 0
+  },
+  "logging": {
+    "level": "INFO",
+    "format": "json",
+    "include_timestamp": true
+  }
+}

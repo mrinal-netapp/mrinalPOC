@@ -1,0 +1,92 @@
+.template-agent-config-dialog {
+  width: 100%;
+  max-height: min(88vh, 920px);
+  display: flex;
+  flex-direction: column;
+}
+
+.template-agent-config-dialog__card-content {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.template-agent-config-dialog__content {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  max-height: min(68vh, 720px);
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 24px 40px;
+  box-sizing: border-box;
+
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6,
+  p,
+  dl,
+  dd,
+  label {
+    margin: 0;
+  }
+
+  .agent-form__section {
+    min-width: 0;
+  }
+
+  .agent-form__section-body,
+  .agent-form__field,
+  .agent-form__resource-list,
+  .agent-form__template-requirement-list {
+    min-width: 0;
+  }
+}
+
+.dialog-popup:has(.template-agent-config-dialog) {
+  --app-left-sidebar-width: 112px;
+  --template-details-pane-width: 320px;
+  box-shadow:
+    0 24px 48px rgba(28, 28, 28, 0.16),
+    0 6px 16px rgba(28, 28, 28, 0.08);
+  border: 1px solid var(--border-subtle);
+  max-width: min(
+    960px,
+    calc(100vw - var(--app-left-sidebar-width) - 48px)
+  );
+  width: min(960px, calc(100vw - var(--app-left-sidebar-width) - 48px));
+  transform: translateX(calc(var(--app-left-sidebar-width) / 2));
+}
+
+.dialog-popup:has(.template-agent-config-dialog).template-agent-config-dialog-popup--with-sidepane {
+  max-width: min(
+    960px,
+    calc(
+      100vw - var(--app-left-sidebar-width) - var(--template-details-pane-width) - 48px
+    )
+  );
+  width: min(
+    960px,
+    calc(
+      100vw - var(--app-left-sidebar-width) - var(--template-details-pane-width) - 48px
+    )
+  );
+  transform: translateX(
+    calc((var(--app-left-sidebar-width) - var(--template-details-pane-width)) / 2)
+  );
+}
+
+@media (max-width: 768px) {
+  .template-agent-config-dialog__content {
+    padding: 20px 24px;
+  }
+
+  .dialog-popup:has(.template-agent-config-dialog),
+  .dialog-popup:has(.template-agent-config-dialog).template-agent-config-dialog-popup--with-sidepane {
+    max-width: calc(100vw - 24px);
+    width: calc(100vw - 24px);
+    transform: none;
+  }
+}

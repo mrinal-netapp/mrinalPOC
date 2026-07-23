@@ -1,0 +1,2776 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Agent Framework",
+    "description": "A pluggable, protocol-agnostic agent orchestration service. Supports REST, SSE, and WebSocket protocols.",
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/api/v1/projects/{project_id}/agent-teams": {
+      "get": {
+        "summary": "List teams in a project",
+        "description": "Return all teams registered under the project at startup, with their health and orchestration metadata.",
+        "operationId": "list_teams_api_v1_projects__project_id__agent_teams_get",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response List Teams Api V1 Projects  Project Id  Agent Teams Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "misc"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/agent-teams/{team_id}": {
+      "get": {
+        "summary": "Get team detail",
+        "description": "Return the team's non-sensitive metadata (agents, model, orchestration). 404 if the team is not registered under this project.",
+        "operationId": "get_team_api_v1_projects__project_id__agent_teams__team_id__get",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "team_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Team Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Get Team Api V1 Projects  Project Id  Agent Teams  Team Id  Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "misc"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/agent-teams/{team_id}/invoke": {
+      "post": {
+        "summary": "Invoke a team",
+        "description": "Invoke the orchestration pipeline of the team identified by team_id.",
+        "operationId": "invoke_team_api_v1_projects__project_id__agent_teams__team_id__invoke_post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "team_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Team Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InvokeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvokeResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "misc"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/agent-teams/{team_id}/invoke/stream": {
+      "post": {
+        "summary": "Stream a team's orchestration via SSE",
+        "description": "SSE streaming variant of /projects/{project_id}/agent-teams/{team_id}/invoke.",
+        "operationId": "stream_team_api_v1_projects__project_id__agent_teams__team_id__invoke_stream_post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "team_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Team Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InvokeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "misc"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/agents/invoke": {
+      "post": {
+        "summary": "Invoke the project's default team",
+        "description": "Invoke the orchestration pipeline of the project's default team without specifying a team_id. Prefer /projects/{project_id}/agent-teams/{team_id}/invoke for explicit team selection.",
+        "operationId": "invoke_orchestrated_api_v1_projects__project_id__agents_invoke_post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InvokeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvokeResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "misc"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/agents/invoke/stream": {
+      "post": {
+        "summary": "Stream the project's default team via SSE",
+        "description": "SSE streaming variant routed to the project's default team. Prefer /projects/{project_id}/agent-teams/{team_id}/invoke/stream.",
+        "operationId": "stream_orchestrated_api_v1_projects__project_id__agents_invoke_stream_post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InvokeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "misc"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/agents/{agent_id}/invoke": {
+      "post": {
+        "summary": "Synchronous agent invocation (project default team)",
+        "description": "Invoke an agent on the project's default team and wait for the complete response.",
+        "operationId": "invoke_agent_api_v1_projects__project_id__agents__agent_id__invoke_post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "agent_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Agent Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InvokeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvokeResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "misc"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/agents/{agent_id}/invoke/stream": {
+      "post": {
+        "summary": "SSE streaming agent invocation (project default team)",
+        "description": "Invoke an agent on the project's default team via SSE.",
+        "operationId": "stream_agent_api_v1_projects__project_id__agents__agent_id__invoke_stream_post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "agent_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Agent Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InvokeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "misc"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/agents": {
+      "get": {
+        "summary": "List registered agent frameworks",
+        "description": "Returns all registered framework adapters with their capabilities. Frameworks are global (not per-project), but the project_id in the path is validated against the team registry; unknown projects return 404.",
+        "operationId": "list_agents_api_v1_projects__project_id__agents_get",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentListResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "misc"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/agents/{agent_id}/capabilities": {
+      "get": {
+        "summary": "Get agent capabilities",
+        "description": "Returns the capabilities of a specific registered agent.",
+        "operationId": "get_capabilities_api_v1_projects__project_id__agents__agent_id__capabilities_get",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "agent_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Agent Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Get Capabilities Api V1 Projects  Project Id  Agents  Agent Id  Capabilities Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "misc"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/agent-teams/{team_id}/invoke/async": {
+      "post": {
+        "summary": "Submit a team invocation as a background task",
+        "description": "Schedule the team's orchestration pipeline as a background task and return a task_id immediately. Poll GET /projects/{project_id}/tasks/{task_id} until status is terminal.",
+        "operationId": "invoke_team_async_api_v1_projects__project_id__agent_teams__team_id__invoke_async_post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "team_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Team Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InvokeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AsyncInvokeResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "misc"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/agents/{agent_id}/invoke/async": {
+      "post": {
+        "summary": "Submit a single-agent invocation as a background task (default team)",
+        "description": "Schedule the named agent on the project's default team as a background task. Use /projects/{project_id}/agent-teams/{team_id}/invoke/async to target a specific team.",
+        "operationId": "invoke_agent_async_default_team_api_v1_projects__project_id__agents__agent_id__invoke_async_post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "agent_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Agent Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InvokeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AsyncInvokeResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "misc"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/tasks/{task_id}": {
+      "get": {
+        "summary": "Poll a previously submitted async task",
+        "description": "Return the current status of an async-invoke task. ``result`` is populated when ``status == 'completed'``; ``error`` and ``error_type`` are populated when ``status`` is ``'failed'`` or ``'cancelled'``.",
+        "operationId": "get_task_api_v1_projects__project_id__tasks__task_id__get",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Task Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskStatusResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "misc"
+        ]
+      },
+      "delete": {
+        "summary": "Cancel an in-flight async task",
+        "description": "Cancel a running task. Cancellation is propagated to the background asyncio task so the runner stops promptly. Already-terminal tasks are returned unchanged.",
+        "operationId": "cancel_task_api_v1_projects__project_id__tasks__task_id__delete",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Task Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskStatusResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "misc"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/agent-teams/{team_id}/sessions": {
+      "get": {
+        "summary": "List team-scoped sessions for the calling user",
+        "operationId": "list_team_sessions_api_v1_projects__project_id__agent_teams__team_id__sessions_get",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "team_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Team Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionListResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "misc"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/agent-teams/{team_id}/sessions/{session_id}": {
+      "get": {
+        "summary": "Get a team-scoped session transcript",
+        "operationId": "get_team_session_api_v1_projects__project_id__agent_teams__team_id__sessions__session_id__get",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "team_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Team Id"
+            }
+          },
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionDetailResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "misc"
+        ]
+      },
+      "patch": {
+        "summary": "Rename a team-scoped session (PATCH per RFC 7396 / \u00a75.9)",
+        "description": "Rename a session by sending a partial update body. The previous ``POST .../sessions/{sid}/rename`` form is gone (\u00a75.9 lock-in -- rename is a partial resource update, not a custom verb).",
+        "operationId": "rename_team_session_api_v1_projects__project_id__agent_teams__team_id__sessions__session_id__patch",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "team_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Team Id"
+            }
+          },
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SessionRenameRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionDetailResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "misc"
+        ]
+      },
+      "delete": {
+        "summary": "Delete a team-scoped session",
+        "operationId": "delete_team_session_api_v1_projects__project_id__agent_teams__team_id__sessions__session_id__delete",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "team_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Team Id"
+            }
+          },
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "misc"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/agents/{agent_id}/sessions": {
+      "get": {
+        "summary": "List agent-scoped sessions for the calling user (default team)",
+        "operationId": "list_agent_sessions_api_v1_projects__project_id__agents__agent_id__sessions_get",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "agent_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Agent Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionListResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "misc"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/agents/{agent_id}/sessions/{session_id}": {
+      "get": {
+        "summary": "Get an agent-scoped session transcript (default team)",
+        "operationId": "get_agent_session_api_v1_projects__project_id__agents__agent_id__sessions__session_id__get",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "agent_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Agent Id"
+            }
+          },
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionDetailResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "misc"
+        ]
+      },
+      "patch": {
+        "summary": "Rename an agent-scoped session (default team, PATCH per \u00a75.9)",
+        "description": "Rename a session by sending a partial update body. The previous ``POST .../sessions/{sid}/rename`` form is gone (\u00a75.9 lock-in -- rename is a partial resource update, not a custom verb).",
+        "operationId": "rename_agent_session_api_v1_projects__project_id__agents__agent_id__sessions__session_id__patch",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "agent_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Agent Id"
+            }
+          },
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SessionRenameRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionDetailResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "misc"
+        ]
+      },
+      "delete": {
+        "summary": "Delete an agent-scoped session (default team)",
+        "operationId": "delete_agent_session_api_v1_projects__project_id__agents__agent_id__sessions__session_id__delete",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "agent_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Agent Id"
+            }
+          },
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "misc"
+        ]
+      }
+    },
+    "/api/v1/admin/config/invalidate": {
+      "post": {
+        "summary": "Invalidate cached config-service payloads (lazy mode only)",
+        "description": "Drop one or more cached agent / team payloads so the next request re-fetches from config-service. Auth-gated by :class:`AgentAuthMiddleware` (the ``/api/v1/admin`` prefix is in the protected-paths tuple). No-op when CONFIG_SOURCE=file.",
+        "operationId": "invalidate_config_api_v1_admin_config_invalidate_post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "team_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Team Id"
+            }
+          },
+          {
+            "name": "agent_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Agent Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Invalidate Config Api V1 Admin Config Invalidate Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "misc"
+        ]
+      }
+    },
+    "/health": {
+      "get": {
+        "summary": "Health check",
+        "description": "Returns service status and uptime. Always exempt from authentication.",
+        "operationId": "health_check_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "health"
+        ]
+      }
+    },
+    "/ready": {
+      "get": {
+        "summary": "Readiness probe",
+        "description": "Readiness probe per \u00a75.8. Returns 200 once the service can serve invocations end-to-end (lifespan complete, at least one healthy team, MCP connected or lazy_connect, Redis reachable when configured). Returns 503 with a structured `reason` on first failing check. Auth-exempt; cache TTL ~1.5s to absorb probe storms.",
+        "operationId": "readiness_check_ready_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadinessResponse"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "misc"
+        ]
+      }
+    },
+    "/admin/config/status": {
+      "get": {
+        "summary": "Snapshot of the remote-config cache (lazy mode only)",
+        "description": "Return cache hit-rate counters, TTL, and current size. Returns an empty status object when CONFIG_SOURCE=file. Auth-gated by :class:`AgentAuthMiddleware` (the ``/admin`` prefix is in the protected-paths tuple) so the operational metrics are not exposed to unauthenticated callers.",
+        "operationId": "config_status_admin_config_status_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Config Status Admin Config Status Get"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "misc"
+        ]
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AgentCapabilities": {
+        "properties": {
+          "agentId": {
+            "type": "string",
+            "title": "Agentid",
+            "description": "Stable agent identifier"
+          },
+          "framework": {
+            "type": "string",
+            "title": "Framework",
+            "description": "Underlying framework (maf, echo, etc.)"
+          },
+          "supportsStreaming": {
+            "type": "boolean",
+            "title": "Supportsstreaming",
+            "description": "Supports SSE/WebSocket streaming",
+            "default": true
+          },
+          "supportedProtocols": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Supportedprotocols",
+            "description": "Supported transport protocols"
+          },
+          "availableTools": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Availabletools",
+            "description": "Available tool names (may be empty if resolved at runtime)"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description",
+            "description": "Human-readable agent description",
+            "default": ""
+          },
+          "version": {
+            "type": "string",
+            "title": "Version",
+            "description": "Adapter semantic version",
+            "default": "1.0.0"
+          }
+        },
+        "type": "object",
+        "required": [
+          "agentId",
+          "framework"
+        ],
+        "title": "AgentCapabilities",
+        "description": "Self-description of what an agent adapter can do.\n\nReturned by :meth:`AgentCapabilityProvider.get_capabilities` and used by\nthe discovery endpoints (``GET /agents``, ``GET /agents/{id}/capabilities``).\n\nAttributes:\n    agent_id: Stable identifier for this agent (must match FrameworkRegistry key).\n    framework: Underlying framework name (e.g., ``\"maf\"``, ``\"echo\"``).\n    supports_streaming: Whether this agent supports SSE/WebSocket streaming.\n    supported_protocols: List of transport protocols supported\n        (``\"rest\"``, ``\"sse\"``, ``\"websocket\"``).\n    available_tools: List of tool names this agent can use. May be empty if\n        tools are resolved at runtime from MCP.\n    description: Human-readable description of the agent's purpose.\n    version: Semantic version string for the adapter implementation.\n\nExample:\n    >>> caps = AgentCapabilities(\n    ...     agent_id=\"echo\",\n    ...     framework=\"example\",\n    ...     supports_streaming=True,\n    ...     description=\"Echo agent for testing\",\n    ... )"
+      },
+      "AgentCitationSource": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "description": "Agent name"
+          },
+          "model": {
+            "type": "string",
+            "title": "Model",
+            "description": "LLM model used",
+            "default": ""
+          },
+          "temperature": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Temperature",
+            "description": "Temperature used"
+          },
+          "framework": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Framework",
+            "description": "Framework identifier"
+          },
+          "instructionsPreview": {
+            "type": "string",
+            "title": "Instructionspreview",
+            "description": "First 120 chars of instructions (legacy diagnostic; absent from \u00a75.3.5 wire example).",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "AgentCitationSource",
+        "description": "Provenance for the agent that produced the final response.\n\nAttributes:\n    name: Agent name from config.\n    model: LLM model used (canonical location for \"what model\n        answered\" -- see \u00a75.2.4, never top-level ``modelName``).\n    temperature: Temperature setting used.\n    framework: Framework identifier (``maf``, ``echo``).\n    instructions_preview: First 120 chars of the agent's system\n        prompt. Retained as an optional field for back-compat with\n        existing tooling; not in the \u00a75.3.5 example."
+      },
+      "AgentConfigOverride": {
+        "properties": {
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model",
+            "description": "Per-agent model override"
+          },
+          "temperature": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 2.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Temperature"
+          },
+          "maxTokens": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 200000.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Maxtokens"
+          }
+        },
+        "type": "object",
+        "title": "AgentConfigOverride",
+        "description": "Per-agent override block, keyed under\n``configOverrides.agentOverrides`` in the request body.\n\nUsed by multi-agent team invokes to override a single member's\nLLM settings without touching the team manager. Unknown agent\nnames in the parent ``agentOverrides`` map are silently ignored\n(\u00a75.1.4); unknown fields here are silently dropped via\n``extra=\"ignore\"`` (\u00a75.1.1 loose-validation lock-in).\n\nAttributes:\n    model: Override model id for this agent.\n    temperature: Override sampling temperature (validated 0..2).\n    max_tokens: Override max output tokens (validated 1..200_000)."
+      },
+      "AgentListResponse": {
+        "properties": {
+          "agents": {
+            "items": {
+              "$ref": "#/components/schemas/AgentCapabilities"
+            },
+            "type": "array",
+            "title": "Agents",
+            "description": "Capability descriptors for all registered adapters"
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Total",
+            "description": "Total number of registered adapters",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "title": "AgentListResponse",
+        "description": "Response body for ``GET /agents``.\n\nLists all registered agent framework adapters with their capabilities.\n\nAttributes:\n    agents: List of capability descriptors for all registered adapters.\n    total: Total number of registered adapters (convenience field for clients).\n\nExample:\n    >>> resp = AgentListResponse(agents=[echo_caps, sk_caps], total=2)"
+      },
+      "AgentTraceStep": {
+        "properties": {
+          "stepIndex": {
+            "type": "integer",
+            "title": "Stepindex",
+            "description": "0-based position in the trace",
+            "default": 0
+          },
+          "agentName": {
+            "type": "string",
+            "title": "Agentname",
+            "description": "Agent name",
+            "default": ""
+          },
+          "action": {
+            "type": "string",
+            "title": "Action",
+            "description": "Action type",
+            "default": "respond"
+          },
+          "input": {
+            "type": "string",
+            "title": "Input",
+            "description": "Input text the agent received this step (the last user / manager / handoff message that triggered the response). Empty string when the input cannot be recovered from the event stream.",
+            "default": ""
+          },
+          "output": {
+            "type": "string",
+            "title": "Output",
+            "description": "Step output text (or summary)",
+            "default": ""
+          },
+          "toolExecutions": {
+            "items": {
+              "$ref": "#/components/schemas/ToolExecution"
+            },
+            "type": "array",
+            "title": "Toolexecutions",
+            "description": "Tools invoked by this agent during this step"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Timestamp",
+            "description": "When the step was recorded"
+          },
+          "durationMs": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Durationms",
+            "description": "(legacy) Step duration in ms"
+          },
+          "round": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Round",
+            "description": "(legacy) Orchestration round number"
+          }
+        },
+        "type": "object",
+        "title": "AgentTraceStep",
+        "description": "A single step in the multi-agent execution trace.\n\nWire shape per \u00a75.3.2. Legacy kwargs ``agent=`` (now ``agent_name``)\nand ``output_preview=`` (now ``output``) are accepted at construction\ntime so the SK adapter continues to build trace steps without code\nchurn.\n\nAttributes:\n    step_index: Position of this step in the trace, 0-indexed.\n    agent_name: Agent name that owns this step.\n    action: What the agent did (``respond`` / ``route`` /\n        ``tool_call`` / ``handoff``).\n    output: Output text (or summary).\n    tool_executions: Tools invoked by this agent in this step.\n    timestamp: When the step was recorded (UTC).\n    duration_ms: (legacy) Time this step took. Retained for back-compat.\n    round: (legacy) Round number in the orchestration. Retained for back-compat."
+      },
+      "AsyncInvokeResponse": {
+        "properties": {
+          "taskId": {
+            "type": "string",
+            "title": "Taskid",
+            "description": "UUID4 to use for polling"
+          },
+          "status": {
+            "type": "string",
+            "const": "running",
+            "title": "Status",
+            "description": "Always 'running' at submission time",
+            "default": "running"
+          }
+        },
+        "type": "object",
+        "required": [
+          "taskId"
+        ],
+        "title": "AsyncInvokeResponse",
+        "description": "Response to ``POST .../invoke/async``.\n\nReturned immediately after the task is persisted as ``running``. The\nclient polls ``GET .../tasks/{task_id}`` until the status reaches a\nterminal value.\n\nAttributes:\n    task_id: UUID4 to use for polling.\n    status: Always ``\"running\"`` at submission time."
+      },
+      "AttachmentItem": {
+        "properties": {
+          "filename": {
+            "type": "string",
+            "title": "Filename",
+            "description": "Attachment display name"
+          },
+          "mimeType": {
+            "type": "string",
+            "title": "Mimetype",
+            "description": "MIME type"
+          },
+          "content": {
+            "type": "string",
+            "title": "Content",
+            "description": "Base64-encoded raw bytes"
+          }
+        },
+        "type": "object",
+        "required": [
+          "filename",
+          "mimeType",
+          "content"
+        ],
+        "title": "AttachmentItem",
+        "description": "A single base64-encoded attachment carried on\n:class:`InvokeRequest.attachments`.\n\nWire shape per \u00a75.1.2. Counts and sizes enforced by\n:mod:`agent_service_maf.interface_layer._attachments` before the\nrequest enters the adapter (5 attachments / 5 MB per item caps,\nmirroring the legacy ``_validate_attachments`` in\n``src/nemo/agent-service/src/main.py:1453``).\n\nAttributes:\n    filename: Display name shown in the agent prompt / UI.\n    mime_type: MIME type (``application/pdf``, ``image/png``, ...).\n    content: Base64-encoded raw bytes."
+      },
+      "Citations": {
+        "properties": {
+          "respondingAgent": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AgentCitationSource"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Agent that produced the response"
+          },
+          "routing": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RoutingInfo"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Routing details (triage only)"
+          },
+          "contextUsed": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ContextUsed"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Session context provided to the agent"
+          },
+          "agentTrace": {
+            "items": {
+              "$ref": "#/components/schemas/AgentTraceStep"
+            },
+            "type": "array",
+            "title": "Agenttrace",
+            "description": "Multi-agent execution trace"
+          },
+          "performance": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PerformanceBreakdown"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "LLM vs framework time breakdown"
+          },
+          "kbCitations": {
+            "items": {
+              "$ref": "#/components/schemas/KbCitation"
+            },
+            "type": "array",
+            "title": "Kbcitations",
+            "description": "Flat, deduplicated KB citations (back-compat with legacy CitationItem[])"
+          }
+        },
+        "type": "object",
+        "title": "Citations",
+        "description": "Unified structured citations -- provenance + KB citations.\n\nWire shape per \u00a75.3.2 / \u00a75.3.5. Combines MAF's agent-orchestration\nprovenance (``responding_agent`` / ``routing`` / ``context_used`` /\n``agent_trace`` / ``performance``) with the legacy KB-document\ncitation list at the top (``kb_citations``) so the existing UI\nfooter renders without changes.\n\nAttributes:\n    responding_agent: The agent that produced the final output.\n    routing: Routing details (populated for triage orchestration).\n    context_used: Session history and context information.\n    agent_trace: Step-by-step execution trace across agents. Each step\n        includes the tools that specific agent invoked.\n    performance: Time breakdown between LLM calls and framework overhead.\n    kb_citations: Flat, deduplicated KB citations aggregated across\n        the trace (see \u00a75.3.4). Empty when no KB tool fired."
+      },
+      "ConfigOverrides": {
+        "properties": {
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model",
+            "description": "Top-level model override"
+          },
+          "temperature": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 2.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Temperature"
+          },
+          "maxTokens": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 200000.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Maxtokens"
+          },
+          "agentOverrides": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/AgentConfigOverride"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agentoverrides",
+            "description": "Per-agent overrides keyed by agent name (team invokes only)"
+          }
+        },
+        "type": "object",
+        "title": "ConfigOverrides",
+        "description": "Per-request overrides for selected agent config fields.\n\nConservative allowlist + loose validation per \u00a75.1.1: known fields\nare still Pydantic-range-validated, unknown fields are silently\ndropped at parse time and emit a DEBUG ``config_override_ignored``\nlog line. Locked fields (``agent.framework``, ``project_id``) are\nnot exposed here and cannot appear -- defense-in-depth still lives\nin the ConfigLoader.\n\nAttributes:\n    model: Top-level model override. Applies to the responding agent\n        in single-agent invokes or the team manager in team invokes.\n    temperature: Top-level sampling temperature.\n    max_tokens: Top-level output-token cap.\n    agent_overrides: Per-agent overrides keyed by agent name\n        (matches ``semantic_kernel.agents[].name`` in the team\n        config). Unknown names are silently ignored. In single-agent\n        invokes this map is silently ignored."
+      },
+      "ContextUsed": {
+        "properties": {
+          "sessionId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sessionid",
+            "description": "Session ID"
+          },
+          "historyMessagesCount": {
+            "type": "integer",
+            "title": "Historymessagescount",
+            "description": "Number of history messages",
+            "default": 0
+          },
+          "summaryUsed": {
+            "type": "boolean",
+            "title": "Summaryused",
+            "description": "True when summary buffer collapsed old history",
+            "default": false
+          },
+          "historyPreview": {
+            "items": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Historypreview",
+            "description": "(legacy) Preview of recent history messages"
+          }
+        },
+        "type": "object",
+        "title": "ContextUsed",
+        "description": "Information about the conversation context provided to the agent.\n\nWire shape per \u00a75.3.2. ``history_preview`` is retained as an\noptional back-compat field; the new ``summary_used`` boolean lets\nthe UI distinguish \"raw history was passed\" vs \"summary buffer\nfired\".\n\nAttributes:\n    session_id: Session ID used for history lookup.\n    history_messages_count: Number of history messages injected.\n    summary_used: True when a summarization buffer rolled up the\n        oldest history into a system message instead of passing\n        raw turns.\n    history_preview: (legacy) Last few messages from session history."
+      },
+      "ConversationMessage": {
+        "properties": {
+          "role": {
+            "type": "string",
+            "title": "Role",
+            "description": "Message role: 'user', 'assistant', or 'system'"
+          },
+          "content": {
+            "type": "string",
+            "title": "Content",
+            "description": "Message content"
+          },
+          "timestamp": {
+            "type": "number",
+            "title": "Timestamp",
+            "description": "POSIX epoch seconds"
+          },
+          "metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata",
+            "description": "Per-message metadata. Typed AssistantMessageMetadata on assistant messages; None on user / system messages."
+          },
+          "tokensActual": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tokensactual",
+            "description": "Real token count reported by the LLM gateway after an invocation. None when the gateway did not report usage or the message has not yet been sent to the LLM."
+          }
+        },
+        "type": "object",
+        "required": [
+          "role",
+          "content"
+        ],
+        "title": "ConversationMessage",
+        "description": "A single message in a conversation session.\n\nWire shape per \u00a75.6.2. Inherits from\n:class:`~agent_service_maf.interface_layer._base_model.CamelCaseModel`\nso JSON serialization emits ``camelCase`` (``tokensActual``,\n``timestamp``).\n\nCarries two token counts:\n\n- :attr:`estimated_tokens` -- always set, derived from character length\n  as a cheap approximation (1 token \u2248 4 chars).\n- :attr:`tokens_actual` -- ``None`` by default, set by the route handler\n  after an LLM call when the gateway returned a real ``TokenUsage``.\n\nThe ``metadata`` field is typed as\n:class:`AssistantMessageMetadata` (assistant messages only). The\nactual class is imported lazily inside the model to avoid an\nimport cycle with :mod:`agent_service_maf.interface_layer.models`\n-- it is loose-typed as ``dict | AssistantMessageMetadata | None``\nhere, with the typed variant produced by the route handler when\npersisting an assistant turn. User and system messages carry\n``metadata=None``."
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "HealthResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "description": "Liveness status",
+            "default": "ok"
+          },
+          "version": {
+            "type": "string",
+            "title": "Version",
+            "description": "Service version string",
+            "default": ""
+          },
+          "uptimeSeconds": {
+            "type": "number",
+            "minimum": 0.0,
+            "title": "Uptimeseconds",
+            "description": "Seconds since server startup",
+            "default": 0.0
+          }
+        },
+        "type": "object",
+        "title": "HealthResponse",
+        "description": "Response body for ``GET /health``.\n\nLiveness probe -- always returns 200 when the process is alive.\nReadiness checks live at ``GET /ready`` (see \u00a75.8).\n\nAttributes:\n    status: Always ``\"ok\"`` per \u00a75.8.2 wire example.\n    version: Service version string from ``pyproject.toml``.\n    uptime_seconds: Seconds since the server started."
+      },
+      "InvokeRequest": {
+        "properties": {
+          "input": {
+            "type": "string",
+            "title": "Input",
+            "description": "The user prompt or task description"
+          },
+          "sessionId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sessionid",
+            "description": "Optional session id for conversation continuity"
+          },
+          "context": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Context",
+            "description": "Additional runtime context. Allowed keys: backstory, conversationHistory, customSettings, toolsHint, outputSchema."
+          },
+          "attachments": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/AttachmentItem"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attachments",
+            "description": "Optional base64-encoded attachments (5 \u00d7 5 MB caps)"
+          },
+          "configOverrides": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ConfigOverrides"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Per-request config overrides (typed allowlist)"
+          },
+          "metadata": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Metadata",
+            "description": "Passthrough metadata \u2014 never forwarded to the LLM"
+          }
+        },
+        "type": "object",
+        "required": [
+          "input"
+        ],
+        "title": "InvokeRequest",
+        "description": "Request body for REST sync, SSE stream, async submit, and WS frames.\n\nWire shape per \u00a75.1.2. ``input`` replaces the legacy ``message``\nfield; the legacy top-level ``modelId`` field is dropped (use\n``configOverrides.model`` instead).\n\nAttributes:\n    input: The user prompt or task description sent to the agent.\n    session_id: Optional session id for conversation continuity.\n        When provided, the AgentService injects conversation history\n        from the session store.\n    context: Additional runtime context. Allowed keys (loose --\n        unknown keys ignored):\n\n        - ``backstory`` (str): Agent persona / background.\n        - ``conversationHistory`` (list[dict]): Prior conversation turns.\n        - ``customSettings`` (dict): Adapter-specific settings.\n        - ``toolsHint`` (list[str]): Preferred tool names.\n        - ``outputSchema`` (dict): JSON Schema for the expected output.\n          When set, the response includes ``parsedOutput`` on success.\n\n    attachments: Optional list of base64-encoded attachments. Capped\n        at 5 items / 5 MB each (see :mod:`._attachments`).\n    config_overrides: Per-request overrides for selected agent\n        config fields (typed, allowlist of 3 + ``agentOverrides``).\n        Unknown fields silently ignored.\n    metadata: Passthrough metadata for tracing/logging. **Never**\n        forwarded to the LLM.\n\nExample:\n    >>> body = InvokeRequest(\n    ...     input=\"Summarize this document.\",\n    ...     context={\"backstory\": \"You are a concise summarizer.\"},\n    ...     session_id=\"sess-abc123\",\n    ... )"
+      },
+      "InvokeResponse": {
+        "properties": {
+          "agentId": {
+            "type": "string",
+            "title": "Agentid",
+            "description": "Identifier of the responding agent"
+          },
+          "output": {
+            "type": "string",
+            "title": "Output",
+            "description": "The agent's final text output"
+          },
+          "parsedOutput": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parsedoutput",
+            "description": "JSON-parsed output when context.outputSchema was provided"
+          },
+          "artifacts": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Artifacts",
+            "description": "Generated artifacts (files, structured outputs)"
+          },
+          "usage": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Usage",
+            "description": "Token usage statistics \u2014 None if not tracked"
+          },
+          "metadata": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Metadata",
+            "description": "Response metadata"
+          },
+          "citations": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Citations"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Structured citations showing how the response was produced"
+          },
+          "durationMs": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Durationms",
+            "description": "Execution time in milliseconds",
+            "default": 0
+          },
+          "memoryDegraded": {
+            "type": "boolean",
+            "title": "Memorydegraded",
+            "description": "True when one or more session-store ops failed during the invocation. The agent ran with empty / partial history; the response is otherwise valid. Clients may surface this as 'history not loaded \u2014 please retry'.",
+            "default": false
+          },
+          "sessionId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sessionid",
+            "description": "Session id used for the turn (echoed even when not supplied)"
+          },
+          "traceId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Traceid",
+            "description": "Tracing id (Phoenix / OpenTelemetry); populated when tracing is enabled"
+          }
+        },
+        "type": "object",
+        "required": [
+          "agentId",
+          "output"
+        ],
+        "title": "InvokeResponse",
+        "description": "Response body for ``POST .../invoke``.\n\nOne model is returned by REST sync, SSE ``completed.metadata.invokeResponse``,\nand async ``TaskStatusResponse.result`` (\u00a75.2.2 / \u00a75.4.2 / \u00a75.5.2).\nWire form is camelCase.\n\n``modelName`` is intentionally **not** a top-level field; the\ncanonical location is ``citations.respondingAgent.model``.\n\nAttributes:\n    agent_id: Identifier of the responding agent.\n    output: The agent's final text output.\n    parsed_output: JSON-parsed output when the request carried\n        ``context.outputSchema`` and the LLM returned parseable\n        JSON. ``None`` otherwise.\n    artifacts: Generated artifacts (files, structured outputs).\n    usage: Token usage statistics, or ``None`` when the adapter did\n        not track usage.\n    metadata: Response metadata (tool calls made, framework version, etc.).\n    citations: Unified :class:`Citations` envelope (\u00a75.3).\n    duration_ms: Wall-clock execution time in milliseconds.\n    memory_degraded: ``True`` when one or more session-store ops\n        failed during the invocation.\n    session_id: Session id used for the turn. Echoed regardless of\n        whether the client supplied one.\n    trace_id: Tracing id (Phoenix / OpenTelemetry).\n\nExample:\n    >>> resp = InvokeResponse.from_agent_response(agent_response)"
+      },
+      "KbCitation": {
+        "properties": {
+          "source": {
+            "type": "string",
+            "title": "Source",
+            "description": "Document name shown in the UI"
+          },
+          "documentId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Documentid",
+            "description": "Stable document id"
+          },
+          "downloadUrl": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Downloadurl",
+            "description": "Pre-signed URL for download"
+          },
+          "knowledgeBaseId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Knowledgebaseid",
+            "description": "Owning KB id"
+          },
+          "knowledgeBaseName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Knowledgebasename",
+            "description": "KB display name"
+          },
+          "score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Score",
+            "description": "Retriever relevance score"
+          }
+        },
+        "type": "object",
+        "required": [
+          "source"
+        ],
+        "title": "KbCitation",
+        "description": "A single knowledge-base / RAG citation surfaced from a tool result.\n\nStrict back-compat with the legacy AgentStudio ``CitationItem``\n(``src/nemo/agent-service/src/main.py:158``) -- six wire fields, all\ncamelCase. Internal ``chunk_id`` is used by\n:class:`~agent_service_maf.framework.response_builder.ResponseBuilder`\nfor ``(knowledgeBaseId, documentId, chunkId)`` dedup but is excluded\nfrom the serialized wire form per \u00a75.3.1.\n\nAttributes:\n    source: Human-readable document name shown in the UI footer.\n    document_id: Stable id of the source document.\n    download_url: Pre-signed URL the UI links to.\n    knowledge_base_id: Owning KB.\n    knowledge_base_name: KB display name.\n    score: Retriever relevance score (0..1).\n    chunk_id: Internal dedup key -- never serialized."
+      },
+      "PerformanceBreakdown": {
+        "properties": {
+          "totalDurationMs": {
+            "type": "integer",
+            "title": "Totaldurationms",
+            "description": "Total invocation time (ms)",
+            "default": 0
+          },
+          "llmDurationMs": {
+            "type": "integer",
+            "title": "Llmdurationms",
+            "description": "Time in LLM gateway calls (ms)",
+            "default": 0
+          },
+          "toolDurationMs": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tooldurationms",
+            "description": "Time in tool calls (ms)"
+          },
+          "frameworkOverheadMs": {
+            "type": "integer",
+            "title": "Frameworkoverheadms",
+            "description": "Non-LLM overhead (ms)",
+            "default": 0
+          },
+          "llmCallCount": {
+            "type": "integer",
+            "title": "Llmcallcount",
+            "description": "(legacy) Number of LLM roundtrips",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "title": "PerformanceBreakdown",
+        "description": "Time breakdown showing where the request duration was spent.\n\nWire shape per \u00a75.3.2.\n\nAttributes:\n    total_duration_ms: Total wall-clock time for the invocation.\n    llm_duration_ms: Time spent waiting for LLM gateway responses.\n    tool_duration_ms: Aggregate time spent inside tool executions.\n    framework_overhead_ms: Time spent on everything except LLM and\n        tool calls (message serialization, guardrails, routing).\n    llm_call_count: (legacy) Number of LLM roundtrips (1 for simple,\n        2+ for tool use). Retained for back-compat."
+      },
+      "ReadinessResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ready",
+              "not_ready"
+            ],
+            "title": "Status",
+            "description": "Overall readiness state"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason",
+            "description": "First failing check on 503",
+            "default": ""
+          },
+          "teams": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Teams",
+            "description": "Healthy team ids"
+          },
+          "redis": {
+            "type": "string",
+            "title": "Redis",
+            "description": "Redis backend status",
+            "default": "disabled"
+          },
+          "uptime": {
+            "type": "number",
+            "minimum": 0.0,
+            "title": "Uptime",
+            "description": "Seconds since server startup",
+            "default": 0.0
+          },
+          "details": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Details",
+            "description": "Free-form per-check diagnostic details"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "title": "ReadinessResponse",
+        "description": "Response body for ``GET /ready`` (\u00a75.8.2).\n\n200 means every readiness check passed. 503 means at least one\ncheck failed; ``reason`` carries the first failing check's enum\nvalue so dashboards can branch.\n\nAttributes:\n    status: ``\"ready\"`` (200) or ``\"not_ready\"`` (503).\n    reason: First failing check, when ``status == \"not_ready\"``.\n        One of ``startup_in_progress`` / ``no_healthy_teams`` /\n        ``mcp_connect_failed`` / ``redis_unreachable``.\n    teams: List of healthy team ids (informational).\n    redis: ``\"ok\"`` / ``\"unreachable\"`` / ``\"disabled\"``.\n    uptime: Seconds since server start.\n    details: Free-form per-check details for debugging."
+      },
+      "RoutingInfo": {
+        "properties": {
+          "routerAgent": {
+            "type": "string",
+            "title": "Routeragent",
+            "description": "Router agent name",
+            "default": ""
+          },
+          "selectedSpecialist": {
+            "type": "string",
+            "title": "Selectedspecialist",
+            "description": "Selected specialist",
+            "default": ""
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason",
+            "description": "Why this specialist was selected"
+          },
+          "selectionMethod": {
+            "type": "string",
+            "title": "Selectionmethod",
+            "description": "(legacy) Selection method",
+            "default": ""
+          },
+          "candidates": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Candidates",
+            "description": "(legacy) Available specialists"
+          }
+        },
+        "type": "object",
+        "title": "RoutingInfo",
+        "description": "Details about how the request was routed in triage orchestration.\n\nWire shape per \u00a75.3.2. Legacy ``selection_method`` / ``candidates``\nkwargs are accepted and stored on the new ``reason`` field when no\nexplicit reason is supplied.\n\nAttributes:\n    router_agent: Name of the router agent.\n    selected_specialist: Name of the specialist chosen.\n    reason: Human-readable explanation of why this specialist won.\n    selection_method: (legacy) ``tool_call`` / ``text_parse`` /\n        ``default`` -- which routing path fired.\n    candidates: (legacy) List of available specialist names."
+      },
+      "SessionDetailResponse": {
+        "properties": {
+          "scope": {
+            "type": "string",
+            "enum": [
+              "team",
+              "agent"
+            ],
+            "title": "Scope"
+          },
+          "projectId": {
+            "type": "string",
+            "title": "Projectid"
+          },
+          "anchor": {
+            "type": "string",
+            "title": "Anchor"
+          },
+          "userId": {
+            "type": "string",
+            "title": "Userid",
+            "default": ""
+          },
+          "sessionId": {
+            "type": "string",
+            "title": "Sessionid"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "default": ""
+          },
+          "createdAt": {
+            "type": "number",
+            "title": "Createdat",
+            "default": 0.0
+          },
+          "lastAccessed": {
+            "type": "number",
+            "title": "Lastaccessed",
+            "default": 0.0
+          },
+          "tokenCount": {
+            "type": "integer",
+            "title": "Tokencount",
+            "default": 0
+          },
+          "messages": {
+            "items": {
+              "$ref": "#/components/schemas/ConversationMessage"
+            },
+            "type": "array",
+            "title": "Messages"
+          },
+          "memoryDegraded": {
+            "type": "boolean",
+            "title": "Memorydegraded",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "scope",
+          "projectId",
+          "anchor",
+          "sessionId"
+        ],
+        "title": "SessionDetailResponse",
+        "description": "Response body for ``GET /sessions/{session_id}`` (\u00a75.6.3).\n\nReturns the full transcript. Callers that want only the summary\nshould use the listing endpoint and avoid the round-trip on the\nmessage blob."
+      },
+      "SessionListResponse": {
+        "properties": {
+          "scope": {
+            "type": "string",
+            "enum": [
+              "team",
+              "agent"
+            ],
+            "title": "Scope"
+          },
+          "projectId": {
+            "type": "string",
+            "title": "Projectid"
+          },
+          "anchor": {
+            "type": "string",
+            "title": "Anchor"
+          },
+          "userId": {
+            "type": "string",
+            "title": "Userid",
+            "default": ""
+          },
+          "sessions": {
+            "items": {
+              "$ref": "#/components/schemas/SessionSummary"
+            },
+            "type": "array",
+            "title": "Sessions"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "default": 0
+          },
+          "memoryDegraded": {
+            "type": "boolean",
+            "title": "Memorydegraded",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "scope",
+          "projectId",
+          "anchor"
+        ],
+        "title": "SessionListResponse",
+        "description": "Response body for ``GET /sessions`` (team or agent scope).\n\nWire shape per \u00a75.6.2.\n\nAttributes:\n    scope: ``\"team\"`` or ``\"agent\"`` -- mirrors the URL hierarchy\n        that produced the list.\n    project_id: Project that owns the listed sessions.\n    anchor: ``team_id`` when scope=team, ``agent_id`` otherwise.\n    user_id: Authenticated caller's id. Empty in dev mode.\n    sessions: Newest-first list of summaries.\n    total: Convenience count.\n    memory_degraded: True when one or more store ops failed during\n        this list operation. Same contract as\n        :attr:`InvokeResponse.memory_degraded`."
+      },
+      "SessionRenameRequest": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "SessionRenameRequest",
+        "description": "Request body for ``PATCH .../sessions/{session_id}`` (\u00a75.9.2).\n\nThe legacy verb ``POST .../rename`` has been replaced by ``PATCH``\non the session resource per \u00a75.9 -- partial update is exactly what\nPATCH is for.\n\nAttributes:\n    name: New friendly name. Stripped of surrounding whitespace by\n        the route handler. Empty / whitespace-only inputs are\n        rejected with HTTP 400."
+      },
+      "SessionSummary": {
+        "properties": {
+          "sessionId": {
+            "type": "string",
+            "title": "Sessionid"
+          },
+          "scope": {
+            "type": "string",
+            "title": "Scope",
+            "default": ""
+          },
+          "projectId": {
+            "type": "string",
+            "title": "Projectid",
+            "default": ""
+          },
+          "anchor": {
+            "type": "string",
+            "title": "Anchor",
+            "default": ""
+          },
+          "userId": {
+            "type": "string",
+            "title": "Userid",
+            "default": ""
+          },
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "default": ""
+          },
+          "createdAt": {
+            "type": "number",
+            "title": "Createdat",
+            "default": 0.0
+          },
+          "lastAccessed": {
+            "type": "number",
+            "title": "Lastaccessed",
+            "default": 0.0
+          },
+          "messageCount": {
+            "type": "integer",
+            "title": "Messagecount",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "required": [
+          "sessionId"
+        ],
+        "title": "SessionSummary",
+        "description": "Lightweight summary returned by ``SessionStore.list_for_user``.\n\nMirrors the metadata Hash stored alongside the message blob, plus a\nmessage count derived at list time. Cheap to compute (no decompression\nof the message body required) so listing one user's sessions is O(N) in\nuser-owned sessions with one round-trip per session for metadata.\n\nAttributes:\n    session_id: The raw caller-supplied session id (last component of\n        the fully-scoped key).\n    scope: ``\"team\"`` or ``\"agent\"`` -- which URL hierarchy created it.\n    project_id: Project that owns the session.\n    anchor: ``team_id`` for team-scoped sessions, ``agent_id`` for\n        agent-scoped sessions.\n    user_id: Authenticated user id, or ``\"\"`` in dev mode without auth.\n    name: Friendly name. Auto-generated on first save (e.g. \"Session\n        May 11, 11:30 PM\") and editable via the rename route.\n    created_at: POSIX timestamp of the first save.\n    last_accessed: POSIX timestamp of the most recent read or save.\n    message_count: Number of messages currently stored in the session."
+      },
+      "TaskStatus": {
+        "type": "string",
+        "enum": [
+          "running",
+          "completed",
+          "failed",
+          "cancelled"
+        ],
+        "title": "TaskStatus",
+        "description": "Lifecycle states for an async task.\n\nTerminal states are :attr:`COMPLETED`, :attr:`FAILED`, and :attr:`CANCELLED`.\nPolling stops once the task reaches a terminal state."
+      },
+      "TaskStatusResponse": {
+        "properties": {
+          "taskId": {
+            "type": "string",
+            "title": "Taskid"
+          },
+          "status": {
+            "$ref": "#/components/schemas/TaskStatus"
+          },
+          "projectId": {
+            "type": "string",
+            "title": "Projectid",
+            "default": ""
+          },
+          "teamId": {
+            "type": "string",
+            "title": "Teamid",
+            "default": ""
+          },
+          "agentId": {
+            "type": "string",
+            "title": "Agentid",
+            "default": ""
+          },
+          "correlationId": {
+            "type": "string",
+            "title": "Correlationid",
+            "default": ""
+          },
+          "createdAt": {
+            "type": "number",
+            "title": "Createdat",
+            "default": 0.0
+          },
+          "updatedAt": {
+            "type": "number",
+            "title": "Updatedat",
+            "default": 0.0
+          },
+          "durationMs": {
+            "type": "integer",
+            "title": "Durationms",
+            "default": 0
+          },
+          "result": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/InvokeResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "error": {
+            "type": "string",
+            "title": "Error",
+            "default": ""
+          },
+          "errorType": {
+            "type": "string",
+            "title": "Errortype",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "taskId",
+          "status"
+        ],
+        "title": "TaskStatusResponse",
+        "description": "Response to ``GET .../tasks/{task_id}`` (\u00a75.5.2).\n\n``result`` is populated only when ``status == \"completed\"`` and is\na typed :class:`InvokeResponse` so REST sync, SSE\n``completed.metadata.invokeResponse``, and async polling share one\ncontract. ``error`` and ``error_type`` are populated when\n``status in {\"failed\", \"cancelled\"}``.\n\nAttributes:\n    task_id: The task identifier.\n    status: :class:`~agent_service_maf.core.task_models.TaskStatus`\n        StrEnum -- ``running`` / ``completed`` / ``failed`` /\n        ``cancelled``.\n    project_id: Project the task was submitted under.\n    team_id: Team that ran the work (may be the project's default).\n    agent_id: Agent that ran the work (``\"orchestrator\"`` for team-level\n        invokes).\n    correlation_id: UUID4 used in logs and traces for this task.\n    created_at: Submission time (POSIX epoch seconds).\n    updated_at: Last status change.\n    duration_ms: Total run time once terminal.\n    result: Typed :class:`InvokeResponse` when ``status == \"completed\"``.\n    error: Human-readable error message (no legacy ``[stage]`` prefix\n        per \u00a75.5.6 row \"Step-prefix breadcrumb\").\n    error_type: Exception class name when ``status == \"failed\"``."
+      },
+      "ToolExecution": {
+        "properties": {
+          "toolName": {
+            "type": "string",
+            "title": "Toolname",
+            "description": "Tool name"
+          },
+          "toolCallId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Toolcallid",
+            "description": "Provider tool-call id"
+          },
+          "toolType": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "kb",
+                  "toolset"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tooltype",
+            "description": "Discriminator: 'kb' for KB retrieval tools, 'toolset' for MCP/external tools."
+          },
+          "arguments": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Arguments",
+            "description": "Tool arguments"
+          },
+          "resultSummary": {
+            "type": "string",
+            "title": "Resultsummary",
+            "description": "First N chars of result",
+            "default": ""
+          },
+          "durationMs": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Durationms",
+            "description": "Tool call duration in ms"
+          },
+          "tokensUsed": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tokensused",
+            "description": "Approximate token count this tool's result will consume on the next LLM call. Surfaced for the UI Statistics panel's 'Context window usage' row; populated by KB tools today (rough chars/4 estimate). ``None`` when the tool doesn't know."
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error",
+            "description": "Error message on failure"
+          },
+          "kbCitations": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/KbCitation"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kbcitations",
+            "description": "KB citations expanded from this tool's result (populated when the tool emits them)"
+          },
+          "invokedBy": {
+            "type": "string",
+            "title": "Invokedby",
+            "description": "(legacy) Agent that called this tool",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "toolName"
+        ],
+        "title": "ToolExecution",
+        "description": "Record of a single tool invocation during the request.\n\nWire shape per \u00a75.3.2. Legacy kwargs ``result_preview`` and\n``invoked_by`` are accepted at construction time (mapped to\n``result_summary`` / dropped respectively) so the SK adapter\ncontinues to build trace entries without code churn.\n\nAttributes:\n    tool_name: Name of the tool called.\n    tool_call_id: Provider-issued tool-call id linking call/result events.\n    tool_type: Discriminator for downstream consumers (UI statistics\n        panel, analytics). ``\"kb\"`` for knowledge-base retrieval tools\n        (``kb_retrieve`` and equivalents) that surface\n        :attr:`kb_citations`; ``\"toolset\"`` for MCP / external tool\n        calls that don't. ``None`` for adapters that haven't been\n        taught to set it -- consumers should treat ``None`` as\n        ``\"toolset\"`` since the KB path is the only currently-known\n        citation-emitting flow.\n    arguments: Arguments passed to the tool.\n    result_summary: First N chars of the tool result (capped client-side).\n    duration_ms: How long the tool call took.\n    error: Error message when the tool call failed.\n    kb_citations: KB citations expanded from this tool's result --\n        populated whenever the tool itself emits them (see\n        :class:`~agent_service_maf.tools.functions.FunctionToolResult`).\n        ``None`` for tools that do not surface citations.\n    invoked_by: (legacy) agent that invoked the tool. Retained for\n        back-compat with existing SK adapter code; superseded by\n        :attr:`AgentTraceStep.agent_name`."
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      }
+    },
+    "securitySchemes": {
+      "ApiKeyAuth": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-API-Key",
+        "description": "API key for endpoints under /agents and /agent-teams when interface.auth.enabled=true. /health is always exempt."
+      }
+    }
+  },
+  "security": [
+    {
+      "ApiKeyAuth": []
+    }
+  ]
+}

@@ -1,0 +1,55 @@
+# .values-parity-allow.yaml — platform tier
+#
+# Allow-list for lint-values-parity.py.
+# Intentional cross-cloud value differences for the platform tier
+# (Temporal, Lakekeeper, Redis, s3gateway stub).
+
+allow:
+  # ── Storage class ─────────────────────────────────────────────────────────────
+  # Per-cloud managed storage for Redis persistence.
+  #   AKS → anf-nfs, EKS → fsxn-nas, local → standard
+  - global.storageClass
+  - "redis.master.persistence.storageClass"
+
+  # ── Image registry / pull policy ─────────────────────────────────────────────
+  # AKS bakes a corporate ACR mirror into the overlay; GKE/EKS receive the
+  # registry via --set at deploy time. EKS forces Always for ECR cache fixes.
+  - global.imageRepository
+  - global.imagePullPolicy
+  - "keycloak.setup.image.pullPolicy"
+
+  # ── ORPHAN suppression: gateway port (not declared in base) ──────────────────
+  # local uses :8443 (KIND can't bind <1024); not declared in platform base.
+  - global.gatewayHttpsPort
+
+  # ── Workload Identity (AKS + local) ──────────────────────────────────────────
+  # temporal WI is enabled on AKS and local (for KIND federation test parity).
+  # GKE and EKS don't yet implement WI for Temporal; follow-up work.
+  # lakekeeper WI is AKS-only (local explicitly disabled).
+  - "temporal.serviceAccount.create"
+  - "temporal.serviceAccount.azureClientId"
+  - "temporal.serviceAccountName"
+  - "temporal.workloadIdentity.enabled"
+  - "lakekeeper.serviceAccount.create"
+  - "lakekeeper.serviceAccount.azureClientId"
+  - "lakekeeper.workloadIdentity.enabled"
+
+  # ── Lakekeeper Keycloak URLs ──────────────────────────────────────────────────
+  # local overlay uses the cluster-internal Keycloak URL (http://keycloak.…);
+  # AKS/GKE/EKS overlay values are not set here (managed via AKS_PLATFORM_EXTRA
+  # --set-string flags in mk/tier-helm.mk using the real endpoint at deploy time).
+  - "lakekeeper.keycloakUrl"
+  - "lakekeeper.auth.oauth2.providerUri"
+  - "lakekeeper.catalog.extraInitContainers"
+  - "keycloak.setup.keycloakUrl"
+
+  # ── s3gateway: AKS-only sub-values in platform tier ──────────────────────────
+  # NOTE: s3gateway moved to workers tier; values-aks.yaml platform still carries
+  # a stub block for migration continuity. Only AKS has it.
+  - "s3gateway.*"
+
+  # ── Bootstrap setup flag (local vs cloud) ─────────────────────────────────────
+  - "defaultSetup.s3gatewayBootstrapEnabled"
+
+  # ── Storage driver: RWX access mode override (AKS-only) ──────────────────────
+  - "lakekeeper.catalog.extraInitContainers.*"

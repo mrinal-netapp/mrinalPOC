@@ -1,0 +1,43 @@
+# .values-parity-allow.yaml — edge tier
+#
+# Allow-list for lint-values-parity.py.
+# Intentional cross-cloud value differences for the edge tier
+# (Istio Gateway, HTTPRoutes, JWT RequestAuthentication).
+
+allow:
+  # ── Gateway provider ──────────────────────────────────────────────────────────
+  # All overlays (local + every cloud) set provider=istio. The base defaults
+  # to "nginx" as a safe fallback. All overlays legitimately override this
+  # identical value; the linter flags it as "set in some overlays but not all"
+  # only if new cloud overlays are added without setting this key.
+  # Allow it to avoid spurious noise.
+  - gateway.provider
+
+  # ── LoadBalancer infrastructure annotations ───────────────────────────────────
+  # Each cloud attaches different cloud-provider annotations to the Gateway
+  # Service: Azure PIP + health-probe on AKS, GKE static address name on GKE,
+  # AWS NLB + EIP allocations on EKS. local uses no LB annotations.
+  - "gateway.istio.infrastructure.*"
+  - "gateway.istio.infrastructure.annotations"
+
+  # ── JWT RequestAuthentication (issuer / jwksUri) ──────────────────────────────
+  # issuer must match the Keycloak public URL (domain differs per cloud).
+  # jwksUri is cluster-internal (same pattern on all clouds) but the path is
+  # structurally the same; allow it so per-cloud issuer differences don't spam.
+  - "gateway.istio.requestAuthentication.issuer"
+  - "gateway.istio.requestAuthentication.jwksUri"
+  - "gateway.istio.requestAuthentication.audiences"
+  - "gateway.istio.requestAuthentication.forwardOriginalToken"
+  - "gateway.istio.requestAuthentication.*"
+
+  # ── cert-manager ─────────────────────────────────────────────────────────────
+  # certManager.enabled=false is explicit in cloud overlays to document that
+  # TLS is provisioned externally (provisioning service). local omits it
+  # (relies on mkcert via prepare-nemo-gateway.sh). The flag is in aks/gke/eks
+  # but not local — intentional.
+  - certManager.enabled
+
+  # ── Endpoint / hostname ───────────────────────────────────────────────────────
+  # AKS overlay bakes the endpoint; GKE/EKS/local get it via --set at deploy.
+  - global.endpoint
+  - endpoint

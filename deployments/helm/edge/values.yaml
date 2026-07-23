@@ -1,0 +1,282 @@
+# Edge tier umbrella values
+# Namespace: agentstudio-edge (set via Helm --namespace at install time)
+#
+# Owns the ingress Gateway resource (NGF or Istio), every per-public-hostname
+# HTTPRoute (except the auth.* HTTPRoute that lives in the identity tier so
+# Keycloak can self-attach), edge JWT validation (RequestAuthentication), edge
+# gating (AuthorizationPolicy), parity-header injection (EnvoyFilter), and the
+# per-namespace ReferenceGrants that allow HTTPRoutes here to reach Services
+# in services / console / platform / monitoring.
+#
+# ── Provider toggle ────────────────────────────────────────────────────────────
+# `gateway.provider` selects the data-plane:
+#   "nginx" — NGINX Gateway Fabric (legacy / KIND default / rollback target)
+#   "istio" — Self-managed (upstream) Istio 1.30+ via the Gateway API
+#             automated deployment model (istiod auto-provisions
+#             istio-gateway Deployment + Service in this namespace).
+#
+# Base default is "nginx" for safety; per-cloud overlays flip it to "istio"
+# when ready (values-aks.yaml today, values-gke.yaml / values-eks.yaml when
+# the GKE / EKS rollouts land).
+#
+# See docs/design/istio-gateway-migration.md for the full design.
+
+deploymentName: "nemo"
+endpoint: "agentstudio.local"
+
+consoleSubdomain: "app"
+workspaceLabelPrefix: "ws-"
+
+# Backend tier namespaces (used by HTTPRoute backend refs + ReferenceGrants).
+# Override only if the backend tiers were renamed.
+servicesNamespace: "agentstudio-services"
+consoleNamespace: "agentstudio-console"
+platformNamespace: "agentstudio-platform"
+monitoringNamespace: "monitoring"
+identityNamespace: "agentstudio-identity"
+
+# Set to false when the observability stack (Phoenix, Prometheus) is not
+# deployed (e.g. local dev without OBSERVABILITY=1). Suppresses the
+# monitoring ReferenceGrant and phoenix HTTPRoute so Helm does not try
+# to create resources in a non-existent namespace.
+observability:
+  enabled: true
+
+# Subdomain prefix for Keycloak.
+keycloak:
+  authSubdomain: "auth"
+
+global:
+  imageRegistry: ""
+  imageRepository: "docker.repo.eng.netapp.com/user/rp29322"
+  imageTag: ""
+  endpoint: "agentstudio.local"
+  consoleSubdomain: "app"
+  workspaceLabelPrefix: "ws-"
+  deploymentName: "nemo"
+
+# Gateway / HTTPRoute / Istio configuration
+gateway:
+  # Provider: "nginx" (NGF, legacy) or "istio" (self-managed upstream Istio).
+  # Per-cloud overlays flip this — see values-aks.yaml.
+  provider: "nginx"
+  # Common gateway resource name. Both NGF and Istio render the same name so
+  # HTTPRoutes (including the cross-namespace one in the identity chart) can
+  # bind to it via parentRefs.name + namespace.
+  name: "agentstudio-gateway"
+
+  # ── NGF branch (gateway.provider == "nginx") ──────────────────────────────
+  enabled: true
+  className: "nginx"
+  annotations: {}
+  infrastructure: {}
+  listeners:
+    http:
+      port: 8080
+      allowedRoutes:
+        namespaces:
+          from: All
+    https:
+      port: 8443
+      allowedRoutes:
+        namespaces:
+          from: All
+    extra:
+      - name: https-443
+        protocol: HTTPS
+        port: 443
+        allowedRoutes:
+          namespaces:
+            from: All
+        tls:
+          mode: Terminate
+          certificateRefs:
+            - name: nemo-gateway-tls
+              kind: Secret
+  tls:
+    certificateRefs:
+      - name: nemo-gateway-tls
+        kind: Secret
+    secret:
+      create: false
+      name: nemo-gateway-tls
+      certPem: ""
+      keyPem: ""
+  clientSettingsPolicy:
+    enabled: false
+  configMap:
+    enabled: false
+  namespace: "nginx-gateway"
+  nodePort:
+    enabled: true
+    httpNodePort: 30080
+    httpsNodePort: 30443
+
+  # ── Istio branch (gateway.provider == "istio") ────────────────────────────
+  istio:
+    className: "istio"
+    # Override the auto-provisioned Deployment / Service / Pod name. By
+    # default istiod's Gateway API controller names them `<Gateway.metadata.name>-istio`
+    # (here: `agentstudio-gateway-istio`), which is verbose and bakes the data-plane
+    # implementation into the runtime resource name. We override that with
+    # the data plane. Setting `gateway.istio.io/name-override: istio-gateway`
+    # gives us a clean, brand-neutral runtime resource name without renaming
+    # the Gateway resource itself (so HTTPRoute parentRefs / identity-chart
+    # parentRef / runbooks all keep working unchanged).
+    # Set to empty string to fall back to the default `<gateway-name>-istio`.
+    deploymentNameOverride: "istio-gateway"
+    # Per-cloud overlays fill these in (Azure / GCP / AWS LB annotations).
+    infrastructure:
+      annotations: {}
+      labels: {}
+    listeners:
+      http:
+        port: 80
+      https:
+        port: 443
+        tlsSecretName: nemo-gateway-tls
+    # RequestAuthentication on the gateway pod. Per-cloud overlays supply the
+    # real issuer + jwksUri (Keycloak-internal JWKS URL on AKS / GKE / EKS;
+    # auth.agentstudio.local on KIND).
+    # SYNC: edge-side JWT trust config. The in-mesh per-hop equivalent lives in
+    # the istio-mesh-policies chart (`meshJwt.*`). They are intentionally
+    # independent (edge and mesh rules may differ on purpose); if they diverge
+    # UNINTENTIONALLY a token can pass here but 401 at the first in-mesh hop.
+    # Mirror changes across both trees unless the divergence is deliberate.
+    requestAuthentication:
+      issuer: ""
+      jwksUri: ""
+      audiences:
+        - agent-studio-api
+      # Forward the validated Authorization: Bearer <jwt> to upstream services
+      # unchanged. The standard Authorization header is the in-mesh
+      # user-identity carrier; the eventual RPT-swap follow-up upgrades the
+      # carried JWT shape without touching the wire-format contract.
+      forwardOriginalToken: true
+      # Auto-add a second jwtRules entry for Keycloak's `realms/master`
+      # admin-console flow. The gateway sidecar's jwt_authn filter validates
+      # every Authorization-bearer token against its configured providers
+      # (workload-selector primitive — can't be scoped per-host); without
+      # this the admin console at /admin/master/console/ trips a 401
+      # `Jwt issuer is not configured`. Keycloak does its own RBAC on the
+      # admin token, so this is purely about letting the gateway forward
+      # the request, not about granting admin rights. Set to false on
+      # environments that don't front Keycloak.
+      includeKeycloakMasterRealm: true
+      # Additional jwtRules — tenant realms, third-party IdPs, etc.
+      # Each entry: { issuer, jwksUri (optional), audiences (optional list),
+      #               forwardOriginalToken (optional bool, default true) }
+      extraJwtRules: []
+
+    # UMA-ticket → RPT swap on the gateway pod (§4.1 of
+    # docs/design/agent-studio-security-stack.md).
+    #
+    # When enabled, an EnvoyFilter inserts a Lua filter on the gateway's
+    # HTTP listener that fires only on `/api/v1/projects/:projectId/*`
+    # requests. For each match the filter:
+    #   1. extracts `:projectId` from the URL,
+    #   2. POSTs to Keycloak's token endpoint with the user's bearer
+    #      token and `grant_type=urn:ietf:params:oauth:grant-type:uma-ticket`,
+    #   3. asks for scopes `admin,member,viewer` on resource `project:<projectId>`,
+    #   4. if Keycloak returns 200, replaces the request `Authorization`
+    #      header with the returned RPT (a Keycloak-signed JWT carrying
+    #      an extra top-level `authorization.permissions[]` claim) before
+    #      Envoy forwards upstream,
+    #   5. if Keycloak returns 401/403, short-circuits the request with
+    #      the same status — no upstream hop.
+    #
+    # Non-project requests (everything outside `/api/v1/projects/:id/`)
+    # forward the original access token unchanged. The downstream
+    # RequestAuthentication on workload sidecars validates both shapes
+    # against the same JWKS (an RPT differs from an access token only
+    # in carrying the additional `authorization` claim — same `iss`,
+    # `aud`, signature).
+    #
+    # No RPT cache is implemented in this iteration: every project-scoped
+    # request triggers a synchronous round-trip to Keycloak. The 5-minute
+    # cache from the design doc lands in a follow-up.
+    umaRpt:
+      enabled: true
+      # Realm whose `/protocol/openid-connect/token` endpoint we hit. Must
+      # match the realm whose JWTs the edge validates (see
+      # `requestAuthentication.issuer` above). Defaults to `nemo` because
+      # that's the realm the identity chart bootstraps today; override
+      # in a per-cloud overlay if a different realm is fronted.
+      realm: "nemo"
+      # `audience` parameter on the UMA-grant request (the resource-server
+      # client that owns the `project` resource type and admin/member/viewer
+      # scopes — see deployments/helm/identity/realms/agent-studio-realm.json).
+      audience: "agent-studio-api"
+      # In-cluster Keycloak Service the gateway pod calls for the UMA
+      # exchange. Must match the Service rendered by the identity chart
+      # (`fullnameOverride: keycloak` in deployments/helm/identity/values.yaml).
+      keycloakService: "keycloak"
+      keycloakNamespace: "agentstudio-identity"
+      keycloakPort: 8080
+      # Path prefixes that trigger the swap. Anything matching one of
+      # these prefixes is treated as project-scoped per the design doc;
+      # everything else is forwarded with the original access token.
+      #
+      # The filter sees `:path` BEFORE the HTTPRoute URLRewrite filter
+      # runs (Envoy filter chain → router/rewrite → upstream), so the
+      # path matched here is the browser-visible one, not the rewritten
+      # upstream path.
+      #
+      # We list two prefixes for the local + legacy-AKS path:
+      #   - /api/v1/projects/         — the canonical target shape per
+      #                                  §5.3 of the design doc. The
+      #                                  Istio-native GUI build emits
+      #                                  this directly.
+      #   - /config/api/v1/projects/  — the legacy GUI's path-prefix
+      #                                  form (apigateway-service's
+      #                                  setupServiceProxy(r, "/config",
+      #                                  ...) mount that the HTTPRoute
+      #                                  in httproute-app-istio.yaml
+      #                                  strips before forwarding).
+      # Drop the second entry when the GUI is rebuilt to call /api/v1/*
+      # directly — same trigger as the /config carve-out in
+      # authz-edge-require-jwt-istio.yaml.
+      projectPathPrefixes:
+        - "/api/v1/projects/"            # config-service (direct)
+        - "/config/api/v1/projects/"     # config-service (legacy /config shim)
+        - "/agents/api/v1/projects/"     # agent-service
+        - "/agents-maf/projects/"        # agent-service-maf (gateway maps /agents-maf -> /api/v1)
+        - "/workflow/api/v1/projects/"   # workflow-engine
+        - "/kb/api/v1/projects/"         # kb-retrieval-service
+      # Per-request timeout (ms) for the Keycloak round-trip. Keycloak's
+      # token endpoint typically responds in <50ms in-cluster; 5s gives
+      # generous headroom for cold-start GC pauses.
+      timeoutMs: 5000
+
+# Cert-manager fallback path (KIND opt-in only; AKS production uses the
+# provisioning-service which writes nemo-gateway-tls into agentstudio-edge
+# directly).
+certManager:
+  enabled: false
+  certificate:
+    enabled: false
+    name: "nemo-gateway-certificate"
+    secretName: ""
+    commonName: ""
+    duration: ""
+    renewBefore: ""
+    privateKey:
+      algorithm: "RSA"
+      size: 2048
+      rotationPolicy: "Always"
+    usages: []
+    ipAddresses: []
+  issuer:
+    create: false
+    name: "nemo-gateway-selfsigned"
+    kind: "ClusterIssuer"
+    type: "selfSigned"
+  issuerRef:
+    name: ""
+    kind: "ClusterIssuer"
+    group: "cert-manager.io"
+
+# HTTPRoute matching defaults. Most operators want to leave these alone.
+httproute:
+  matchAllHosts: false
+  hosts: []

@@ -1,0 +1,50 @@
+{{- if .Values.teiStripAuthorization.enabled }}
+{{- /*
+  Strip the Authorization header on the TEI sidecar inbound chain BEFORE
+  Istio's jwt_authn filter runs.
+
+  Bifrost forwards a placeholder upstream credential
+  (`Authorization: Bearer tei-no-auth`) to the in-cluster TEI embedding
+  backend. TEI sits in a JWT-gated namespace whose namespace-wide
+  RequestAuthentication validates every Authorization bearer as a Keycloak JWT
+  and 401s the placeholder ("Jwt is not in the form of Header.Payload.Signature").
+  Istio RequestAuthentication rules merge (union) rather than override by
+  specificity, so a per-workload empty-jwtRules policy can't exempt TEI — the
+  hop must be made token-less. This Lua filter removes the header so jwt_authn
+  treats the request as unauthenticated (allowed via the allow-bifrost-to-tei
+  AuthorizationPolicy). TEI requires no auth itself.
+*/ -}}
+apiVersion: networking.istio.io/v1alpha3
+kind: EnvoyFilter
+metadata:
+  name: tei-strip-authorization
+  namespace: {{ .Values.teiStripAuthorization.namespace }}
+  labels:
+    {{- include "istio-mesh-policies.labels" . | nindent 4 }}
+spec:
+  workloadSelector:
+    labels:
+      {{- range $k, $v := .Values.teiStripAuthorization.selectorLabels }}
+      {{ $k }}: {{ $v }}
+      {{- end }}
+  configPatches:
+    - applyTo: HTTP_FILTER
+      match:
+        context: SIDECAR_INBOUND
+        listener:
+          filterChain:
+            filter:
+              name: envoy.filters.network.http_connection_manager
+              subFilter:
+                name: envoy.filters.http.jwt_authn
+      patch:
+        operation: INSERT_BEFORE
+        value:
+          name: tei-strip-authorization
+          typed_config:
+            "@type": type.googleapis.com/envoy.extensions.filters.http.lua.v3.Lua
+            inlineCode: |
+              function envoy_on_request(handle)
+                handle:headers():remove("authorization")
+              end
+{{- end }}

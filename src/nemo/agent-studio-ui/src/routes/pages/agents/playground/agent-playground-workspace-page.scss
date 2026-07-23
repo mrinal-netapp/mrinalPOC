@@ -1,0 +1,54 @@
+@use '@/styles/mixins' as *;
+
+.agent-playground-workspace {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  height: 100%;
+  min-width: 0;
+
+  &__header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-width: 0;
+  }
+
+  &__heading {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  }
+
+  &__panels {
+    flex: 1;
+    min-height: 0;
+    min-width: 0;
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 16px;
+
+    &--with-details {
+      grid-template-columns: 1fr 1fr;
+
+      @include tablet {
+        grid-template-columns: 1fr;
+      }
+    }
+  }
+
+  &__panel-slot {
+    min-height: 0;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
+  &__loading,
+  &__empty {
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+  }
+}

@@ -1,0 +1,107 @@
+{{- if .Values.daemonset.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "otel-collector.daemonsetName" . }}-config
+  labels:
+    {{- include "otel-collector.labels" . | nindent 4 }}
+data:
+  config.yaml: |
+    # Per-node DaemonSet Collector.
+    # Tails /var/log/pods/*/*/*.log on the local node, extracts Kubernetes pod
+    # metadata from the file path, drops infrastructure-namespace noise, stamps
+    # the node name, and forwards all remaining records to the central Deployment
+    # Collector via OTLP/gRPC for unified processing (severity normalisation,
+    # noise filtering, and export to Loki).
+    receivers:
+      filelog/pods:
+        include:
+          - /var/log/pods/*/*/*.log
+        # Never tail the DaemonSet's own log files to avoid feedback loops.
+        exclude:
+          - /var/log/pods/{{ .Release.Namespace }}_{{ include "otel-collector.daemonsetName" . }}*/**/*.log
+        # Start at the end so we don't replay historic logs on every pod restart
+        # or collector upgrade. Switch to `beginning` + add a file_storage
+        # checkpoint volume if you need at-least-once semantics across restarts.
+        start_at: end
+        include_file_path: true
+        include_file_name: false
+        operators:
+          # Extract namespace, pod name, pod UID, and container name from path:
+          #   /var/log/pods/<namespace>_<pod-name>_<pod-uid>/<container>/0.log
+          - type: regex_parser
+            id: extract_pod_meta
+            parse_from: attributes["log.file.path"]
+            regex: '^/var/log/pods/(?P<namespace>[^_]+)_(?P<pod_name>[^_]+)_(?P<pod_uid>[^/]+)/(?P<container_name>[^/]+)/.*$'
+          - type: move
+            from: attributes.namespace
+            to: resource["k8s.namespace.name"]
+          - type: move
+            from: attributes.pod_name
+            to: resource["k8s.pod.name"]
+          - type: move
+            from: attributes.pod_uid
+            to: resource["k8s.pod.uid"]
+          - type: move
+            from: attributes.container_name
+            to: resource["k8s.container.name"]
+          - type: move
+            from: attributes["log.file.path"]
+            to: resource["log.file.path"]
+
+    processors:
+      # Drop logs from infrastructure namespaces. Evaluated here — at the
+      # per-node level — so records are never forwarded to the central collector,
+      # saving OTLP bandwidth and preventing the Loki PVC from filling up.
+      #
+      # Covered namespaces:
+      #   kube-system       — kube-proxy, coredns, azure-ip-masq-agent, etc.
+      #   kube-node-lease   — heartbeat Lease objects (no pod logs in practice)
+      #   kube-public       — public ConfigMap namespace (no pod logs)
+      #   trident           — NetApp Trident CSI driver (AKS)
+      #   aks-istio-system  — istiod control-plane (AKS)
+      #   aks-istio-ingress — istio-proxy sidecars on the ingress gateway (AKS)
+      #
+      # Add additional namespaces here if you observe high-volume infra noise
+      # from cluster add-ons you don't need in Loki.
+      filter/drop_infra_namespaces:
+        error_mode: ignore
+        logs:
+          log_record:
+            - 'resource.attributes["k8s.namespace.name"] == "kube-system"'
+            - 'resource.attributes["k8s.namespace.name"] == "kube-node-lease"'
+            - 'resource.attributes["k8s.namespace.name"] == "kube-public"'
+            - 'resource.attributes["k8s.namespace.name"] == "trident"'
+            - 'resource.attributes["k8s.namespace.name"] == "aks-istio-system"'
+            - 'resource.attributes["k8s.namespace.name"] == "aks-istio-ingress"'
+
+      # Stamp the Kubernetes node name onto every log record so Loki queries
+      # can filter by node (e.g. when debugging node-level issues).
+      resource/k8s_node:
+        attributes:
+          - key: k8s.node.name
+            value: ${env:K8S_NODE_NAME}
+            action: upsert
+
+      batch:
+        timeout: 5s
+        send_batch_size: 1024
+
+    exporters:
+      otlp/central:
+        endpoint: {{ include "otel-collector.fullname" . }}:{{ .Values.service.ports.grpc }}
+        tls:
+          insecure: true
+
+    service:
+      telemetry:
+        logs:
+          level: "warn"
+      pipelines:
+        logs:
+          receivers: [filelog/pods]
+          # filter/drop_infra_namespaces runs first so we never allocate batch
+          # slots or network bandwidth for infrastructure log records.
+          processors: [filter/drop_infra_namespaces, resource/k8s_node, batch]
+          exporters: [otlp/central]
+{{- end }}

@@ -1,0 +1,112 @@
+# AWS EKS overlay for the SERVICES tier.
+#
+# FSx Trident (fsxn-nas) for the services-namespace default-bucket PVC (RWX);
+# other PVCs use the same class via global.storageClass.
+#
+# Why the default-bucket PVC is needed and must be RWX:
+#   artifact-service and kb-retrieval-service both mount nemo-default-bucket
+#   backed by s3gateway-default-bucket. Two pods co-mount it, so ReadWriteMany
+#   on fsxn-nas is required (mirrors services/values-gke.yaml on Filestore).
+#
+# This PVC MUST share the SAME FSxN volume that workers/s3gateway writes to, via
+# Trident shareFromPVC — otherwise kb-retrieval-service reads a separate empty
+# volume and every KB search 503s (no LanceDB index / metadata.json). See
+# services/values-gke.yaml for the full rationale. Requires the workers source
+# PVC to authorize this namespace (s3gateway.defaultBucket.shareToNamespaces).
+#
+# Gateway: internet-facing NLB via AWS Load Balancer Controller annotations.
+# Cross-namespace Keycloak HTTPRoute attaches via allowedRoutes.from: All
+# (services chart default; explicit here for clarity on AWS).
+#
+# global.endpoint / image registry / tag are passed via EKS_TIER_SET at deploy time.
+#
+# Dedicated ServiceAccounts ARE still created (serviceAccount.create=true) even
+# though EKS does not use Azure Workload Identity. The base chart defaults
+# serviceAccount.create=false, so without these overrides every pod runs as the
+# namespace `default` SA. That breaks the mesh in two ways:
+#   1. The principal-based Istio AuthorizationPolicies (e.g.
+#      `allow-services-to-bifrost`, `allow-apigateway-to-agent-service`,
+#      `allow-phoenix-from-services` in edge/istio-mesh-policies) match on the
+#      pod's SPIFFE identity (.../sa/<service>). A `default`-SA pod is not in
+#      the allow-list, so Bifrost's sidecar returns 403 "RBAC: access denied"
+#      and project-init's gateway-setup step fails with status 500.
+#   2. `admissionPolicies.denyDefaultServiceAccount` forbids the default SA.
+# AKS gets these SAs for free because Azure Workload Identity requires named,
+# annotated SAs. On GKE/EKS we must create them explicitly. WI/azureClientId
+# are intentionally omitted — only the SPIFFE identity matters here. Each SA
+# name defaults to the service's fullnameOverride (sa/agent-service,
+# sa/config-service, …), which is exactly what the policy principals expect.
+
+global:
+  storageClass: "fsxn-nas"
+  # Re-pull after ECR manifest/arch fixes (EKS nodes are amd64).
+  imagePullPolicy: Always
+
+defaultBucketPvc:
+  create: true
+  accessMode: ReadWriteMany
+  storageClass: "fsxn-nas"
+  # Keep the historical 1Ti request so Helm does not try to shrink an existing
+  # services PVC on upgrade; shareFromPVC still binds this claim to the workers
+  # tier's shared underlying volume.
+  size: 1Ti
+  # Bind to the same FSxN volume as agentstudio-workers/s3gateway-default-bucket
+  # instead of provisioning a fresh (empty) one. Emits the
+  # trident.netapp.io/shareFromPVC annotation + a TridentVolumeReference CR.
+  shareFromPVC:
+    namespace: agentstudio-workers
+    name: s3gateway-default-bucket
+
+agent-service:
+  serviceAccount:
+    create: true
+
+agent-service-maf:
+  serviceAccount:
+    create: true
+    name: agent-service-maf
+
+apigateway-service:
+  serviceAccount:
+    create: true
+
+workflow-engine:
+  serviceAccount:
+    create: true
+
+kb-retrieval-service:
+  serviceAccount:
+    create: true
+
+analytics-engine:
+  serviceAccount:
+    create: true
+
+analytics-mcp-server:
+  serviceAccount:
+    create: true
+
+artifact-service:
+  serviceAccount:
+    create: true
+
+config-service:
+  serviceAccount:
+    create: true
+  # Use extraEnv — Helm replaces env[] wholesale; do not override env here.
+  extraEnv:
+    - name: KEYCLOAK_ADMIN_USER
+      valueFrom:
+        secretKeyRef:
+          name: keycloak-bootstrap-admin
+          key: username
+    - name: KEYCLOAK_ADMIN_PASSWORD
+      valueFrom:
+        secretKeyRef:
+          name: keycloak-bootstrap-admin
+          key: password
+
+# Gateway / TLS configuration moved to the new `edge` Helm chart
+# (deployments/helm/edge/values-eks.yaml). NLB scheme/target-type + static
+# EIP allocations now live under gateway.istio.infrastructure.annotations
+# there. The services chart no longer ships any Gateway-API resources.

@@ -1,0 +1,35 @@
+{
+  "projects": [
+    {
+      "name": "Phoenix Migration",
+      "status": "in_progress",
+      "lead": "Bob Martinez",
+      "team_size": 4,
+      "deadline": "2026-04-30",
+      "completion_pct": 72,
+      "blockers": ["Waiting on DB schema approval", "CI pipeline flaky"]
+    },
+    {
+      "name": "Lighthouse Dashboard",
+      "status": "completed",
+      "lead": "Alice Chen",
+      "team_size": 3,
+      "deadline": "2026-03-15",
+      "completion_pct": 100,
+      "blockers": []
+    },
+    {
+      "name": "Titan API v2",
+      "status": "planning",
+      "lead": "Irene Santos",
+      "team_size": 5,
+      "deadline": "2026-06-30",
+      "completion_pct": 10,
+      "blockers": [
+        "Architecture review pending",
+        "Dependency on Phoenix Migration"
+      ]
+    }
+  ],
+  "last_updated": "2026-03-28"
+}

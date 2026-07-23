@@ -1,0 +1,171 @@
+# Edge tier umbrella values
+# Namespace: agentstudio-console (set via Helm --namespace at install time)
+#
+# Cross-namespace dependencies:
+#   config-service  → agentstudio-services
+#   keycloak        → agentstudio-identity
+#
+# Secrets synced by CI into agentstudio-console:
+#   keycloak-oidc-secrets (from agentstudio-identity)
+
+createNamespace: true
+namespacePodSecurity:
+  enforce: privileged
+  audit: privileged
+  warn: privileged
+
+deploymentName: "nemo"
+endpoint: "agentstudio.local"
+consoleSubdomain: "app"
+workspaceLabelPrefix: "ws-"
+
+keycloakNamespace: "agentstudio-identity"
+platformNamespace: "agentstudio-platform"
+servicesNamespace: "agentstudio-services"
+llmGatewayNamespace: "agentstudio-llm-gateway"
+
+# Cross-namespace aliases for upstream tiers.
+# mode: externalName (CoreDNS-resolvable, default) or serviceEntry.
+# externalName is required because pre-sidecar init containers (e.g.
+# wait-for-temporal) and nginx upstream resolution perform plain DNS
+# lookups. A ServiceEntry host only resolves via Istio's DNS proxy (DNS
+# capture), which is NOT enabled in this mesh, so serviceEntry mode yields
+# NXDOMAIN and hangs init containers / crashes nginx. ExternalName still
+# works under Istio (Envoy sees the upstream; auto-mTLS falls back to
+# plaintext for non-mesh backends like Temporal).
+crossNsServices:
+  mode: externalName
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+global:
+  imageRegistry: ""
+  imageRepository: "docker.repo.eng.netapp.com/user/sekaranr"
+  imageTag: ""
+  imagePullSecrets: []
+  storageClass: ""
+  endpoint: "agentstudio.local"
+  consoleSubdomain: "app"
+  workspaceLabelPrefix: "ws-"
+  deploymentName: "nemo"
+  s3gatewayFullname: "s3gateway"
+  # Public HTTPS port. Default 443 (cloud); local overrides to 8443.
+  # Consumed by nemo.gatewayHttpsPort + gui.workspacePublicPort.
+  gatewayHttpsPort: "443"
+
+keycloak:
+  setup:
+    keycloakNamespace: "agentstudio-identity"
+
+gui:
+  enabled: true
+  fullnameOverride: "gui"
+  replicaCount: 1
+  serviceAccountName: ""
+  image:
+    repository: nemo/gui
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 9000
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 200m
+      memory: 256Mi
+  apiService:
+    name: config-service
+    port: 3000
+  basePath: "/console"
+  configServiceBasePath: "/config"
+  workspaceSubdomainBase: "agentstudio.local"
+  workspaceSubdomainProtocol: "https"
+  workspacePublicPort: ""
+  livenessProbe:
+    httpGet:
+      path: /
+      port: 9000
+    initialDelaySeconds: 10
+    periodSeconds: 30
+  readinessProbe:
+    httpGet:
+      path: /
+      port: 9000
+    initialDelaySeconds: 5
+    periodSeconds: 10
+  env:
+    - name: KEYCLOAK_ISSUER
+      value: ""
+    - name: KEYCLOAK_CLIENT_ID
+      valueFrom:
+        secretKeyRef:
+          name: keycloak-oidc-secrets
+          key: gui-client-id
+  observability:
+    grafanaUrl: ""
+    jaegerUrl: ""
+  serviceAccount:
+    create: false
+    name: ""
+    azureClientId: ""
+  workloadIdentity:
+    enabled: false
+
+agent-studio-ui:
+  enabled: true
+  fullnameOverride: "agent-studio-ui"
+  replicaCount: 1
+  serviceAccountName: ""
+  image:
+    repository: nemo/agent-studio-ui
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 9000
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 200m
+      memory: 256Mi
+  # nginx in the UI pod forwards /api/* to apiService. NOTE: apigateway-service
+  # has no /api/* mount yet (its routes are /config, /agents, /workflow, /kb,
+  # /analytics, /console, /s3, /api-docs, /internal/*); this is forward-compat
+  # only and bundle requests under /api/v1/* will 404 until either apigateway
+  # gains /api/* routes or the frontend uses existing prefixes. See README.
+  apiService:
+    name: apigateway-service
+    port: 8080
+  workflowService:
+    name: workflow-engine
+    port: 8080
+  # Must match VITE_BASE_PATH used at Docker build time (scripts/docker-build.sh
+  # defaults to /studio). Changing this value alone is not enough — the image
+  # must be rebuilt with the matching VITE_BASE_PATH build arg.
+  basePath: "/studio"
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: 9000
+    initialDelaySeconds: 10
+    periodSeconds: 30
+  readinessProbe:
+    httpGet:
+      path: /health
+      port: 9000
+    initialDelaySeconds: 5
+    periodSeconds: 10
+  serviceAccount:
+    create: false
+    name: ""
+    azureClientId: ""
+  workloadIdentity:
+    enabled: false

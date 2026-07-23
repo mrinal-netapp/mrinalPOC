@@ -1,0 +1,81 @@
+{{- /*
+Per-hop Keycloak JWT enforcement. Installed with this chart in the bootstrap
+phase (before any application tier), so the mesh-require-jwt exemptions are
+live before the services-tier post-install hooks run.
+*/ -}}
+{{- $mj := .Values.meshJwt | default dict -}}
+{{- if $mj.enabled }}
+{{- $ex := $mj.exemptions | default dict -}}
+{{- $audiences := $mj.audiences | default (list "agent-studio-api") -}}
+{{- /* Per-pair service authz mode: when enabled, the namespace source-exemptions
+       listed in dropNamespaceExemptions are not rendered (their callers must be
+       named in the authorizationPolicies allow-list instead). */ -}}
+{{- $auth := .Values.authorizationPolicies | default dict -}}
+{{- $dropNs := list -}}
+{{- if $auth.enabled }}{{- $dropNs = ($auth.dropNamespaceExemptions | default list) -}}{{- end -}}
+{{- range $entry := ($mj.namespaces | default list) }}
+{{- $ns := $entry.name }}
+---
+apiVersion: security.istio.io/v1
+kind: RequestAuthentication
+metadata:
+  name: keycloak-jwt-mesh
+  namespace: {{ $ns }}
+  labels:
+    {{- include "istio-mesh-policies.labels" $ | nindent 4 }}
+spec:
+  jwtRules:
+    {{- include "istio-mesh-policies.keycloakJwtRules" $ | nindent 4 }}
+{{- if $entry.requireJwt }}
+---
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: mesh-require-jwt
+  namespace: {{ $ns }}
+  labels:
+    {{- include "istio-mesh-policies.labels" $ | nindent 4 }}
+spec:
+  action: ALLOW
+  rules:
+    {{- with $ex.paths }}
+    - to:
+        - operation:
+            paths:
+              {{- range . }}
+              - {{ . | quote }}
+              {{- end }}
+    {{- end }}
+    {{- $exNs := list -}}
+    {{- range ($ex.namespaces | default list) }}
+    {{- if not (has . $dropNs) }}{{- $exNs = append $exNs . -}}{{- end }}
+    {{- end }}
+    {{- with $exNs }}
+    - from:
+        - source:
+            namespaces:
+              {{- range . }}
+              - {{ . | quote }}
+              {{- end }}
+    {{- end }}
+    {{- with $ex.principals }}
+    - from:
+        - source:
+            principals:
+              {{- range . }}
+              - {{ . | quote }}
+              {{- end }}
+    {{- end }}
+    - from:
+        - source:
+            requestPrincipals:
+              - "*"
+      when:
+        - key: request.auth.claims[aud]
+          values:
+            {{- range $audiences }}
+            - {{ . | quote }}
+            {{- end }}
+{{- end }}
+{{- end }}
+{{- end }}

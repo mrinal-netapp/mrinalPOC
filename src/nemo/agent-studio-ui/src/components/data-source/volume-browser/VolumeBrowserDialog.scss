@@ -1,0 +1,65 @@
+.vol-browser {
+  &__popup {
+    max-width: 1064px;
+    width: 100%;
+  }
+
+  // Breadcrumb nav (dialog mode)
+  &__breadcrumbs {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    flex: 1;
+    min-width: 0;
+    padding-bottom: 0;
+  }
+
+  &__breadcrumb-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+  }
+
+  &__breadcrumb-sep {
+    color: var(--text-secondary);
+    flex-shrink: 0;
+  }
+
+  &__breadcrumb-segment {
+    all: unset;
+    cursor: pointer;
+    padding: 2px 4px;
+    border-radius: 4px;
+
+    &:hover:not(:disabled) {
+      background-color: var(--background-hover);
+    }
+
+    &:disabled {
+      cursor: default;
+    }
+  }
+
+  // Refresh button in CardHeader actions
+  &__refresh-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 4px;
+    border: none;
+    background: transparent;
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    cursor: pointer;
+
+    &:hover:not(:disabled) {
+      background: var(--surface-hover);
+      color: var(--text-primary);
+    }
+
+    &:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+  }
+}

@@ -1,0 +1,877 @@
+// ---- Wrapper ----------------------------------------------------------------
+
+.select-dropdown-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem; // 4px
+  width: 100%;
+  min-width: 7rem; // 112px
+
+  &--small {
+    width: 11rem; // 176px
+  }
+
+  &--medium {
+    width: 21.75rem; // 348px
+  }
+
+  &--large {
+    width: 30rem; // 480px
+  }
+}
+
+// ---- Header -----------------------------------------------------------------
+
+.select-dropdown-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+}
+
+.select-dropdown-header-label {
+  flex: 1;
+  font-size: 0.875rem; // 14px
+  line-height: 1.5rem; // 24px
+  font-weight: 400;
+  color: var(--text-primary);
+
+  .select-dropdown-wrapper--disabled & {
+    color: var(--text-disabled);
+  }
+}
+
+.select-dropdown-header-right {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-left: auto;
+}
+
+.select-dropdown-header-optional {
+  font-size: 0.875rem; // 14px
+  line-height: 1.5rem; // 24px
+  font-weight: 400;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.select-dropdown-header-tooltip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  color: var(--tooltip-icon-default);
+  cursor: help;
+  line-height: 0;
+
+  &:hover {
+    color: var(--tooltip-icon-hover);
+  }
+
+  &::after {
+    content: attr(data-tooltip);
+    position: absolute;
+    bottom: calc(100% + 8px);
+    right: 0;
+    min-width: 200px;
+    max-width: 280px;
+    padding: 8px 12px;
+    background-color: var(--background-inverse, #161616);
+    color: var(--text-on-color, #ffffff);
+    font-size: 13px;
+    line-height: 1.4;
+    border-radius: 4px;
+    white-space: normal;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.15s ease-in-out, visibility 0.15s ease-in-out;
+    z-index: 10000;
+    pointer-events: none;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  }
+
+  &:hover::after {
+    opacity: 1;
+    visibility: visible;
+  }
+}
+
+.select-dropdown-header-tooltip-icon {
+  width: 1rem; // 16px
+  height: 1rem; // 16px
+}
+
+// ---- Trigger container (positions the clear button absolutely) --------------
+
+.select-dropdown-trigger-container {
+  position: relative;
+  width: 100%;
+}
+
+// ---- Icons overlay: [X?] [▼] ------------------------------------------------
+// Absolutely pinned to the right of the trigger container.
+// pointer-events: none lets chevron-area clicks fall through to the trigger button;
+// the X button re-enables pointer-events for itself.
+
+.select-dropdown-trigger-icons {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  gap: 0;
+  pointer-events: none;
+
+  .select-dropdown-wrapper--field & {
+    right: 10px;
+  }
+
+  .select-dropdown-wrapper--underline & {
+    right: 7px;
+  }
+}
+
+.select-dropdown-clear {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem; // 24px
+  height: 1.5rem; // 24px
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  color: var(--field-icon);
+  pointer-events: all; // re-enable so the button captures clicks
+
+  &:hover {
+    color: var(--text-primary);
+  }
+}
+
+.select-dropdown-clear-icon {
+  width: 10px;
+  height: 10px;
+  color: var(--field-icon);
+  pointer-events: none;
+}
+
+// ---- Trigger ----------------------------------------------------------------
+
+.select-dropdown-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem; // 16px
+  width: 100%;
+  font-size: 0.875rem; // 14px
+  line-height: 1.5rem; // 24px
+  color: var(--text-primary);
+  cursor: pointer;
+  outline: none;
+  user-select: none;
+  white-space: nowrap;
+  overflow: hidden;
+  transition: border-color 150ms ease;
+
+  // ---- Field variant -------------------------------------------------------
+
+  &.select-dropdown-trigger--field {
+    height: 2.5rem; // 40px
+    // right padding = 8px gap + 24px chevron = 32px; text stays clear of the icons overlay
+    padding: 0.5rem 2rem 0.5rem 1rem; // 8px 32px 8px 16px
+    border-radius: 4px;
+    border: 1px solid var(--field-border);
+    background-color: var(--background-content);
+
+    &:hover {
+      border-color: var(--text-secondary);
+    }
+
+    // 2px blue border effect via inset box-shadow to avoid layout shift
+    &[data-popup-open] {
+      border-color: var(--field-border-selected);
+      box-shadow: inset 0 0 0 1px var(--field-border-selected);
+    }
+
+    &:disabled {
+      pointer-events: none;
+      background-color: var(--field-bg-disabled);
+      border-color: var(--field-border-disabled);
+      color: var(--text-disabled);
+      opacity: 1;
+    }
+
+    &[data-readonly] {
+      pointer-events: none;
+      background-color: var(--field-bg-disabled);
+      border-color: var(--field-border-disabled);
+      color: var(--text-primary);
+      cursor: default;
+
+      .select-dropdown-placeholder {
+        color: var(--text-secondary);
+      }
+    }
+
+    // extend right padding to make room for the absolute clear button
+    &.select-dropdown-trigger--with-clear {
+      // 8px + 24px chevron + 7px gap + 24px X = 63px — keeps text clear of both icons
+      padding-right: 63px;
+    }
+
+  }
+
+  // ---- Underline variant ---------------------------------------------------
+
+  &.select-dropdown-trigger--underline {
+    height: 1.75rem; // 28px
+    padding: 0;
+    border-radius: 0;
+    border: none;
+    border-bottom: 1px solid var(--border-underline-default);
+    background: transparent;
+
+    &:hover:not(:disabled):not([data-popup-open]) {
+      border-bottom-color: var(--text-secondary);
+    }
+
+    // Active/open: 2px blue underline
+    &[data-popup-open] {
+      border-bottom-width: 2px;
+      border-bottom-color: var(--border-underline-selected);
+    }
+
+    // Disabled: explicit token colors instead of blanket opacity fade
+    &:disabled {
+      pointer-events: none;
+      color: var(--text-disabled);
+      border-bottom-color: var(--field-border-disabled);
+    }
+
+    &[data-readonly] {
+      pointer-events: none;
+      border-bottom-color: var(--field-border-disabled);
+      color: var(--text-primary);
+      cursor: default;
+
+      .select-dropdown-placeholder {
+        color: var(--text-secondary);
+      }
+    }
+  }
+
+  // ---- Error / Warning borders applied via wrapper modifier ----------------
+
+  .select-dropdown-wrapper--error &.select-dropdown-trigger--field,
+  .select-dropdown-wrapper--error &.select-dropdown-trigger--underline {
+    border-color: var(--notification-error);
+    box-shadow: none;
+  }
+
+  // Warning: underline variant gets an orange bottom border (field keeps grey border)
+  .select-dropdown-wrapper--warning &.select-dropdown-trigger--underline {
+    border-bottom-color: var(--notification-warning);
+  }
+
+  // ---- Rotate chevron when open (standalone usage: chevron is inside trigger) --
+  &[data-popup-open] .select-dropdown-trigger-icon,
+  &[aria-expanded="true"] .select-dropdown-trigger-icon {
+    transform: rotate(180deg);
+  }
+
+  // ---- Rotate chevron when open (wrapper usage: chevron is in sibling icons div) --
+  &[data-popup-open] ~ .select-dropdown-trigger-icons .select-dropdown-chevron,
+  &[aria-expanded="true"] ~ .select-dropdown-trigger-icons .select-dropdown-chevron {
+    transform: rotate(180deg);
+  }
+}
+
+// ---- Value & placeholder text -----------------------------------------------
+
+.select-dropdown-value {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: start;
+
+  // When Base UI's Value span is empty the placeholder is shown externally
+  &:has(span[data-slot="select-dropdown-value"]:empty),
+  &:empty {
+    color: var(--text-secondary);
+  }
+}
+
+// Placeholder span rendered by renderValue in the wrapper component
+.select-dropdown-placeholder {
+  color: var(--text-secondary);
+}
+
+// Label prefix rendered inside the underline trigger ("Label: ")
+.select-dropdown-underline-label-prefix {
+  color: var(--text-primary);
+}
+
+// ---- Trigger chevron icon ---------------------------------------------------
+
+.select-dropdown-trigger-icon {
+  flex-shrink: 0;
+  width: 1.5rem; // 24px
+  height: 1.5rem; // 24px
+  color: var(--field-icon);
+  pointer-events: none;
+  transition: transform 150ms ease;
+}
+
+// ---- Underline wrapper layout -----------------------------------------------
+
+.select-dropdown-wrapper--underline {
+  .select-dropdown-underline-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.5rem; // 8px
+
+    .select-dropdown-trigger-container {
+      flex: 1;
+    }
+
+    // align tooltip with text baseline (matches Figma 6px top padding)
+    .select-dropdown-header-tooltip {
+      padding-top: 0.375rem;
+    }
+  }
+
+  // Dim the chevron overlay icon when disabled or read-only
+  // (it lives in a sibling div and won't inherit the trigger's color)
+  &.select-dropdown-wrapper--disabled,
+  &.select-dropdown-wrapper--readonly {
+    .select-dropdown-trigger-icons .select-dropdown-chevron {
+      color: var(--text-disabled);
+    }
+  }
+}
+
+// ---- Positioner -------------------------------------------------------------
+
+.select-dropdown-positioner {
+  isolation: isolate;
+  z-index: var(--zindex-floating-layer);
+}
+
+// ---- Dropdown panel ---------------------------------------------------------
+
+.select-dropdown-content {
+  position: relative;
+  width: var(--anchor-width);
+  min-width: var(--anchor-width);
+  max-height: var(--available-height);
+  max-width: var(--available-width);
+  transform-origin: var(--transform-origin);
+  overflow: hidden;
+  border-radius: 4px;
+  background-color: var(--background-content);
+  color: var(--text-primary);
+  box-shadow: 2px 2px 6px 0px var(--border-drop-shadow);
+  transition-duration: 100ms;
+
+  &[data-open] {
+    animation: select-dropdown-in 100ms ease forwards;
+  }
+
+  &[data-closed] {
+    animation: select-dropdown-out 100ms ease forwards;
+  }
+
+  &[data-side="bottom"] { transform-origin: top center; }
+  &[data-side="top"] { transform-origin: bottom center; }
+  &[data-side="left"] { transform-origin: right center; }
+  &[data-side="right"] { transform-origin: left center; }
+}
+
+@keyframes select-dropdown-in {
+  from { opacity: 0; transform: scale(0.98); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+@keyframes select-dropdown-out {
+  from { opacity: 1; transform: scale(1); }
+  to   { opacity: 0; transform: scale(0.98); }
+}
+
+// ---- Search bar (inside popup) ----------------------------------------------
+
+.select-dropdown-searchbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px 8px 16px; // Figma: pl-16 pr-8 py-8
+  background-color: var(--background-content);
+
+  &__icon {
+    flex-shrink: 0;
+    width: 16px;
+    height: 16px;
+    color: var(--text-primary);
+  }
+
+  &__input {
+    flex: 1;
+    min-width: 0;
+    border: none;
+    outline: none;
+    background: transparent;
+    font-size: 0.8125rem; // 13px — Figma Body/13 Regular
+    line-height: 1.25rem; // 20px
+    color: var(--text-primary);
+
+    &::placeholder {
+      color: var(--text-disabled);
+    }
+
+    &:disabled {
+      color: var(--text-disabled);
+      cursor: default;
+    }
+  }
+
+  &__clear {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    color: var(--field-icon);
+    border-radius: 2px;
+
+    &:hover:not(:disabled) {
+      color: var(--text-primary);
+    }
+  }
+
+  &__clear-icon {
+    width: 10px;
+    height: 10px;
+    color: var(--field-icon);
+    pointer-events: none;
+  }
+
+  &__add {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    flex-shrink: 0;
+    padding: 0 4px;
+    height: 24px;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    color: var(--text-button-primary);
+    font-size: 0.875rem; // 14px
+    line-height: 1.5rem; // 24px
+    border-radius: 2px;
+    white-space: nowrap;
+
+    &:disabled {
+      color: var(--text-disabled);
+      cursor: default;
+    }
+
+    svg {
+      width: 16px;
+      height: 16px;
+    }
+  }
+
+  &--disabled {
+    .select-dropdown-searchbar__icon {
+      color: var(--text-disabled);
+    }
+  }
+}
+
+// ---- Select All row ---------------------------------------------------------
+
+.select-dropdown-select-all {
+  display: flex;
+  width: 100%;
+  cursor: pointer;
+  align-items: center;
+  gap: 1rem; // 16px — matches item-cell gap
+  padding: 0.75rem 1.5rem 0.75rem 1rem; // 12px 24px 12px 16px — same as checkbox item
+  min-height: 3rem; // 48px
+  font-size: 0.875rem; // 14px
+  line-height: 1.5rem; // 24px
+  outline: none;
+  border: none;
+  user-select: none;
+  text-align: left;
+  color: var(--text-primary);
+  background-color: var(--background-content);
+  transition: background-color 100ms ease;
+
+  &:hover {
+    background-color: var(--background-hover);
+  }
+
+  // Checkbox icon container — replace with <Checkbox> component when ready
+  &__checkbox {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 1rem;  // 16px
+    height: 1rem; // 16px
+    color: var(--field-border); // unchecked state — matches item-cell checkbox
+  }
+
+  // Only the unchecked icon visible by default (none selected)
+  &__checkbox-unchecked    { display: block; }
+  &__checkbox-indeterminate { display: none; }
+  &__checkbox-checked       { display: none; }
+
+  // Some selected → indeterminate (horizontal dash), blue — matches item-cell checked color
+  &--some-selected {
+    .select-dropdown-select-all__checkbox { color: var(--text-button-primary); }
+    .select-dropdown-select-all__checkbox-unchecked    { display: none; }
+    .select-dropdown-select-all__checkbox-indeterminate { display: block; }
+    .select-dropdown-select-all__checkbox-checked       { display: none; }
+  }
+
+  // All selected → checked, blue — matches item-cell checked color
+  &--all-selected {
+    .select-dropdown-select-all__checkbox { color: var(--text-button-primary); }
+    .select-dropdown-select-all__checkbox-unchecked    { display: none; }
+    .select-dropdown-select-all__checkbox-indeterminate { display: none; }
+    .select-dropdown-select-all__checkbox-checked       { display: block; }
+  }
+
+  & svg {
+    pointer-events: none;
+    flex-shrink: 0;
+    width: 1rem;
+    height: 1rem;
+  }
+}
+
+// ---- Scrollable list --------------------------------------------------------
+// Each row is 48px (12px + 24px line-height + 12px).
+// The list hugs its content; max 6 rows = 288px before scroll appears.
+
+.select-dropdown-list {
+  // max 6 rows before scroll; height shrinks to fit fewer items (no empty filler)
+  max-height: 18rem;  // 288px
+  scroll-padding-block: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0;
+
+  // Firefox: use standard scrollbar properties
+  @supports not selector(::-webkit-scrollbar) {
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-scroller) var(--background-main);
+  }
+
+  // WebKit/Blink: custom always-visible scrollbar.
+  // Defined without the standard scrollbar-width/scrollbar-color above so Chrome 121+
+  // uses these pseudo-elements exclusively — which forces classic (non-overlay) mode on macOS.
+  &::-webkit-scrollbar {
+    -webkit-appearance: none;
+    width: 6px;
+  }
+
+  &::-webkit-scrollbar-track {
+    // Visible track ensures the scrollbar gutter is always perceived by the user,
+    // and forces WebKit into classic (non-fading) scrollbar rendering.
+    background: var(--background-main);
+  }
+
+  &::-webkit-scrollbar-thumb {
+    background-color: var(--border-scroller);
+    border-radius: 4px;
+    min-height: 40px;
+  }
+}
+
+// ---- Individual option ------------------------------------------------------
+
+.select-dropdown-item {
+  position: relative;
+  display: flex;
+  width: 100%;
+  cursor: default;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1.5rem; // 12px 24px
+  min-height: 3rem; // 48px
+  font-size: 0.875rem; // 14px
+  line-height: 1.5rem; // 24px
+  outline: none;
+  user-select: none;
+  color: var(--text-primary);
+  background-color: var(--background-content);
+  transition: background-color 100ms ease;
+  
+  &[data-highlighted] {
+    background-color: var(--background-hover);
+    color: var(--text-primary);
+  }
+
+  &[data-disabled] {
+    pointer-events: none;
+    color: var(--text-disabled);
+  }
+
+  // Selected state: blue text for plain (non-checkbox) items
+  &:not(.select-dropdown-item--checkbox)[data-selected] {
+    color: var(--text-button-primary);
+  }
+
+  // Checkbox variant: reduce left padding to 16px
+  &.select-dropdown-item--checkbox {
+    padding-left: 1rem; // 16px
+  }
+
+  // Multiline variant: reduce vertical padding to 8px
+  &.select-dropdown-item--multiline {
+    padding-top: 0.5rem;    // 8px
+    padding-bottom: 0.5rem; // 8px
+  }
+
+  & svg {
+    pointer-events: none;
+    flex-shrink: 0;
+    width: 1rem;
+    height: 1rem;
+  }
+}
+
+// ---- Item cell (label / sublabel / checkbox) ---------------------------------
+
+.select-dropdown-item-cell {
+  display: flex;
+  align-items: center;
+  gap: 1rem; // 16px
+  width: 100%;
+  overflow: hidden;
+}
+
+.select-dropdown-item-cell__checkbox {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1rem;  // 16px
+  height: 1rem; // 16px
+  color: var(--field-border);
+
+  // Show unchecked by default
+  .select-dropdown-item-cell__checkbox-unchecked { display: block; }
+  .select-dropdown-item-cell__checkbox-checked   { display: none; }
+
+  // Swap to checked when the parent item is selected
+  .select-dropdown-item[data-selected] & {
+    color: var(--text-button-primary);
+
+    .select-dropdown-item-cell__checkbox-unchecked { display: none; }
+    .select-dropdown-item-cell__checkbox-checked   { display: block; }
+  }
+
+  // Disabled colour
+  .select-dropdown-item[data-disabled] & {
+    color: var(--text-disabled);
+  }
+
+  svg {
+    width: 1rem;
+    height: 1rem;
+  }
+}
+
+.select-dropdown-item-cell__text {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.select-dropdown-item-cell__label {
+  font-size: 0.875rem;  // 14px
+  line-height: 1.5rem;  // 24px
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+
+  // Semibold label in multiline mode
+  .select-dropdown-item-cell--multiline & {
+    font-weight: 600;
+  }
+}
+
+.select-dropdown-item-cell__sublabel {
+  font-size: 0.875rem;  // 14px
+  line-height: 1.5rem;  // 24px
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary);
+
+  // Inherit disabled colour from parent item
+  .select-dropdown-item[data-disabled] & {
+    color: var(--text-disabled);
+  }
+
+  // Blue sublabel when selected (no checkbox)
+  .select-dropdown-item:not(.select-dropdown-item--checkbox)[data-selected] & {
+    color: var(--text-button-primary);
+  }
+}
+
+// ---- Check indicator on selected item ---------------------------------------
+
+.select-dropdown-item-indicator {
+  pointer-events: none;
+  position: absolute;
+  inset-inline-end: 1rem;
+  display: flex;
+  width: 1rem;
+  height: 1rem;
+  align-items: center;
+  justify-content: center;
+}
+
+// ---- Tab strip (groups rendered as side-by-side tabs) -----------------------
+
+.select-dropdown-tabs {
+  display: flex;
+  align-items: stretch;
+  gap: 0.25rem; // 4px
+  padding: 0 0.5rem;
+  background-color: var(--background-content);
+  border-bottom: 1px solid var(--border-main);
+}
+
+.select-dropdown-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem; // 6px
+  padding: 0.625rem 0.75rem; // 10px 12px
+  border: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px; // overlap the strip border so the active underline aligns
+  background: none;
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+
+  &:hover {
+    color: var(--text-primary);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--field-border-selected);
+    outline-offset: -2px;
+  }
+}
+
+.select-dropdown-tab--active {
+  color: var(--text-button-primary);
+  border-bottom-color: var(--text-button-primary);
+}
+
+.select-dropdown-tab-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.25rem; // 20px
+  height: 1.25rem;
+  padding: 0 0.375rem;
+  border-radius: 999px;
+  background-color: var(--background-main);
+  color: var(--text-secondary);
+  font-size: 0.6875rem; // 11px
+  font-weight: 600;
+}
+
+.select-dropdown-tab--active .select-dropdown-tab-count {
+  background-color: var(--text-button-primary);
+  color: var(--background-content);
+}
+
+// ---- Group container --------------------------------------------------------
+
+.select-dropdown-group {
+  overflow: hidden;
+}
+
+// ---- Group heading ----------------------------------------------------------
+
+.select-dropdown-label {
+  padding: 0.75rem 1.5rem 0.25rem; // 12px 24px 4px
+  font-size: 0.75rem;
+  line-height: 1rem;
+  font-weight: 500;
+  color: var(--text-disabled);
+}
+
+// ---- Divider between groups -------------------------------------------------
+
+.select-dropdown-separator {
+  height: 1px;
+  background-color: var(--border-main);
+  margin: 0;
+}
+
+// ---- Empty state message ----------------------------------------------------
+
+.select-dropdown-empty {
+  padding: 0.75rem 1.5rem; // 12px 24px
+  text-align: center;
+  font-size: 0.875rem;
+  line-height: 1.5rem;
+  color: var(--text-secondary);
+}
+
+// ---- Footer (error / warning feedback) --------------------------------------
+
+.select-dropdown-footer {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem; // 4px
+  font-size: 0.8125rem; // 13px
+  line-height: 1.25rem; // 20px
+  color: var(--text-primary);
+
+  &--error .select-dropdown-footer-icon {
+    color: var(--notification-error);
+  }
+
+  &--warning .select-dropdown-footer-icon {
+    color: var(--notification-warning);
+  }
+}
+
+.select-dropdown-footer-icon {
+  flex-shrink: 0;
+  width: 1rem; // 16px
+  height: 1rem; // 16px
+}
+
+.select-dropdown-footer-label {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.select-dropdown-footer-message {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

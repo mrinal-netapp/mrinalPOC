@@ -1,0 +1,21 @@
+dependencies:
+- name: dataset-worker
+  repository: file://./charts/dataset-worker
+  version: 1.0.0
+- name: kb-worker
+  repository: file://./charts/kb-worker
+  version: 1.0.0
+- name: connector-worker
+  repository: file://./charts/connector-worker
+  version: 1.0.0
+- name: s3gateway
+  repository: file://./charts/s3gateway
+  version: 1.0.0
+- name: storage-manager
+  repository: file://./charts/storage-manager
+  version: 1.0.0
+- name: eval-worker
+  repository: file://./charts/eval-worker
+  version: 1.0.0
+digest: sha256:82bb1aaa2fba95c5ba931461c37f099e8b5dea9f995df9bb6cc731641cd9c621
+generated: "2026-06-20T16:54:50.452268644Z"

@@ -1,0 +1,35 @@
+.safety-guardrails-config-dialog {
+  width: 100%;
+
+  // Mirrors Card{Header,Footer}'s `padding-inline: 40px` so the
+  // description and section titles line up with the dialog title above
+  // and the action buttons below. UA-margin reset is needed because
+  // `Typography Component="h3"|"p"` renders real <h3>/<p> elements;
+  // default UA margins would stack on top of the flex gaps and balloon
+  // the layout.
+
+  &__content {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    padding: 24px 40px;
+
+    h1, h2, h3, h4, h5, h6,
+    p {
+      margin: 0;
+    }
+  }
+
+  &__section {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  &__toggle-row {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 2px;
+  }
+}

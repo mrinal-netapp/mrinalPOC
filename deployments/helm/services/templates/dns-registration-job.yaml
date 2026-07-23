@@ -1,0 +1,64 @@
+{{- if .Values.dns.enabled }}
+{{- /*
+  DNS Registration Hook for AgentStudio Deployment
+
+  This Helm hook creates ConfigMaps with DNS registration information.
+  An external script (running on the host) should watch for these ConfigMaps
+  and update dnsmasq configuration accordingly.
+
+  Registers:
+  - Base domain: agentstudio.local (or from values)
+  - Single-label wildcard: *.agentstudio.local
+    Covers all in-cluster public hosts: app./auth./catalog./workflows./
+    phoenix./s3./{workspaceLabelPrefix}<id>. — including per-workspace
+    hosts of the form ws-<id>.{baseDomain}.
+*/}}
+{{- $baseDomain := .Values.dns.baseDomain | default "agentstudio.local" }}
+{{- $wildcardDomain := printf "*.%s" $baseDomain }}
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "nemo.fullname" . }}-dns-base-domain
+  namespace: {{ include "nemo.namespace" . }}
+  labels:
+    {{- include "nemo.labels" . | nindent 4 }}
+    agentstudio.io/dns-registration: "true"
+    agentstudio.io/deployment-type: "nemo"
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "1"
+    "helm.sh/hook-delete-policy": before-hook-creation
+data:
+  domain: "{{ $baseDomain }}"
+  deployment-type: "nemo"
+  namespace: "{{ include "nemo.namespace" . }}"
+  action: "register"
+  timestamp: "{{ now | date "2006-01-02T15:04:05Z07:00" }}"
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "nemo.fullname" . }}-dns-wildcard
+  namespace: {{ include "nemo.namespace" . }}
+  labels:
+    {{- include "nemo.labels" . | nindent 4 }}
+    agentstudio.io/dns-registration: "true"
+    agentstudio.io/deployment-type: "nemo"
+    agentstudio.io/dns-type: "wildcard"
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "2"
+    "helm.sh/hook-delete-policy": before-hook-creation
+data:
+  # Single-label wildcard covering all public hosts including per-workspace
+  # hosts ({workspaceLabelPrefix}<id>.{baseDomain}).
+  domain: "{{ $wildcardDomain }}"
+  deployment-type: "nemo"
+  namespace: "{{ include "nemo.namespace" . }}"
+  action: "register-wildcard"
+  timestamp: "{{ now | date "2006-01-02T15:04:05Z07:00" }}"
+{{- end }}
+

@@ -1,0 +1,41 @@
+.deploy-confirmation-dialog__content {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  // Match Card{Header,Footer}'s inline padding so the body aligns with the
+  // dialog title above and the action buttons below.
+  padding: 24px 40px;
+}
+
+.deploy-confirmation-dialog__skipped {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.deploy-confirmation-dialog__skipped-intro {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.deploy-confirmation-dialog__warning-icon {
+  flex-shrink: 0;
+  color: var(--notification-warning, var(--orange-50, #f1c21b));
+}
+
+.deploy-confirmation-dialog__skipped-list {
+  margin: 0;
+  padding-left: 32px;
+  list-style: disc;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.deploy-confirmation-dialog__acknowledge {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}

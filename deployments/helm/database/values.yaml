@@ -1,0 +1,70 @@
+# Bitnami PostgreSQL subchart values.
+# See https://github.com/bitnami/charts/tree/main/bitnami/postgresql for full reference.
+namespace: database
+
+namespacePodSecurity:
+  enforce: privileged
+  audit: privileged
+  warn: privileged
+
+postgresql:
+  fullnameOverride: "shared-postgresql"
+  auth:
+    postgresPassword: "agentstudio-postgres-password"
+  primary:
+    extendedConfiguration: |
+      max_connections = 100
+      idle_in_transaction_session_timeout = 30000
+      statement_timeout = 60000
+    persistence:
+      size: 20Gi
+      storageClass: ""
+    resources:
+      requests:
+        cpu: 500m
+        memory: 512Mi
+      limits:
+        cpu: 2000m
+        memory: 2Gi
+    initdb:
+      scripts:
+        # Pre-create the per-service databases on FIRST PG initialization
+        # only. Bitnami's container runs scripts under
+        # /docker-entrypoint-initdb.d/ exactly once -- they do NOT re-run
+        # on subsequent helm upgrades or pod restarts. For an existing
+        # cluster, re-create missing databases manually with:
+        #   kubectl exec -n database shared-postgresql-0 -c postgresql -- \
+        #     psql -U postgres -d postgres -c 'CREATE DATABASE <name>;'
+        #
+        # ON_ERROR_STOP=1 (NOT 0) so SQL failures stop the script and the
+        # pod fails its first-init readiness check instead of silently
+        # leaving databases uncreated. The previous version used
+        # ON_ERROR_STOP=0 with a shell-quoted CREATE DATABASE that
+        # produced invalid PostgreSQL syntax (`SELECT 'CREATE DATABASE
+        # "'"$db"'"' ...` — adjacent string + quoted-identifier + string
+        # is a parse error in PG); psql errored on every iteration but
+        # the loop kept running and printed "Database 'X' ensured." even
+        # though nothing was created. That bug went undetected because
+        # the AKS path uses a different (legacy) Keycloak install that
+        # pre-created the `keycloak` database through another mechanism;
+        # the GKE deploy was the first to fail loudly on it.
+        #
+        # Correct form: PG's `format(..., %I)` safely quotes the
+        # identifier and `\gexec` runs the resulting CREATE DATABASE
+        # only when the WHERE clause matches (i.e. the DB does NOT
+        # already exist). Idempotent and SQL-injection-safe.
+        create-databases.sh: |
+          #!/bin/bash
+          set -e
+          export PGPASSWORD="${POSTGRES_PASSWORD}"
+          for db in nemo keycloak lakekeeper temporal temporal_visibility bifrost phoenix; do
+            psql -v ON_ERROR_STOP=1 --username postgres --dbname postgres <<-SQL
+              SELECT format('CREATE DATABASE %I', '$db')
+              WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = '$db')\gexec
+          SQL
+            echo "Database '$db' ensured."
+          done
+  metrics:
+    enabled: false
+    serviceMonitor:
+      enabled: false

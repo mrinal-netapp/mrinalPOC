@@ -1,0 +1,16 @@
+apiVersion: v2
+name: nemo
+description: A Helm chart for AgentStudio AI Data Platform Services
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+keywords:
+  - agentstudio
+  - nemo
+  - ai-data-platform
+maintainers:
+  - name: AgentStudio Team
+
+# Dependencies removed: this legacy umbrella has been superseded by the per-tier charts
+# (console, database, edge, identity, llm-gateway, platform, services, workers).
+# Keycloak is installed separately via 'make helm-keycloak-upgrade'.

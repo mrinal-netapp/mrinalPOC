@@ -1,0 +1,1398 @@
+# Main CI pipeline. Runs on pull requests to main and release branches.
+# Orchestrates lint + typecheck, unit tests, and build across the polyglot
+# service set (Node, Go, Python, Rust). CodeQL runs independently.
+#
+# AgentStudio has 8+ services split across 4 languages under
+# `src/nemo/<service>` plus a shared Node package at `src/common`. Each
+# language gets its own job so they run in parallel and a failure in
+# one language does not mask a regression in another.
+#
+# Design notes:
+#   1. Integration tests are NOT run from PR-time CI -- they require
+#      live infra (k8s, postgres, OIDC, ...) that is not present on the
+#      hosted runners and would silently no-op otherwise.
+#      They will be run post-deploy from `deploy-reusable.yml` (TODO when
+#      CD is brought up) so they exercise a real, deployed environment.
+#   2. Server-side Node unit tests now run with coverage AND propagate
+#      exit codes — a failing unit test fails the job. Coverage is
+#      uploaded as an artifact (alongside the UI coverage report) so
+#      reviewers can inspect it from the PR check.
+
+name: Main CI Pipeline
+
+on:
+  pull_request:
+    types: [opened, synchronize, edited, reopened]
+    branches:
+      - main
+      - 'release/**'
+
+permissions:
+  contents: read
+  packages: read
+  actions: read
+  security-events: write
+  # Required by the sticky PR comment posted from the UI Test Results
+  # Summary job.
+  pull-requests: write
+
+concurrency:
+  # head_ref is set on pull_request; ref covers other triggers. Avoids
+  # falling back to run_id (which is unique per run and would defeat
+  # cancel-in-progress).
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ─── MAKEFILE LINT ──────────────────────────────────
+  # Enforce the Makefile target naming conventions documented in
+  # docs/deployment/makefile-target-conventions.md (rules R2-R6; R1 planned), so a
+  # rename that violates the cloud-prefix / no-platform-token / no-cloud-suffix
+  # rules is caught at PR time instead of after merge.
+  # Pure shell/awk -- no language toolchains, no checkout depth needed --
+  # so this is the cheapest job in the pipeline and runs first.
+  makefile-lint:
+    name: Makefile Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Lint Makefile target conventions
+        run: make lint-makefile
+
+  # ─── HELM VALIDATE ──────────────────────────────────
+  # Offline Helm values gate: cross-cloud parity linter (lint-values) +
+  # `helm template` render across all four cloud overlays, with
+  # values.schema.json enforced during render. No cluster contact --
+  # mirrors `make helm-validate` run locally. See
+  # docs/deployment/values-convergence-strategy.md.
+  #
+  # Render coverage: platform, llm-gateway, services, console, workers, edge.
+  # The identity tier is parity-linted but rendered separately via
+  # helm-identity-template-<cloud> (it needs a hostname), so it is outside this
+  # job's render loop.
+  #
+  # This job FAILS RED (no continue-on-error) on any drift/schema/render error,
+  # but it does NOT block merges on its own: a job that is not in the required
+  # status checks shows a red X yet GitHub still allows the merge. To actually
+  # block merges, add "Helm Validate" to the required status checks in the
+  # branch-protection rule / ruleset for main + release/**.
+  helm-validate:
+    name: Helm Validate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v4.2.1
+          token: ${{ github.token }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install PyYAML (parity linter dependency)
+        run: pip install pyyaml
+
+      - name: Run offline Helm values gate (parity + render x4 clouds)
+        run: make helm-validate
+
+  # ─── NODE: LINT & TYPECHECK ─────────────────────────
+  # Lint + typecheck every Node workspace (agent-studio-ui + Node services + the shared
+  # @agentstudio/common library). Each workspace ships its own
+  # package-lock.json — there is no top-level npm workspace — so we set up
+  # node_modules per workspace via the composite action.
+  node-lint:
+    name: Node Lint & Typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: |
+            src/common/package-lock.json
+            src/nemo/agent-studio-ui/package-lock.json
+            src/nemo/config-service/package-lock.json
+            src/nemo/storage-manager/package-lock.json
+            src/nemo/workers/eval-worker/package-lock.json
+
+      - name: Setup common workspace
+        uses: ./.github/actions/setup-workspace
+        with:
+          workspace: src/common
+
+      # Build the observability-client sub-package so dist/ exists before
+      # TypeScript compilation. npm v7+ installs file: dependencies as symlinks,
+      # so once dist/ is created here the compiler resolves
+      # @agentstudio/observability-client-runtime automatically.
+      - name: Build observability-client
+        working-directory: src/common/src/observability/observability-client
+        run: |
+          npm ci
+          npm run build
+
+      - name: Setup agent-studio-ui workspace
+        uses: ./.github/actions/setup-workspace
+        with:
+          workspace: src/nemo/agent-studio-ui
+
+      - name: Setup config-service workspace
+        uses: ./.github/actions/setup-workspace
+        with:
+          workspace: src/nemo/config-service
+
+      - name: Setup storage-manager workspace
+        uses: ./.github/actions/setup-workspace
+        with:
+          workspace: src/nemo/storage-manager
+
+      - name: Setup eval-worker workspace
+        uses: ./.github/actions/setup-workspace
+        with:
+          workspace: src/nemo/workers/eval-worker
+
+      # Only `agent-studio-ui` ships an eslint config today. config-service / storage-
+      # manager / common / eval-worker don't, so we just typecheck them. As lint
+      # configs land in those packages, add `npm run lint` here.
+      #
+      - name: Lint agent-studio-ui
+        working-directory: src/nemo/agent-studio-ui
+        run: npm run lint
+
+      - name: Typecheck agent-studio-ui
+        working-directory: src/nemo/agent-studio-ui
+        run: npx tsc -b
+
+      - name: Typecheck common
+        working-directory: src/common
+        run: npx tsc --noEmit
+
+      - name: Typecheck config-service
+        working-directory: src/nemo/config-service
+        # @agentstudio/common is referenced as `file:../../common` and resolves
+        # to common/dist; build common first so type declarations exist.
+        run: |
+          (cd ../../common && npx tsc)
+          npx tsc --noEmit
+
+      - name: Typecheck storage-manager
+        working-directory: src/nemo/storage-manager
+        run: |
+          (cd ../../common && npx tsc)
+          npx tsc --noEmit
+
+      - name: Typecheck eval-worker
+        working-directory: src/nemo/workers/eval-worker
+        run: npm run typecheck
+
+  # ─── NODE: UNIT TESTS ──────────────────────────────
+  # Runs every Node package's test suite with coverage. Each step
+  # propagates the package's exit code — failing tests fail the job, full
+  # stop. Coverage is uploaded so reviewers can drill in from the PR's
+  # checks summary.
+  node-unit-tests:
+    name: Node Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: |
+            src/common/package-lock.json
+            src/nemo/agent-studio-ui/package-lock.json
+            src/nemo/config-service/package-lock.json
+            src/nemo/storage-manager/package-lock.json
+            src/nemo/workers/eval-worker/package-lock.json
+
+      - name: Setup common workspace
+        uses: ./.github/actions/setup-workspace
+        with:
+          workspace: src/common
+
+      - name: Build observability-client
+        working-directory: src/common/src/observability/observability-client
+        run: |
+          npm ci
+          npm run build
+
+      - name: Setup agent-studio-ui workspace
+        uses: ./.github/actions/setup-workspace
+        with:
+          workspace: src/nemo/agent-studio-ui
+
+      - name: Setup config-service workspace
+        uses: ./.github/actions/setup-workspace
+        with:
+          workspace: src/nemo/config-service
+
+      - name: Setup storage-manager workspace
+        uses: ./.github/actions/setup-workspace
+        with:
+          workspace: src/nemo/storage-manager
+
+      - name: Setup eval-worker workspace
+        uses: ./.github/actions/setup-workspace
+        with:
+          workspace: src/nemo/workers/eval-worker
+
+      # ─── agent-studio-ui ─── full Vitest suite + coverage + JSON / JUnit reporters.
+      # Artefacts land under `src/nemo/agent-studio-ui/src/utils/unit-tests/{coverage,test-results}/`
+      # — that path is what the UI Test Results Summary job below parses.
+      - name: Run agent-studio-ui unit tests (with coverage)
+        working-directory: src/nemo/agent-studio-ui
+        run: npm run test:ci
+
+      - name: Run common unit tests (with coverage)
+        working-directory: src/common
+        run: npm run test:coverage
+
+      - name: Upload common coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: common-coverage-report
+          path: src/common/coverage/
+          if-no-files-found: warn
+          retention-days: 30
+
+      # ─── storage-manager ─── Jest with coverage. The previous
+      # version of this step intentionally dropped `--coverage` because
+      # the transitive `babel-plugin-istanbul@6 → test-exclude@6` did
+      # `promisify(require('glob'))`, which crashes against `glob` v10
+      # (the namespace object isn't callable). That's now fixed by an
+      # `overrides` entry in `storage-manager/package.json` pinning
+      # `babel-plugin-istanbul` to `^8.0.2`, which brings in
+      # `test-exclude@^7.0.1` using the correct glob v10 API. Exit
+      # codes still propagate, so failing tests fail the job.
+      - name: Run storage-manager unit tests (with coverage)
+        working-directory: src/nemo/storage-manager
+        # @agentstudio/common is imported as `file:../../common` and resolves
+        # against common/dist at runtime; build common first.
+        run: |
+          (cd ../../common && npx tsc)
+          npm run test:coverage
+
+      # ─── config-service ─── full node --test suite under c8 (all *.test.ts
+      # files, including mysql + scan). Per-domain npm run test:* scripts remain
+      # for focused local runs.
+      - name: Run config-service unit tests (with coverage)
+        working-directory: src/nemo/config-service
+        run: |
+          (cd ../../common && npx tsc)
+          npm run test:coverage
+
+      # ─── eval-worker ─── Jest suite with coverage. Excludes
+      # `test/lib/temporal.test.ts` which fails to load due to a
+      # `uuid/v6ToV1.js` resolution mismatch in node_modules (pre-existing,
+      # tracked separately); rest of the suite (~430 tests) runs clean.
+      - name: Run eval-worker unit tests (with coverage)
+        working-directory: src/nemo/workers/eval-worker
+        run: npm run test:coverage -- --testPathIgnorePatterns=test/lib/temporal.test.ts
+
+      - name: Upload agent-studio-ui test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-studio-ui-test-results
+          path: src/nemo/agent-studio-ui/src/utils/unit-tests/test-results/
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Upload agent-studio-ui coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-studio-ui-coverage-report
+          path: src/nemo/agent-studio-ui/src/utils/unit-tests/coverage/
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Upload storage-manager coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: storage-manager-coverage-report
+          path: src/nemo/storage-manager/coverage/
+          if-no-files-found: warn
+          retention-days: 30
+      
+      - name: Upload config-service coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: config-service-coverage-report
+          path: src/nemo/config-service/coverage/
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Upload eval-worker coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-worker-coverage-report
+          path: src/nemo/workers/eval-worker/coverage/
+          if-no-files-found: warn
+          retention-days: 30
+
+  # ─── NODE: BUILD ───────────────────────────────────
+  # `tsc && vite build` for agent-studio-ui, `tsc` for the Node TypeScript services
+  # and the shared common library. Mirrors what `make build` would do for
+  # the Node services in isolation; the polyglot Makefile path is exercised
+  # at release-time via build-common.yml (TODO when CD is brought up).
+  node-build:
+    name: Node Build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: |
+            src/common/package-lock.json
+            src/nemo/agent-studio-ui/package-lock.json
+            src/nemo/config-service/package-lock.json
+            src/nemo/storage-manager/package-lock.json
+            src/nemo/workers/eval-worker/package-lock.json
+
+      - name: Setup common workspace
+        uses: ./.github/actions/setup-workspace
+        with:
+          workspace: src/common
+
+      - name: Build observability-client
+        working-directory: src/common/src/observability/observability-client
+        run: |
+          npm ci
+          npm run build
+
+      - name: Setup agent-studio-ui workspace
+        uses: ./.github/actions/setup-workspace
+        with:
+          workspace: src/nemo/agent-studio-ui
+
+      - name: Setup config-service workspace
+        uses: ./.github/actions/setup-workspace
+        with:
+          workspace: src/nemo/config-service
+
+      - name: Setup storage-manager workspace
+        uses: ./.github/actions/setup-workspace
+        with:
+          workspace: src/nemo/storage-manager
+
+      - name: Setup eval-worker workspace
+        uses: ./.github/actions/setup-workspace
+        with:
+          workspace: src/nemo/workers/eval-worker
+
+      - name: Build common
+        working-directory: src/common
+        run: npm run build
+
+      - name: Build agent-studio-ui
+        working-directory: src/nemo/agent-studio-ui
+        run: npm run build
+
+      - name: Build config-service
+        working-directory: src/nemo/config-service
+        run: npm run build
+
+      - name: Build storage-manager
+        working-directory: src/nemo/storage-manager
+        run: npm run build
+
+      - name: Build eval-worker
+        working-directory: src/nemo/workers/eval-worker
+        run: npm run build
+
+  # ─── GO: LINT, TEST & BUILD ─────────────────────────
+  # Three Go services under src/nemo/ plus the shared secrets-client library
+  # under src/common-go/. Each has its own go.mod (separate modules, not a
+  # Go workspace), so we run a matrix with explicit paths.
+  go-checks:
+    name: Go (${{ matrix.service }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: apigateway-service
+            path: src/nemo/apigateway-service
+          - service: analytics-engine
+            path: src/nemo/analytics-engine
+          - service: workflow-engine
+            path: src/nemo/workflow-engine
+          - service: secrets-client
+            path: src/common-go/secrets-client
+    defaults:
+      run:
+        working-directory: ${{ matrix.path }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache-dependency-path: ${{ matrix.path }}/go.sum
+
+      - name: Verify go.mod tidy
+        run: |
+          go mod download
+          go mod verify
+
+      - name: gofmt check
+        run: |
+          unformatted="$(gofmt -l . | grep -v '^$' || true)"
+          if [ -n "$unformatted" ]; then
+            echo "::error::The following files are not gofmt'd:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: Install gocov
+        # dreamnear/gocov is a maintained fork; axw/gocov fails to build on newer Go toolchains.
+        run: go install github.com/dreamnear/gocov/gocov@v0.2.0
+
+      - name: go test (with coverage)
+        run: |
+          mkdir -p coverage
+          # `-json` lets the "Go test summary" step below count pass/fail/skip
+          # without re-running tests. The jq filter re-emits the streamed
+          # human-readable text from each Output event so the runner log
+          # still shows the familiar `=== RUN` / `--- PASS:` / `ok pkg ...`
+          # format. Explicit `set -o pipefail` (don't rely on the runner's
+          # bash default) so a `go test` failure propagates through the
+          # pipeline and still fails the job.
+          #
+          # gocov converts the cover profile to JSON + a per-package text report
+          # (coverage.json, coverage-gocov.txt). Go cover is statement-only —
+          # there is no branch-% column like Jest/Istanbul; see coverage.txt total.
+          set -o pipefail
+          go test -race -coverprofile=coverage/coverage.out -covermode=atomic -json ./... \
+            | tee coverage/test-output.json \
+            | jq -r 'if .Action=="output" then .Output | rtrimstr("\n") else empty end'
+          gocov convert coverage/coverage.out > coverage/coverage.json
+          gocov report coverage/coverage.json | tee coverage/coverage-gocov.txt
+          go tool cover -func=coverage/coverage.out | tee coverage/coverage.txt
+
+      # Surface per-job test counts + total coverage in the GitHub Actions UI
+      # (and the PR Checks tab) so reviewers can see the Go test results
+      # without cracking open the raw log. Uses only data already produced by
+      # the step above; no extra tools required.
+      - name: Go test summary
+        if: always()
+        run: |
+          set -euo pipefail
+          JSON=coverage/test-output.json
+          COV=coverage/coverage.txt
+          if [ ! -s "$JSON" ]; then
+            echo "::warning::No test JSON output found at $JSON"
+            exit 0
+          fi
+          passed=$(jq -rs '[.[] | select(.Action=="pass" and .Test!=null)] | length' "$JSON")
+          failed=$(jq -rs '[.[] | select(.Action=="fail" and .Test!=null)] | length' "$JSON")
+          skipped=$(jq -rs '[.[] | select(.Action=="skip" and .Test!=null)] | length' "$JSON")
+          total=$((passed + failed + skipped))
+          total_cov="N/A"
+          if [ -s "$COV" ]; then
+            total_cov="$(awk '/^total:/ {print $NF}' "$COV")"
+          fi
+          {
+            echo "## Go (${{ matrix.service }}) Test Results"
+            echo "| Passed | Failed | Skipped | Total | Stmt coverage | Branches |"
+            echo "|--------|--------|---------|-------|---------------|----------|"
+            echo "| $passed | $failed | $skipped | $total | $total_cov | N/A (go cover) |"
+            echo ""
+            echo "_Per-package gocov report is in the job log and artifact \`coverage-gocov.txt\`_"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: go build
+        run: go build ./...
+
+      - name: Upload Go coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: go-coverage-${{ matrix.service }}
+          path: ${{ matrix.path }}/coverage/
+          if-no-files-found: warn
+          retention-days: 30
+
+  # ─── PYTHON: LINT & TEST ────────────────────────────
+  # Python services (agent-service + the three Temporal workers). Each is
+  # a flat `src/` + `tests/` layout with its own requirements.txt. We
+  # ─── PYTHON: COMMON-PY LIBRARY ─────────────────────
+  # Runs the pytest suite for the shared secrets_client_py library
+  # (src/common-py/secrets_client_py) which is not covered by the
+  # python-checks service matrix since it uses a pyproject.toml-based
+  # setup rather than a requirements.txt.
+  common-py-checks:
+    name: Python (secrets_client_py)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: src/common-py/secrets_client_py
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install library and dev dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]" pytest-cov
+
+      - name: Run pytest (with coverage)
+        run: |
+          mkdir -p coverage
+          pytest \
+            --cov=secrets_client \
+            --cov-branch \
+            --cov-report=term \
+            --cov-report=xml:coverage/coverage.xml \
+            --junitxml=coverage/junit.xml
+
+      - name: Python coverage summary
+        if: always()
+        run: |
+          set -euo pipefail
+          XML=coverage/coverage.xml
+          line_cov="N/A"
+          branch_cov="N/A"
+          if [ -s "$XML" ]; then
+            attr() { grep -oE "$1=\"[^\"]+\"" "$XML" | head -1 | cut -d'"' -f2; }
+            lr="$(attr line-rate || true)"
+            br="$(attr branch-rate || true)"
+            [ -n "$lr" ] && line_cov="$(awk -v r="$lr" 'BEGIN { printf "%.1f%%", r * 100 }')"
+            [ -n "$br" ] && branch_cov="$(awk -v r="$br" 'BEGIN { printf "%.1f%%", r * 100 }')"
+          fi
+          {
+            echo "## Python (secrets_client_py) coverage"
+            echo "| Line coverage | Branch coverage |"
+            echo "|---------------|-----------------|"
+            echo "| $line_cov | $branch_cov |"
+            echo ""
+            echo "_Per-module Stmts / Branch / Cover table is in the job log (\`--cov-report=term\`)._"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload secrets_client_py coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: common-py-coverage
+          path: src/common-py/secrets_client_py/coverage/
+          if-no-files-found: warn
+          retention-days: 30
+
+  # ─── PYTHON: AGENT-SERVICE-MAF ─────────────────────
+  # Lint + unit/integration tests for the MAF agent service. MAF lives at
+  # src/nemo/agent-service-maf and uses Python 3.12 + pyproject.toml +
+  # uv.lock, distinct from the existing python-checks matrix below (which
+  # targets requirements.txt-based services on Python 3.11).
+  #
+  # NOT yet wired into NEMO_SERVICES image builds (Makefile) or the Wiz
+  # image scan list because deploy/Dockerfile depends on the in-repo
+  # log_ingestion_runtime library (server/libs/shared/logging-lib-python-
+  # package/ in the legacy monorepo) that has not yet been imported into
+  # AgentStudio. See the TODO(observability) blocks in deploy/Dockerfile,
+  # project.json, and pyproject.toml. Once log_ingestion_runtime lands,
+  # the image build wiring (add agent-service-maf to the Makefile's
+  # NEMO_SERVICES variable + helm chart in deployments/helm/nemo/) can
+  # be flipped on; the existing build-common.yml + wiz-image-scan.yml
+  # plumbing will pick it up automatically.
+  python-maf-checks:
+    name: Python (agent-service-maf)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: src/nemo/agent-service-maf
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.12
+        # MAF requires Python 3.12 (see pyproject.toml). The polyglot
+        # python-checks job below stays on 3.11 for the
+        # requirements.txt-based legacy services.
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install agent-service-maf with dev extras
+        # Install with [dev] + [agent-framework]. The MAF adapter is the
+        # production framework, so the agent-framework extra (agent-framework-core
+        # + -orchestrations) is required here — without it the MAF adapter and
+        # its tests cannot import `agent_framework`. The [guardrails-ml] extra
+        # (transformers + torch, ~2 GB) is intentionally NOT installed in CI —
+        # it's only needed for the ML-backed guardrails which are gated
+        # separately.
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,agent-framework]"
+
+      - name: Lint (ruff)
+        run: |
+          ruff check src/ tests/
+          ruff format --check src/ tests/
+
+      - name: Type-check (mypy)
+        # Type-checking is advisory until the codebase is fully typed.
+        # Promote to required once mypy is green end-to-end.
+        continue-on-error: true
+        run: mypy src/agent_service_maf/
+
+      - name: Run unit tests with coverage
+        run: |
+          mkdir -p coverage
+          PYTHONPATH=src pytest tests/unit/ \
+            -v -m "not integration and not e2e" \
+            --cov=agent_service_maf \
+            --cov-report=term \
+            --cov-report=xml:coverage/coverage.xml \
+            --cov-report=html:coverage/html \
+            --junitxml=coverage/junit.xml
+
+      - name: Run integration tests
+        # MAF integration tests use FastAPI's TestClient + in-process
+        # mocks for Redis / Bifrost / MCP; no external infra required.
+        # Anything that DOES need live infra (test-e2e) is skipped from
+        # PR-time CI by design (same convention as python-checks below).
+        run: |
+          PYTHONPATH=src pytest tests/integration/ \
+            -v -m "integration or not (unit or e2e)" \
+            --tb=short
+
+      - name: Verify OpenAPI fixture is up-to-date (drift check)
+        # §5.4.8 / §G5: regenerating the OpenAPI must produce a fixture
+        # byte-equal to the checked-in tests/fixtures/openapi.expected.json.
+        # Catches PRs that change route shapes or response models without
+        # regenerating the fixture via `make regen-openapi`.
+        run: |
+          PYTHONPATH=src python scripts/generate_openapi.py
+          if ! git diff --exit-code tests/fixtures/openapi.expected.json 2>/dev/null; then
+            echo "::error::OpenAPI fixture is out of date. Run 'make agent-service-maf-regen-openapi' from the repo root (or 'make regen-openapi' from src/nemo/agent-service-maf/) and commit the changes."
+            exit 1
+          fi
+
+      - name: Upload agent-service-maf coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-service-maf-coverage
+          path: src/nemo/agent-service-maf/coverage/
+          if-no-files-found: warn
+          retention-days: 30
+
+  # ─── PYTHON: SERVICE CHECKS ─────────────────────────
+  # install requirements + pytest and run the test suite per service.
+  python-checks:
+    name: Python (${{ matrix.service }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # `path` is relative to repo root.
+        include:
+          - service: agent-service
+            path: src/nemo/agent-service
+          - service: connector-worker
+            path: src/nemo/workers/connector-worker
+          - service: dataset-processor
+            path: src/nemo/workers/dataset-processor
+          - service: kb-processor
+            path: src/nemo/workers/kb-processor
+    defaults:
+      run:
+        working-directory: ${{ matrix.path }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: ${{ matrix.path }}/requirements.txt
+
+      - name: Install Python observability client library
+        # The shared Python runtime is a local monorepo package, not published
+        # to PyPI. Install it before the service requirements so that imports
+        # of `observability_client_runtime` resolve correctly in tests.
+        run: pip install -e "$GITHUB_WORKSPACE/src/common-py/observability/observability-client"
+
+      - name: Install dependencies
+        # connector-worker ships a requirements-dev.txt; others don't. Either
+        # way we ALSO install pytest + pytest-asyncio + pytest-cov explicitly
+        # so the coverage flags below work whether or not requirements-dev.txt
+        # mentions them (connector-worker's pins pytest + pytest-asyncio but
+        # not pytest-cov, for example).
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          if [ -f requirements-dev.txt ]; then
+            pip install -r requirements-dev.txt
+          fi
+          pip install pytest pytest-asyncio pytest-cov
+
+      - name: Run pytest (with coverage)
+        # Partial coverage / junit artefacts on failure are handled by
+        # `if: always()` on the Upload step below — pytest's own
+        # non-zero exit code is propagated up here and fails the job.
+        # --cov-branch enables branch columns in the terminal report and Cobertura XML
+        # (parity with Node Istanbul % Branch).
+        run: |
+          mkdir -p coverage
+          pytest tests/ \
+            --cov=. \
+            --cov-branch \
+            --cov-report=term \
+            --cov-report=xml:coverage/coverage.xml \
+            --cov-report=html:coverage/html \
+            --junitxml=coverage/junit.xml
+
+      - name: Python coverage summary
+        if: always()
+        run: |
+          set -euo pipefail
+          XML=coverage/coverage.xml
+          line_cov="N/A"
+          branch_cov="N/A"
+          if [ -s "$XML" ]; then
+            attr() { grep -oE "$1=\"[^\"]+\"" "$XML" | head -1 | cut -d'"' -f2; }
+            lr="$(attr line-rate || true)"
+            br="$(attr branch-rate || true)"
+            [ -n "$lr" ] && line_cov="$(awk -v r="$lr" 'BEGIN { printf "%.1f%%", r * 100 }')"
+            [ -n "$br" ] && branch_cov="$(awk -v r="$br" 'BEGIN { printf "%.1f%%", r * 100 }')"
+          fi
+          {
+            echo "## Python (${{ matrix.service }}) coverage"
+            echo "| Line coverage | Branch coverage |"
+            echo "|---------------|-----------------|"
+            echo "| $line_cov | $branch_cov |"
+            echo ""
+            echo "_Per-module Stmts / Branch / Cover table is in the job log (\`--cov-report=term\`)._"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload Python coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-coverage-${{ matrix.service }}
+          path: ${{ matrix.path }}/coverage/
+          if-no-files-found: warn
+          retention-days: 30
+
+  # ─── RUST: FMT, TEST & BUILD ────────────────────────
+  # The only Rust service today is kb-retrieval-service. Uses
+  # Swatinem/rust-cache for incremental compile cache between runs (cold
+  # builds are ~8-10 min, warm caches drop to ~1-2 min).
+  # Single `cargo llvm-cov --all-targets` run: lib unit tests, integration
+  # binaries (e2e_search, route_integration), and lcov coverage — avoids
+  # running the LanceDB dependency graph twice (separate cargo test + --lib).
+  rust-checks:
+    name: Rust (kb-retrieval-service)
+    runs-on: ubuntu-latest
+    # Branch coverage needs nightly llvm-cov --branch; pin the date so CI does not
+    # float onto a broken nightly (e.g. ICE in lance-index / rustc_trait_selection).
+    env:
+      RUST_NIGHTLY_TOOLCHAIN: nightly-2026-06-15
+    defaults:
+      run:
+        working-directory: src/nemo/kb-retrieval-service
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          # rustfmt + clippy power the lint gates; llvm-tools-preview ships
+          # the LLVM coverage instrumentation that cargo-llvm-cov drives.
+          components: rustfmt, clippy, llvm-tools-preview
+
+      # The `lance-encoding` and `lance-file` crates (transitive deps of
+      # `lancedb`) ship `.proto` files and shell out to `protoc` in their
+      # build scripts via `prost-build`. The Ubuntu runner does not ship
+      # `protoc` by default, so install it before any cargo step that
+      # compiles the dependency graph (i.e. anything past `fmt --check`).
+      - name: Install protoc
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
+      # cargo-llvm-cov is the Rust analogue of `go test -coverprofile` /
+      # `pytest --cov`. taiki-e/install-action fetches a prebuilt binary
+      # (no source build), so this step is seconds, not minutes.
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+
+      # cache-directories: also persist target/llvm-cov-target/, which
+      # cargo-llvm-cov uses for its instrumented build. Swatinem/rust-cache
+      # only caches the standard `target/` by default, so without this the
+      # `cargo test + build (release, with coverage)` step rebuilds the
+      # whole ~300-rlib release graph from scratch on every run (~35 min).
+      # With it, warm-cache runs drop to ~2-3 min. See
+      # https://github.com/taiki-e/cargo-llvm-cov/issues/293 and
+      # docs/ci/CI_FAILURES.md section 7 ("Known follow-up").
+      - name: Rust dependency cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src/nemo/kb-retrieval-service
+          cache-directories: |
+            src/nemo/kb-retrieval-service/target/llvm-cov-target
+
+      - name: cargo fmt --check
+        run: cargo fmt --all -- --check
+
+      - name: cargo clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+      # Branch coverage in lcov requires nightly + --branch (cargo-llvm-cov #8).
+      # ethnum 1.5.2 fails on nightly > 2026-04-17; lockfile pins ethnum 1.5.3+.
+      # Do not install floating `nightly` — recent nightlies can ICE on lance-index.
+      # Use rustup directly (not dtolnay/rust-toolchain) so stable stays default for
+      # fmt/clippy; coverage invokes +${RUST_NIGHTLY_TOOLCHAIN} explicitly.
+      - name: Install pinned nightly (branch coverage)
+        run: rustup toolchain install "${RUST_NIGHTLY_TOOLCHAIN}" --component llvm-tools-preview
+
+      # One instrumented release build: all test targets + lcov (lines + branches).
+      # Release mode avoids OOM during coverage linking (see docs/ci/CI_FAILURES.md).
+      - name: cargo test (all targets, with coverage)
+        run: |
+          mkdir -p coverage
+          cargo +${RUST_NIGHTLY_TOOLCHAIN} llvm-cov --all-targets --release --branch \
+            --lcov --output-path coverage/lcov.info \
+            -- --test-threads=4
+
+      - name: Rust coverage summary
+        if: always()
+        run: |
+          set -euo pipefail
+          LCOV=coverage/lcov.info
+          line_cov="N/A"
+          branch_cov="N/A"
+          if [[ -s "$LCOV" ]]; then
+            lf="$(grep -E '^LF:' "$LCOV" | awk -F: '{ s += $2 } END { print s + 0 }')"
+            lh="$(grep -E '^LH:' "$LCOV" | awk -F: '{ s += $2 } END { print s + 0 }')"
+            brf="$(grep -E '^BRF:' "$LCOV" | awk -F: '{ s += $2 } END { print s + 0 }')"
+            brh="$(grep -E '^BRH:' "$LCOV" | awk -F: '{ s += $2 } END { print s + 0 }')"
+            if [[ "$lf" -gt 0 ]]; then
+              line_cov="$(awk -v h="$lh" -v f="$lf" 'BEGIN { printf "%.2f%%", (h / f) * 100 }')"
+            fi
+            if [[ "$brf" -gt 0 ]]; then
+              branch_cov="$(awk -v h="$brh" -v f="$brf" 'BEGIN { printf "%.2f%%", (h / f) * 100 }')"
+            fi
+          fi
+          {
+            echo "## Rust (kb-retrieval-service) coverage"
+            echo "| Line coverage | Branch coverage |"
+            echo "|---------------|-----------------|"
+            echo "| $line_cov | $branch_cov |"
+            echo ""
+            echo "_Branch coverage uses pinned \`${RUST_NIGHTLY_TOOLCHAIN}\` + \`llvm-cov --branch\` (LLVM). Go still has no branch metric._"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload kb-retrieval-service coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kb-retrieval-service-coverage-report
+          path: src/nemo/kb-retrieval-service/coverage/
+          if-no-files-found: warn
+          retention-days: 30
+
+  # ─── RUST: SECRETS-CLIENT ───────────────────────────
+  # Lightweight job for the shared secrets-client library at
+  # src/common-rs/secrets-client/. Unlike kb-retrieval-service it needs no
+  # protoc or llvm-cov — just fmt, clippy, and the integration test suite.
+  # Tests run with --test-threads=1 to prevent inotify events leaking
+  # between concurrent test processes sharing the same Linux kernel instance.
+  rust-secrets-client:
+    name: Rust (secrets-client)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: src/common-rs/secrets-client
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Rust dependency cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src/common-rs/secrets-client
+
+      - name: cargo fmt --check
+        run: cargo fmt --all -- --check
+
+      - name: cargo clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: cargo test
+        run: cargo test -- --test-threads=1
+
+  # ─── PR PACKAGE COVERAGE GATE (touched packages) ─────
+  # Soft (advisory) check and whole-package counterpart to the diff-coverage
+  # gate: for every in-scope package this PR *touches*, report whether that
+  # package's TOTAL line coverage is >= COVERAGE_MIN (85%). Diff-coverage gates
+  # the new/changed lines; this gates the touched package as a whole.
+  #
+  # Reuses the coverage artifacts already produced by the unit-test jobs (same
+  # needs + download-artifact pattern as the aggregate below) — it does NOT
+  # re-run tests. Untouched packages are skipped. A below-threshold or missing
+  # report turns this check red, but it is intentionally NOT wired into
+  # branch-protection required checks, so it does not block merges yet: flip to
+  # a hard gate by requiring the "PR Package Coverage Gate" check.
+  #
+  # Deliberately EXCLUDED (not in use): agent-service, apigateway-service,
+  # secrets_client_py, secrets-client (go + rust). Total line % is parsed by the
+  # shared scripts/ci/coverage-total.sh (istanbul / cobertura / go / lcov).
+  package-coverage-gate:
+    name: PR Package Coverage Gate
+    runs-on: ubuntu-latest
+    needs:
+      - node-unit-tests
+      - go-checks
+      - python-checks
+      - common-py-checks
+      - python-maf-checks
+      - rust-checks
+    if: always() && github.event_name == 'pull_request'
+    env:
+      COVERAGE_MIN: "85"
+    steps:
+      - name: Checkout PR head (full history)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Fetch base branch
+        run: git fetch origin "${{ github.event.pull_request.base.ref }}"
+
+      - name: Download coverage artifacts
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          path: cov
+          pattern: '*coverage*'
+          merge-multiple: false
+
+      - name: Compute per-package total line coverage
+        id: pkgcov
+        run: |
+          set -uo pipefail
+          FAILED=0
+          TOUCHED=0
+          TABLE=""
+          BASE="origin/${{ github.event.pull_request.base.ref }}"
+
+          # name|source dir (touched-check)|report path under cov/|format
+          # `format` is passed straight to scripts/ci/coverage-total.sh.
+          # Report paths mirror the artifact names uploaded by the unit-test
+          # jobs (see the read_* calls in unit-test-coverage-aggregate). eval-worker
+          # emits no json-summary, so its lcov.info is used. Excluded packages
+          # (agent-service, apigateway-service, secrets_client_py, secrets-client
+          # go+rust) are intentionally absent.
+          SERVICES='
+          common|src/common|common-coverage-report/coverage-summary.json|istanbul
+          config-service|src/nemo/config-service|config-service-coverage-report/coverage-summary.json|istanbul
+          storage-manager|src/nemo/storage-manager|storage-manager-coverage-report/coverage-summary.json|istanbul
+          agent-studio-ui|src/nemo/agent-studio-ui|agent-studio-ui-coverage-report/coverage-summary.json|istanbul
+          eval-worker|src/nemo/workers/eval-worker|eval-worker-coverage-report/lcov.info|lcov
+          connector-worker|src/nemo/workers/connector-worker|python-coverage-connector-worker/coverage.xml|cobertura
+          dataset-processor|src/nemo/workers/dataset-processor|python-coverage-dataset-processor/coverage.xml|cobertura
+          kb-processor|src/nemo/workers/kb-processor|python-coverage-kb-processor/coverage.xml|cobertura
+          agent-service-maf|src/nemo/agent-service-maf|agent-service-maf-coverage/coverage.xml|cobertura
+          analytics-engine|src/nemo/analytics-engine|go-coverage-analytics-engine/coverage.txt|go
+          workflow-engine|src/nemo/workflow-engine|go-coverage-workflow-engine/coverage.txt|go
+          kb-retrieval-service|src/nemo/kb-retrieval-service|kb-retrieval-service-coverage-report/lcov.info|lcov
+          '
+
+          while IFS='|' read -r name path report format; do
+            [ -z "$name" ] && continue
+
+            # Skip packages this PR doesn't touch — omit from the table.
+            if git diff --quiet "${BASE}...HEAD" -- "$path"; then
+              continue
+            fi
+            TOUCHED=1
+
+            # errexit-safe capture: GitHub runs run-steps with `bash -e`, and
+            # coverage-total.sh exits non-zero for below-threshold (2) / missing
+            # (3). A bare `pct="$(...)"; rc=$?` would abort the whole step at the
+            # first failing package before rc is read, so guard with && / ||.
+            pct="$(bash scripts/ci/coverage-total.sh "$format" "cov/${report}")" && rc=0 || rc=$?
+            case "$rc" in
+              0) TABLE="${TABLE}| ${name} | ${pct}% | ✅ pass |"$'\n' ;;
+              2) TABLE="${TABLE}| ${name} | ${pct}% | ❌ fail (< ${COVERAGE_MIN}%) |"$'\n'; FAILED=1 ;;
+              *) TABLE="${TABLE}| ${name} | N/A | ⚠️ no coverage report (job failed or was skipped) |"$'\n'; FAILED=1 ;;
+            esac
+          done <<< "$SERVICES"
+
+          {
+            echo "### 📦 PR Package Coverage (touched packages, whole-file line % — ${COVERAGE_MIN}% required)"
+            echo ""
+            if [ "$TOUCHED" -eq 0 ]; then
+              echo "_No in-scope packages were modified by this PR — package coverage gate skipped._"
+            else
+              echo "| Package | Line coverage | Status |"
+              echo "|---------|---------------|--------|"
+              echo -n "$TABLE"
+              echo ""
+              echo "_Go reports statement % (no line metric). N/A/⚠️ = report missing or unparseable (fail-closed). Soft gate: does not block merge yet._"
+            fi
+          } | tee -a "$GITHUB_STEP_SUMMARY" > package-coverage-summary.md
+
+          echo "failed=${FAILED}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload package coverage summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-coverage-report
+          path: package-coverage-summary.md
+          if-no-files-found: warn
+          retention-days: 30
+
+      # SOFT gate: report red so the signal is visible, but this check is not in
+      # branch-protection required checks, so merges are not blocked. To make it
+      # a hard gate, add "PR Package Coverage Gate" to the required status checks.
+      - name: Report package coverage result
+        if: steps.pkgcov.outputs.failed == '1'
+        run: |
+          echo "::error::One or more touched packages are below ${COVERAGE_MIN}% total line coverage (soft: not blocking merge yet). See the PR Package Coverage section of the coverage PR comment or the job summary above."
+          exit 1
+
+  # ─── UNIT TEST COVERAGE (ALL SERVICES) ───────────────
+  # Per-service code + branch table as a sticky PR comment (ui-test-results pattern).
+  # Go: statement % only; no repo-wide averages.
+  unit-test-coverage-aggregate:
+    name: Unit Test Coverage Report
+    runs-on: ubuntu-latest
+    needs:
+      - node-unit-tests
+      - go-checks
+      - python-checks
+      - common-py-checks
+      - python-maf-checks
+      - rust-checks
+      - package-coverage-gate
+    if: always()
+    steps:
+      - name: Download coverage artifacts
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          path: cov
+          pattern: '*coverage*'
+          merge-multiple: false
+
+      - name: Compute coverage report (all services)
+        id: aggregate
+        run: |
+          set -euo pipefail
+          TABLE=""
+          REPORT="coverage-pr-comment.md"
+
+          add_service() {
+            local stack="$1" name="$2" line="$3" branch="$4"
+            TABLE="${TABLE}| ${name} | ${stack} | ${line} | ${branch} |"$'\n'
+          }
+
+          read_istanbul() {
+            local stack="$1" name="$2" file="$3"
+            if [[ -f "$file" ]]; then
+              local l b
+              l="$(jq -r '.total.lines.pct' "$file")"
+              b="$(jq -r '.total.branches.pct' "$file")"
+              add_service "$stack" "$name" "${l}%" "${b}%"
+            else
+              add_service "$stack" "$name" "N/A" "N/A"
+            fi
+          }
+
+          read_cobertura() {
+            local stack="$1" name="$2" file="$3"
+            if [[ -s "$file" ]]; then
+              local tag lr br
+              tag="$(grep -oE '<coverage[^>]+>' "$file" | head -1)"
+              lr="$(echo "$tag" | grep -oE 'line-rate="[^"]+"' | head -1 | cut -d'"' -f2 || true)"
+              br="$(echo "$tag" | grep -oE 'branch-rate="[^"]+"' | head -1 | cut -d'"' -f2 || true)"
+              if [[ -n "${lr:-}" ]]; then
+                local lp bp
+                lp="$(awk -v r="$lr" 'BEGIN { printf "%.2f", r * 100 }')"
+                if [[ -n "${br:-}" ]]; then
+                  bp="$(awk -v r="$br" 'BEGIN { printf "%.2f", r * 100 }')"
+                  add_service "$stack" "$name" "${lp}%" "${bp}%"
+                else
+                  add_service "$stack" "$name" "${lp}%" "N/A"
+                fi
+              else
+                add_service "$stack" "$name" "N/A" "N/A"
+              fi
+            else
+              add_service "$stack" "$name" "N/A" "N/A"
+            fi
+          }
+
+          read_go() {
+            local stack="$1" name="$2" file="$3"
+            if [[ -s "$file" ]]; then
+              local pct
+              pct="$(awk '/^total:/ { gsub(/%/, "", $NF); print $NF; exit }' "$file")"
+              add_service "$stack" "$name" "${pct}%" "N/A"
+            else
+              add_service "$stack" "$name" "N/A" "N/A"
+            fi
+          }
+
+          # Rust: parse lcov.info (LF/LH lines, BRF/BRH branches) from cargo llvm-cov.
+          read_lcov() {
+            local stack="$1" name="$2" file="$3"
+            if [[ ! -s "$file" ]]; then
+              add_service "$stack" "$name" "N/A" "N/A"
+              return
+            fi
+            local lf lh brf brh line_pct branch_pct
+            lf="$(grep -E '^LF:' "$file" | awk -F: '{ s += $2 } END { print s + 0 }')"
+            lh="$(grep -E '^LH:' "$file" | awk -F: '{ s += $2 } END { print s + 0 }')"
+            brf="$(grep -E '^BRF:' "$file" | awk -F: '{ s += $2 } END { print s + 0 }')"
+            brh="$(grep -E '^BRH:' "$file" | awk -F: '{ s += $2 } END { print s + 0 }')"
+            if [[ "$lf" -gt 0 ]]; then
+              line_pct="$(awk -v h="$lh" -v f="$lf" 'BEGIN { printf "%.2f", (h / f) * 100 }')"
+            else
+              add_service "$stack" "$name" "N/A" "N/A"
+              return
+            fi
+            if [[ "$brf" -gt 0 ]]; then
+              branch_pct="$(awk -v h="$brh" -v f="$brf" 'BEGIN { printf "%.2f", (h / f) * 100 }')"
+              add_service "$stack" "$name" "${line_pct}%" "${branch_pct}%"
+            else
+              add_service "$stack" "$name" "${line_pct}%" "N/A"
+            fi
+          }
+
+          # Node / UI (Istanbul json-summary; artifact root = contents of each package's coverage/)
+          read_istanbul "Node" "common" "cov/common-coverage-report/coverage-summary.json"
+          read_istanbul "Node" "config-service" "cov/config-service-coverage-report/coverage-summary.json"
+          read_istanbul "Node" "storage-manager" "cov/storage-manager-coverage-report/coverage-summary.json"
+          read_istanbul "Node" "agent-studio-ui" "cov/agent-studio-ui-coverage-report/coverage-summary.json"
+
+          # Python (Cobertura)
+          read_cobertura "Python" "agent-service" "cov/python-coverage-agent-service/coverage.xml"
+          read_cobertura "Python" "agent-service-maf" "cov/agent-service-maf-coverage/coverage.xml"
+          read_cobertura "Python" "connector-worker" "cov/python-coverage-connector-worker/coverage.xml"
+          read_cobertura "Python" "dataset-processor" "cov/python-coverage-dataset-processor/coverage.xml"
+          read_cobertura "Python" "kb-processor" "cov/python-coverage-kb-processor/coverage.xml"
+          read_cobertura "Python" "secrets_client_py" "cov/common-py-coverage/coverage.xml"
+
+          # Go (statement % only — no branch metric in go cover)
+          read_go "Go" "apigateway-service" "cov/go-coverage-apigateway-service/coverage.txt"
+          read_go "Go" "analytics-engine" "cov/go-coverage-analytics-engine/coverage.txt"
+          read_go "Go" "workflow-engine" "cov/go-coverage-workflow-engine/coverage.txt"
+          read_go "Go" "secrets-client" "cov/go-coverage-secrets-client/coverage.txt"
+
+          # Rust (lcov.info from cargo llvm-cov)
+          read_lcov "Rust" "kb-retrieval-service" "cov/kb-retrieval-service-coverage-report/lcov.info"
+
+          {
+            echo "## Unit Test Coverage Report"
+            echo ""
+            echo "| Service | Stack | Code coverage | Branch coverage |"
+            echo "|---------|-------|---------------|-----------------|"
+            echo -n "$TABLE"
+            echo ""
+            echo "_Go: statement % only (no branch). Rust: \`lcov.info\` via pinned nightly \`llvm-cov --branch\`._"
+            echo ""
+            echo "📦 [Download coverage artifacts](https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID})"
+          } | tee -a "$GITHUB_STEP_SUMMARY" > "$REPORT"
+
+          # package-coverage-gate (above) writes a touched-package whole-file
+          # coverage section; append it below the repo-wide table so both share
+          # one sticky comment. continue-on-error on the download means this
+          # file may be absent (e.g. push events, where the gate is skipped).
+          PKG_REPORT="cov/package-coverage-report/package-coverage-summary.md"
+          if [[ -s "$PKG_REPORT" ]]; then
+            { echo ""; cat "$PKG_REPORT"; } | tee -a "$GITHUB_STEP_SUMMARY" >> "$REPORT"
+          fi
+
+      - name: Post unit test coverage PR comment
+        if: github.event_name == 'pull_request'
+        uses: marocchino/sticky-pull-request-comment@v3
+        with:
+          header: unit-test-coverage-report
+          path: coverage-pr-comment.md
+
+  # ─── UI TEST RESULTS SUMMARY ───────────────────────
+  # Summarises agent-studio-ui Vitest test results + coverage and posts them as a
+  # sticky PR comment so contributors see pass/fail and coverage right in
+  # the PR conversation.
+  ui-test-results:
+    name: UI Test Results Summary
+    needs: node-unit-tests
+    # Run even when node-unit-tests fails so the summary surfaces on
+    # failures (which is exactly when it's most useful). Upstream upload
+    # steps use `if: always()`, so the artefacts will exist.
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download UI test results
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: agent-studio-ui-test-results
+          path: test-results
+
+      - name: Download UI coverage report
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: agent-studio-ui-coverage-report
+          path: coverage
+
+      - name: Parse results & coverage
+        id: parse
+        run: |
+          set -euo pipefail
+          RESULTS="test-results/results.json"
+          SUMMARY="coverage/coverage-summary.json"
+
+          if [ -f "$RESULTS" ]; then
+            passed=$(jq -r '.numPassedTests // 0' "$RESULTS")
+            failed=$(jq -r '.numFailedTests // 0' "$RESULTS")
+            total=$(jq -r '.numTotalTests // 0' "$RESULTS")
+            suites=$(jq -r '.numTotalTestSuites // 0' "$RESULTS")
+          else
+            echo "::warning::No UI test results found"
+            passed=0; failed=0; total=0; suites=0
+          fi
+          echo "passed=$passed"   >> "$GITHUB_OUTPUT"
+          echo "failed=$failed"   >> "$GITHUB_OUTPUT"
+          echo "total=$total"     >> "$GITHUB_OUTPUT"
+          echo "suites=$suites"   >> "$GITHUB_OUTPUT"
+
+          if [ -f "$SUMMARY" ]; then
+            echo "statements=$(jq -r '.total.statements.pct' "$SUMMARY")%" >> "$GITHUB_OUTPUT"
+            echo "branches=$(jq   -r '.total.branches.pct'   "$SUMMARY")%" >> "$GITHUB_OUTPUT"
+            echo "functions=$(jq  -r '.total.functions.pct'  "$SUMMARY")%" >> "$GITHUB_OUTPUT"
+            echo "lines=$(jq      -r '.total.lines.pct'      "$SUMMARY")%" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::No coverage summary found"
+            echo "statements=N/A" >> "$GITHUB_OUTPUT"
+            echo "branches=N/A"   >> "$GITHUB_OUTPUT"
+            echo "functions=N/A"  >> "$GITHUB_OUTPUT"
+            echo "lines=N/A"      >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Write job summary
+        run: |
+          {
+            echo "## UI Test Results"
+            echo "| Passed | Failed | Total | Suites |"
+            echo "|--------|--------|-------|--------|"
+            echo "| ${{ steps.parse.outputs.passed }} | ${{ steps.parse.outputs.failed }} | ${{ steps.parse.outputs.total }} | ${{ steps.parse.outputs.suites }} |"
+            echo ""
+            echo "## UI Coverage"
+            echo "| Statements | Branches | Functions | Lines |"
+            echo "|------------|----------|-----------|-------|"
+            echo "| ${{ steps.parse.outputs.statements }} | ${{ steps.parse.outputs.branches }} | ${{ steps.parse.outputs.functions }} | ${{ steps.parse.outputs.lines }} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Post sticky PR comment
+        if: github.event_name == 'pull_request'
+        uses: marocchino/sticky-pull-request-comment@v3
+        with:
+          header: ui-coverage
+          message: |
+            ## UI Unit Test Results
+
+            ${{ steps.parse.outputs.failed == '0' && '✅ All tests passed' || '❌ Tests failed' }}
+
+            | Passed | Failed | Total | Suites |
+            |--------|--------|-------|--------|
+            | ${{ steps.parse.outputs.passed }} | ${{ steps.parse.outputs.failed }} | ${{ steps.parse.outputs.total }} | ${{ steps.parse.outputs.suites }} |
+
+            ### Coverage
+
+            | Statements | Branches | Functions | Lines |
+            |------------|----------|-----------|-------|
+            | ${{ steps.parse.outputs.statements }} | ${{ steps.parse.outputs.branches }} | ${{ steps.parse.outputs.functions }} | ${{ steps.parse.outputs.lines }} |
+
+            📦 [Download full coverage report](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
+
+      - name: Fail job if any UI tests failed
+        if: steps.parse.outputs.failed != '0'
+        run: |
+          echo "::error::${{ steps.parse.outputs.failed }} UI test(s) failed"
+          exit 1
+
+  # ─── CODEQL ANALYSIS ────────────────────────────────
+  # JS/TS + Go matrix. Python is omitted for now (no security-relevant code
+  # paths beyond agent-service request handling, and CodeQL Python scans
+  # are slow); add it as a matrix entry once Python lint/test coverage
+  # stabilises. Rust isn't supported by CodeQL.
+  codeql:
+    name: CodeQL Analysis (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      security-events: write
+      actions: read
+      contents: read
+      packages: read
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [javascript-typescript, go]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # No root package.json (every Node service has its own), and Go
+      # services have their own go.mod each — rely on CodeQL's autobuild
+      # / build-mode: none. JS/TS scanning does not require a build;
+      # Go's autobuild discovers the per-service modules.
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.language == 'go' && 'autobuild' || 'none' }}
+          queries: +security-and-quality
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{ matrix.language }}"

@@ -1,0 +1,278 @@
+.ds-dataset {
+  padding: 24px 40px 40px;
+  background-color: var(--background-content);
+  box-shadow: 2px 2px 6px 0 var(--border-drop-shadow);
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  min-height: 100vh;
+}
+
+.ds-dataset__mode-toggle {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+// -- Section
+
+.ds-dataset__section {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.ds-dataset__divider {
+  border: none;
+  border-top: 1px solid var(--border-main);
+  margin: 0;
+}
+
+// -- Section header
+
+.ds-dataset__section-header {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ds-dataset__section-title {
+  margin: 0;
+}
+
+.ds-dataset__section-subtitle {
+  margin: 0;
+}
+
+// -- Fields
+
+.ds-dataset__fields {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.ds-dataset__field {
+  width: 616px;
+  max-width: 100%;
+}
+
+.ds-dataset__field-row {
+  display: flex;
+  gap: 24px;
+  width: 616px;
+  max-width: 100%;
+}
+
+.ds-dataset__field-row .ds-dataset__field {
+  flex: 1;
+  width: auto;
+}
+
+// -- Radio option with description
+
+.ds-dataset__radio-option {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+  width: 616px;
+  max-width: 100%;
+  cursor: pointer;
+}
+
+.ds-dataset__radio-dot {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 1.5px solid var(--selector-off-border);
+  margin-top: 4px;
+  transition: border-color 150ms ease, background 150ms ease;
+}
+
+.ds-dataset__radio-dot--selected {
+  border-color: var(--selector-on-bg);
+  background: radial-gradient(
+    circle,
+    var(--selector-on-bg) 38%,
+    transparent 40%
+  );
+}
+
+.ds-dataset__radio-text {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1;
+}
+
+// -- Static table
+
+.ds-dataset__table-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.ds-dataset__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.ds-dataset__table th {
+  text-align: left;
+  font-weight: 590;
+  padding: 8px 16px;
+  background-color: var(--background-content);
+  border-bottom: 1px solid var(--border-main);
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+
+.ds-dataset__table td {
+  padding: 12px 16px;
+  background-color: var(--background-main);
+  border-bottom: 1px solid var(--border-main);
+  color: var(--text-primary);
+}
+
+.ds-dataset__table td:first-child {
+  width: 40px;
+  text-align: center;
+}
+
+.ds-dataset__table-link {
+  color: var(--button-secondary);
+  text-decoration: none;
+  cursor: pointer;
+
+  &:hover {
+    text-decoration: underline;
+  }
+}
+
+.ds-dataset__badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 590;
+  background-color: var(--tag-1-bg);
+  color: var(--tag-1-text);
+}
+
+// -- Folder path table (inner table)
+
+.ds-dataset__inner-table {
+  width: 616px;
+  max-width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.ds-dataset__inner-table th {
+  text-align: left;
+  font-weight: 590;
+  padding: 8px 24px;
+  background-color: var(--background-content);
+  border-bottom: 1px solid var(--border-main);
+  color: var(--text-primary);
+}
+
+.ds-dataset__inner-table td {
+  padding: 16px 24px;
+  background-color: var(--background-main);
+  border-bottom: 1px solid var(--border-main);
+  color: var(--text-primary);
+}
+
+// -- Info notice
+
+.ds-dataset__notice {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.ds-dataset__notice-icon {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  margin-top: 4px;
+  color: var(--notification-information);
+
+  & svg {
+    width: 16px;
+    height: 16px;
+  }
+}
+
+.ds-dataset__notice-text {
+  margin: 0;
+}
+
+// -- Tabs
+
+.ds-dataset__tabs {
+  display: flex;
+  border-bottom: 1px solid var(--border-underline-default);
+}
+
+.ds-dataset__tab {
+  padding: 4px 48px;
+  font-size: 14px;
+  font-weight: 590;
+  cursor: pointer;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--text-primary);
+  transition: border-color 150ms ease, color 150ms ease;
+
+  &:hover {
+    color: var(--text-button-primary);
+  }
+}
+
+.ds-dataset__tab--active {
+  color: var(--text-button-primary);
+  border-bottom-color: var(--text-button-primary);
+}
+
+// -- Subsection
+
+.ds-dataset__subsection {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.ds-dataset__subsection-title {
+  margin: 0;
+}
+
+.ds-dataset__subsection-subtitle {
+  margin: 0;
+}
+
+// -- Output panel
+
+.ds-dataset__output {
+  margin-top: 8px;
+}
+
+.ds-dataset__pre {
+  margin: 8px 0 0;
+  padding: 16px;
+  background-color: var(--background-main);
+  border: 1px solid var(--border-main);
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+  overflow: auto;
+  max-height: 400px;
+}

@@ -1,0 +1,78 @@
+# .values-parity-allow.yaml — workers tier
+#
+# Allow-list for lint-values-parity.py.
+# Each entry suppresses either an INTENTIONAL cross-hyperscaler (aks/gke/eks)
+# difference or an ORPHAN key not declared in base values.yaml.
+# values-local.yaml is NOT parity-checked (it strips down the cloud-shaped
+# base by design), so local-only differences no longer need entries here.
+
+allow:
+  # ── Storage class ─────────────────────────────────────────────────────────────
+  # RWX storage for s3gateway PVCs is per-cloud:
+  #   AKS → anf-nfs, GKE → gcnv-nas-rwx, EKS → fsxn-nas (Trident)
+  - global.storageClass
+  - s3gateway.defaultBucket.storageClass
+  - s3gateway.metadata.storageClass
+  - s3gateway.pvcsBase.storageClass
+
+  # ── Image pull policy ─────────────────────────────────────────────────────────
+  # EKS forces Always after ECR manifest cache fixes; other clouds use default.
+  - global.imagePullPolicy
+
+  # ── Workload Identity (AKS-specific) ─────────────────────────────────────────
+  # WI is AKS-only (azureClientId). GKE / EKS WI is planned follow-up. The
+  # create flag and WI toggle vary per cloud across the worker sub-charts.
+  - "*.serviceAccount.create"
+  - "*.serviceAccount.azureClientId"
+  - "*.workloadIdentity.enabled"
+
+  # ── Endpoint / hostname ───────────────────────────────────────────────────────
+  # AKS bakes the endpoint in the overlay; GKE/EKS get it via --set at deploy.
+  - endpoint
+  - global.endpoint
+
+  # ── s3gateway PVC sizes (per-cloud production sizing) ─────────────────────────
+  # AKS sets explicit production sizes (metadata: 50Gi, defaultBucket: 1Ti) to
+  # match pre-provisioned ANF volumes; GKE/EKS use their own size overrides.
+  - s3gateway.defaultBucket.size
+  - s3gateway.metadata.size
+
+  # ── defaultBucketPvc (legacy standalone PVC) ─────────────────────────────────
+  # The s3gateway sub-chart manages its own PVC; the parent PVC is disabled.
+  # AKS explicitly sets create=false; GKE/EKS omit it (rely on base default) —
+  # an intentional cross-cloud presence difference.
+  - defaultBucketPvc.*
+
+  # ── Cross-namespace bucket sharing mechanism (per-cloud) ─────────────────────
+  # GKE/EKS let agentstudio-services bind the SAME NetApp volume via Trident
+  # shareFromPVC, so they set shareToNamespaces=["agentstudio-services"] here
+  # (paired with services defaultBucketPvc.shareFromPVC). AKS instead shares via
+  # a pre-provisioned static PV bound by volumeName (S3GW_PV_DEFAULT_BUCKET /
+  # SERVICES_PV_DEFAULT_BUCKET, injected at deploy time), so it does not use
+  # shareToNamespaces. Intentional cross-cloud difference.
+  - s3gateway.defaultBucket.shareToNamespaces
+
+  # ── GKE SAN node pool scheduling (GKE-only) ─────────────────────────────────
+  # GKE preprod has a dedicated SAN Ubuntu pool (agentstudio.netapp.io/san taint).
+  # Workers/s3gateway pin to that pool via nodeSelector + tolerations in
+  # values-gke.yaml. AKS/EKS do not use this scheduling pattern.
+  - _sanNodeSelector.*
+  - _sanTolerations
+  - "*.nodeSelector.agentstudio.netapp.io/san"
+  - "*.tolerations"
+
+  # ── ORPHAN suppression: keys not declared in base values.yaml ────────────────
+  # The following are set only in values-local.yaml (dev overrides) and are not
+  # declared in the workers base values.yaml, so they would otherwise flag as
+  # ORPHAN. They are consumed at the sub-chart / template level. Not cross-cloud
+  # parity rules.
+  #   - connector-worker env: local FQDN cross-namespace discovery vars.
+  #   - per-worker resources: local halves CPU/memory for dev single-node clusters.
+  #   - gateway ports: local uses :8443 (KIND can't bind <1024); cloud via --set.
+  #   - s3gateway.image.fullImage: local pulls versitygw from Docker Hub.
+  - connector-worker.env
+  - "*.resources"
+  - "*.resources.*"
+  - global.gatewayHttpsPort
+  - global.gatewayHttpPort
+  - "s3gateway.image.*"

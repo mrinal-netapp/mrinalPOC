@@ -1,0 +1,61 @@
+# Local Kubernetes overlay for the console tier.
+# Works on KIND, Docker Desktop, k3d, minikube.
+#
+# Differences from values-aks.yaml:
+#   - ServiceAccount created explicitly and bound to the existing local/KIND federated UAMI
+#   - gui references config-service via FQDN (cross-namespace)
+#   - crossNsServices use ExternalName (Istio CRDs not present on local clusters)
+#
+# Usage: helm upgrade --install ... -f values.yaml -f values-local.yaml
+
+# Redundant with the values.yaml default (now externalName), kept explicit for
+# clarity on local dev clusters where Istio ServiceEntry CRDs may be absent.
+crossNsServices:
+  mode: externalName
+
+global:
+  imageRepository: "docker.repo.eng.netapp.com/user/rp29322"
+  gatewayHttpsPort: "8443"   # KIND can't bind <1024; cloud uses 443 default.
+
+gui:
+  serviceAccount:
+    create: true
+    azureClientId: "0c179cc4-2d2d-405b-8d07-6528e5ecfd1b"
+  workloadIdentity:
+    enabled: true
+  # UI link to the proxied Grafana, served by grafana-proxy via the
+  # agentstudio-gateway (agentstudio-edge) on the local :8443 listener.
+  observability:
+    grafanaUrl: "https://grafana.agentstudio.local:8443/"
+  # Reach config-service via FQDN across the namespace boundary
+  apiService:
+    name: config-service.agentstudio-services.svc.cluster.local
+    port: 3000
+  # Reduced CPU requests for local KIND dev cluster (single node, constrained).
+  resources:
+    requests:
+      cpu: 50m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+agent-studio-ui:
+  # /api/* upstream (cross-namespace FQDN). Forward-compat only: apigateway-service
+  # has no /api/* mount today, so the bundle's API calls will 404 until either
+  # apigateway gains /api/* routes or the frontend is updated to use existing
+  # prefixes (e.g. /config/api/v1). See parent values.yaml for context.
+  apiService:
+    name: apigateway-service.agentstudio-services.svc.cluster.local
+    port: 8080
+  workflowService:
+    name: workflow-engine.agentstudio-services.svc.cluster.local
+    port: 8080
+  # Reduced CPU requests for local KIND dev cluster (single node, constrained).
+  resources:
+    requests:
+      cpu: 50m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi

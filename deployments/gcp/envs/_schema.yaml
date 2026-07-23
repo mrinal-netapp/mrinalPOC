@@ -1,0 +1,74 @@
+# _schema.yaml -- reference shape for a per-environment GCP infra config.
+#
+# NOT deployed. Documents the shared schema for envs/<env>.yaml.
+#
+#   make infra CLOUD=gcp ENV=<env> ACTION=plan|apply|destroy
+#
+# Runner (deployments/gcp/scripts/infra.sh) maps env yaml into Terraform variables
+# for deployments/gcp/stacks/ and drives Infrastructure Manager. Edge tier helm
+# overrides (static LB IP, JWT issuer) use deployments/gcp/scripts/gke-edge-helm-sets.sh.
+
+# ---- Runner-only keys -------------------------------------------------------
+env: <env-name>
+projectId: <gcp-project-id>
+location: <gcp-region>            # canonical region for GKE, VPC, GCNV, GAR IAM, edge IP, IM deployment
+deploymentId: <im-deployment-name>
+# IM runner SA: GCP_SERVICE_ACCOUNT env var (GitHub Environment 'gcp' var in CI), not yaml.
+
+application:
+  endpoint: <hostname>
+
+# ---- tags (GCP resource labels; same key as AWS/Azure env yaml) -------------
+tags:
+  creator: agentstudio          # applied as labels.creator on VPC, GKE, GCNV, edge IP, etc.
+
+containerRegistry:
+  mode: shared                    # shared = grant artifactregistry.reader only (does not create repo)
+  repositoryId: <repo-name>       # Artifact Registry repository id (not full path)
+  # location: <gar-region>        # optional override; defaults to `location` above
+
+networking:
+  vpcName: <name>
+  subnetName: <name>
+  subnetCidr: <cidr>
+  podsSecondaryCidr: <cidr>
+  servicesSecondaryCidr: <cidr>
+  psaRangeName: <psa-range-name>
+  psaPrefixLength: 20
+
+gke:
+  clusterName: <name>
+  deletionProtection: false         # optional; default true in infra.sh if omitted
+  releaseChannel: REGULAR
+  kubernetesVersion: ""
+  nodePools: [...]
+
+storage:                          # optional; omit for cluster-only test stacks
+  # gcnvLocation: <region>        # optional override; defaults to `location` above
+  nasPoolName: <name>
+  sanPoolName: <name>
+  nasCapacityGiB: 4096
+  sanCapacityGiB: 4096
+  trident:
+    helmVersion: "100.2410.0"
+    namespace: trident
+    enabled: true                 # false = skip infra trident-identity; reuse existing GSA + IAM
+    gsaName: trident-controller   # per-env id, or agentstudio-cicd-sa with enabled: false (storage patches KSA only)
+    serviceAccount: trident-controller
+  gcnv:
+    nasBackendName: gcnv-native-nas-backend
+    sanBackendName: gcnv-native-san-backend
+    nasStorageClass: gcnv-nas-rwx
+    sanStorageClass: gcnv-san-rwo
+
+edge:                             # optional
+  gatewayAddressName: <regional-static-ip-name>
+  # Optional full annotation path (skips projectId/location/name assembly at deploy):
+  # gatewayLoadBalancerAddress: projects/<project>/regions/<region>/addresses/<name>
+
+dns:
+  createZone: false
+  zoneName: <cloud-dns-zone-resource-name>
+  dnsName: <fqdn-with-trailing-dot>
+  appRecordName: app
+  authRecordName: auth

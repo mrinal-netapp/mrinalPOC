@@ -1,0 +1,56 @@
+enabled: true
+
+replicaCount: 1
+
+image:
+  repository: grafana/loki
+  tag: "3.3.0"
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  ports:
+    http: 3100
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 100m
+    memory: 256Mi
+
+persistence:
+  enabled: true
+  size: 30Gi
+  storageClass: ""
+
+# Loki retention and ingestion limits (mirrors observability-service/loki/loki-config.yaml)
+retention:
+  period: 168h   # 7 days
+
+ingestion:
+  rateMb: 64
+  burstSizeMb: 128
+
+# Compactor settings — required for retention_period to actually delete data in Loki v3.
+# Without retention_enabled: true the compactor only compacts; it does not run the
+# deletion pipeline.
+compactor:
+  compactionInterval: 10m
+  retentionDeleteDelay: 2h
+  retentionDeleteWorkerCount: 150
+
+# Pod-level security context.  grafana/loki runs as UID 10001 by default.
+# fsGroup must match so Kubernetes chowns the PVC mount root on attach,
+# allowing the non-root process to create subdirectories (e.g. /loki/rules).
+# Required on AKS where managed-premium volumes are provisioned root:root 700.
+securityContext:
+  runAsUser: 10001
+  runAsGroup: 10001
+  fsGroup: 10001
+  runAsNonRoot: true
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

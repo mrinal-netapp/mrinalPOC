@@ -1,0 +1,168 @@
+{{- if .Values.enabled }}
+{{- $nemoDataMount := .Values.nemoDataMount | default "/mnt/pvcs/default-nemo" }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "kb-retrieval-service.fullname" . }}
+  labels:
+    {{- include "kb-retrieval-service.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      {{- include "kb-retrieval-service.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "kb-retrieval-service.selectorLabels" . | nindent 8 }}
+        {{- if .Values.workloadIdentity.enabled }}
+        azure.workload.identity/use: "true"
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "kb-retrieval-service.serviceAccountName" . }}
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds | default 120 }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      volumes:
+        - name: nemo-default-bucket
+          persistentVolumeClaim:
+            claimName: {{ include "nemo.defaultBucketPvcName" . }}
+      containers:
+        - name: kb-retrieval-service
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.global.imageRepository }}/{{ .Values.image.repository }}:{{ .Values.global.imageTag | default .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy | default .Values.image.pullPolicy }}
+          volumeMounts:
+            - name: nemo-default-bucket
+              mountPath: {{ $nemoDataMount | quote }}
+          ports:
+            - name: http
+              containerPort: 5000
+              protocol: TCP
+            {{- if .Values.service.metricsPort }}
+            - name: metrics
+              containerPort: {{ .Values.service.metricsPort }}
+              protocol: TCP
+            {{- end }}
+          env:
+            {{- $root := . }}
+            {{- range .Values.env }}
+            {{- if eq .name "LLM_GATEWAY_URL" }}
+            - name: {{ .name }}
+              value: {{ include "nemo.llmGatewayUrl" $root | quote }}
+            {{- else if eq .name "K8S_NAMESPACE" }}
+            - name: {{ .name }}
+              value: {{ include "nemo.namespace" $root | quote }}
+            {{- else if eq .name "NAMESPACE" }}
+            - name: {{ .name }}
+              value: {{ include "nemo.namespace" $root | quote }}
+            {{- else }}
+            - name: {{ .name }}
+              {{- if .value }}
+              value: {{ .value | quote }}
+              {{- else if .valueFrom }}
+              valueFrom:
+                {{- toYaml .valueFrom | nindent 16 }}
+              {{- end }}
+            {{- end }}
+            {{- end }}
+            {{- if .Values.s3.enabled }}
+            # AWS S3 credentials for LanceDB Rust SDK
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.s3.secretName | default (include "nemo.s3gatewayCredentialsName" . | trim) }}
+                  key: access-key
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.s3.secretName | default (include "nemo.s3gatewayCredentialsName" . | trim) }}
+                  key: secret-key
+            # Custom S3 endpoint for LanceDB (required for non-AWS S3 backends)
+            - name: AWS_ENDPOINT_URL
+              value: {{ .Values.s3.endpoint | quote }}
+            - name: S3_ENDPOINT
+              value: {{ .Values.s3.endpoint | quote }}
+            # AWS region
+            - name: AWS_DEFAULT_REGION
+              value: {{ .Values.s3.region | default "us-east-1" | quote }}
+            - name: AWS_REGION
+              value: {{ .Values.s3.region | default "us-east-1" | quote }}
+            # Allow unsafe rename for non-AWS S3 backends
+            - name: AWS_S3_ALLOW_UNSAFE_RENAME
+              value: "true"
+            # Default bucket name
+            - name: DEFAULT_BUCKET_NAME
+              value: {{ .Values.s3.defaultBucketName | default (include "nemo.defaultBucketName" . | trim) | quote }}
+            - name: NEMO_DEFAULT_STORE_ROOT
+              value: {{ $nemoDataMount | quote }}
+            # Public-facing S3 endpoint for download URLs.
+            # Port suffix from nemo.gatewayPortSuffix (no-port cloud / :8443 local).
+            - name: S3_PUBLIC_ENDPOINT
+              value: "https://s3.{{ .Values.global.endpoint | default "agentstudio.local" }}{{ include "nemo.gatewayPortSuffix" $ }}"
+            {{- end }}
+            {{- if .Values.global.observability.otlpEndpoint }}
+            - name: AGENT_STUDIO_OBSERVABILITY_OTLP_TRACES_ENDPOINT
+              value: {{ .Values.global.observability.otlpEndpoint | quote }}
+            - name: AGENT_STUDIO_OBSERVABILITY_OTLP_LOGS_ENDPOINT
+              value: {{ .Values.global.observability.otlpEndpoint | quote }}
+            {{- end }}
+            - name: AGENT_STUDIO_OBSERVABILITY_LOG_FILE_PATH
+              value: "/dev/stdout"
+            - name: AGENT_STUDIO_OBSERVABILITY_TRACE_FILE_PATH
+              value: "/tmp/App_Logs/trace.jsonl"
+            - name: AGENT_STUDIO_OBSERVABILITY_TRACE_JSONL_FILTER
+              value: "all"
+            {{- if .Values.service.metricsPort }}
+            # Activates the observability client's standalone Prometheus /metrics
+            # server on a dedicated port (the `http` feature is on by default).
+            # Without this the Prometheus registry is never created and /metrics
+            # would be empty.
+            - name: AGENT_STUDIO_OBSERVABILITY_PROMETHEUS_METRICS_PORT
+              value: {{ .Values.service.metricsPort | quote }}
+            {{- end }}
+            - name: OTEL_SERVICE_NAME
+              value: "kb-retrieval-service"
+            {{- if .Values.tracing.otlpEndpoint }}
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: {{ .Values.tracing.otlpEndpoint | quote }}
+            {{- end }}
+          livenessProbe:
+            {{- toYaml .Values.livenessProbe | nindent 12 }}
+          readinessProbe:
+            {{- toYaml .Values.readinessProbe | nindent 12 }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- range . }}
+        {{- if kindIs "string" . }}
+        - name: {{ . | quote }}
+        {{- else if kindIs "map" . }}
+        - {{- toYaml . | nindent 10 }}
+        {{- else }}
+        - name: {{ . | quote }}
+        {{- end }}
+        {{- end }}
+      {{- end }}
+{{- end }}

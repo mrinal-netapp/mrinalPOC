@@ -1,0 +1,45 @@
+{{- if and .Values.phoenix .Values.phoenix.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-agentstudio-to-phoenix
+  namespace: {{ .Values.namespace | default "monitoring" }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: phoenix
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.servicesNamespace | default "agentstudio-services" }}
+          podSelector:
+            matchLabels:
+              component: agent-service
+      ports:
+        - port: 6006
+          protocol: TCP
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.servicesNamespace | default "agentstudio-services" }}
+          podSelector:
+            matchLabels:
+              component: apigateway-service
+      ports:
+        - port: 6006
+          protocol: TCP
+    {{- if and .Values.phoenix.httproute .Values.phoenix.httproute.enabled }}
+    # nginx-gateway data-plane pod (services-gateway-nginx) lives in the
+    # servicesNamespace and proxies external browser traffic to Phoenix.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.servicesNamespace | default "agentstudio-services" }}
+      ports:
+        - port: 6006
+          protocol: TCP
+    {{- end }}
+{{- end }}

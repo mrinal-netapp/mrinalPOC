@@ -1,0 +1,291 @@
+{{- if .Values.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "workflow-engine.fullname" . }}
+  labels:
+    {{- include "workflow-engine.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "workflow-engine.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "workflow-engine.selectorLabels" . | nindent 8 }}
+        {{- if .Values.workloadIdentity.enabled }}
+        azure.workload.identity/use: "true"
+        {{- end }}
+      annotations:
+        # Native Istio sidecar so the `wait-for-temporal` initContainer
+        # (`nc -z $TEMPORAL_HOST $TEMPORAL_GRPC_PORT`) can reach temporal
+        # in the STRICT-mTLS agentstudio-platform namespace.
+        # `wait-for-keycloak-setup` only reads a mounted Secret so it
+        # doesn't need mTLS, but the temporal probe does.
+        sidecar.istio.io/nativeSidecar: "true"
+    spec:
+      serviceAccountName: {{ include "workflow-engine.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- if and .Values.initContainer.enabled .Values.initContainer.waitForKeycloakSetup }}
+      volumes:
+        - name: keycloak-oidc-secrets
+          secret:
+            secretName: keycloak-oidc-secrets
+      {{- end }}
+      {{- if .Values.initContainer.enabled }}
+      initContainers:
+        {{- if .Values.initContainer.waitForKeycloakSetup }}
+        - name: wait-for-keycloak-setup
+          image: {{ .Values.global.imageRepository }}/init-tools:latest
+          imagePullPolicy: {{ .Values.global.imagePullPolicy | default "IfNotPresent" }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              # Read from mounted secret (no kubectl/API needed — reliable on pod restart)
+              MOUNT="/etc/keycloak-oidc-secrets"
+              echo "Waiting for keycloak-oidc-secrets to be populated..."
+              MAX_ATTEMPTS=120  # Wait up to 10 minutes (120 * 5 seconds)
+              ATTEMPT=0
+              
+              while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
+                WE_SECRET=$(cat "$MOUNT/workflow-engine-client-secret" 2>/dev/null || echo "")
+                LK_SECRET=$(cat "$MOUNT/lakekeeper-client-secret" 2>/dev/null || echo "")
+                
+                WE_OK=false
+                [ -n "$WE_SECRET" ] && [ "$WE_SECRET" != "changeme-workflow-engine-secret" ] && WE_OK=true
+                LK_OK=false
+                [ -n "$LK_SECRET" ] && [ "$LK_SECRET" != "changeme-lakekeeper-secret" ] && LK_OK=true
+                
+                if [ "$WE_OK" = true ] && [ "$LK_OK" = true ]; then
+                  echo "✅ keycloak-oidc-secrets populated (workflow-engine and lakekeeper credentials)"
+                  exit 0
+                fi
+                
+                ATTEMPT=$((ATTEMPT + 1))
+                echo "Waiting for keycloak-oidc-secrets (workflow-engine=${WE_OK}, lakekeeper=${LK_OK})... (attempt $ATTEMPT/$MAX_ATTEMPTS)"
+                sleep 5
+              done
+              
+              echo "⚠️ Timeout waiting for keycloak-oidc-secrets, proceeding with current values..."
+              exit 0
+          volumeMounts:
+            - name: keycloak-oidc-secrets
+              mountPath: /etc/keycloak-oidc-secrets
+              readOnly: true
+          resources:
+            limits:
+              cpu: 50m
+              memory: 32Mi
+            requests:
+              cpu: 10m
+              memory: 16Mi
+        {{- end }}
+        - name: wait-for-temporal
+          image: {{ .Values.global.imageRepository }}/init-tools:latest
+          imagePullPolicy: {{ .Values.global.imagePullPolicy | default "IfNotPresent" }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Waiting for Temporal server to be ready..."
+              TEMPORAL_HOST=temporal.{{ .Values.namespace }}.svc.cluster.local
+              TEMPORAL_GRPC_PORT=7233
+              # Check gRPC port (7233) which is what workflow-engine uses to connect
+              until nc -z $TEMPORAL_HOST $TEMPORAL_GRPC_PORT 2>/dev/null; do
+                echo "Waiting for Temporal gRPC port at $TEMPORAL_HOST:$TEMPORAL_GRPC_PORT..."
+                sleep 2
+              done
+              echo "Temporal server is ready!"
+          resources:
+            {{- if .Values.initContainer.resources }}
+            {{- toYaml .Values.initContainer.resources | nindent 12 }}
+            {{- else }}
+            limits:
+              cpu: 50m
+              memory: 32Mi
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            {{- end }}
+      {{- end }}
+      containers:
+        - name: workflow-engine
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.global.imageRepository }}/{{ .Values.image.repository }}:{{ .Values.global.imageTag | default .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy | default .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+            {{- if .Values.service.metricsPort }}
+            - name: metrics
+              containerPort: {{ .Values.service.metricsPort }}
+              protocol: TCP
+            {{- end }}
+          env:
+            {{- /* Construct Temporal service address: temporal:7233 (same namespace) */}}
+            {{- $temporalAddress := "temporal:7233" }}
+            {{- $temporalAddressSet := false }}
+            {{- $keycloakIssuerSet := false }}
+            {{- $root := . }}
+            {{- range .Values.env }}
+            {{- if eq .name "TEMPORAL_ADDRESS" }}
+            {{- $temporalAddressSet = true }}
+            {{- /* Override TEMPORAL_ADDRESS with correct service name */}}
+            - name: {{ .name }}
+              value: {{ $temporalAddress | quote }}
+            {{- else if eq .name "LLM_GATEWAY_URL" }}
+            - name: {{ .name }}
+              {{- /* Always use the bifrost-proxy ExternalName alias in the release namespace */}}
+              value: "http://bifrost-proxy.{{ $.Release.Namespace }}.svc.cluster.local:8080"
+            {{- else if eq .name "KEYCLOAK_ISSUER" }}
+            {{- $keycloakIssuerSet = true }}
+            {{- /* Use external issuer for token validation (issuer claim) */}}
+            - name: {{ .name }}
+              value: {{ include "nemo.keycloakIssuer" $root | quote }}
+            {{- else if and $.Values.redisStandalone (or (eq .name "REDIS_SENTINEL_ADDRS") (eq .name "REDIS_SENTINEL_MASTER")) }}
+            {{- /* standalone Redis: omit sentinel; explorer uses REDIS_URL */}}
+            {{- else if eq .name "CONFIG_SERVICE_URL" }}
+            {{- /* Injected after env range (FQDN via nemo.configServiceClusterURL) */}}
+            {{- else if eq .name "S3_ENDPOINT" }}
+            {{- /* Injected once below credentials — avoids dup keys + empty value bugs */}}
+            {{- else if eq .name "S3_REGION" }}
+            {{- else }}
+            - name: {{ .name }}
+              {{- /* Emit value even when empty: {{ if .value }} skips value: "" and drops S3_ENDPOINT etc. */}}
+              {{- if .valueFrom }}
+              valueFrom:
+                {{- toYaml .valueFrom | nindent 16 }}
+              {{- else }}
+              value: {{ tpl (.value | default "") $root | quote }}
+              {{- end }}
+            {{- end }}
+            {{- end }}
+            {{- /* Ensure TEMPORAL_ADDRESS is always set if not in env list */}}
+            {{- if not $temporalAddressSet }}
+            - name: TEMPORAL_ADDRESS
+              value: {{ $temporalAddress | quote }}
+            {{- end }}
+            {{- /* Browser tokens use KEYCLOAK_ISSUER in iss; JWKS still fetched via KEYCLOAK_INTERNAL_ISSUER */}}
+            {{- if not $keycloakIssuerSet }}
+            - name: KEYCLOAK_ISSUER
+              value: {{ include "nemo.keycloakIssuer" $root | quote }}
+            {{- end }}
+            {{- /* Always set KEYCLOAK_INTERNAL_ISSUER for service-to-service authentication */}}
+            {{- /* Use internal issuer URL for service-to-service authentication */}}
+            - name: KEYCLOAK_INTERNAL_ISSUER
+              value: {{ include "nemo.keycloakInternalIssuer" $root | quote }}
+            - name: CONFIG_SERVICE_URL
+              value: {{ .Values.configServiceUrl | default (include "nemo.configServiceClusterURL" $root) | quote }}
+            {{- /* Ensure KEYCLOAK_CLIENT_ID and KEYCLOAK_CLIENT_SECRET are set for service account auth */}}
+            - name: KEYCLOAK_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-oidc-secrets
+                  key: workflow-engine-client-id
+            - name: KEYCLOAK_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-oidc-secrets
+                  key: workflow-engine-client-secret
+            {{- /* UUID of the agent-studio-api resource-server client. Required
+                   to build Admin Authz REST URLs of the form
+                   `/admin/realms/<r>/clients/<UUID>/authz/resource-server/...`.
+                   Without this env workflow-engine fails ProjectInitWorkflow
+                   with `KEYCLOAK_*_RESOURCE_SERVER_UUID must be set`.
+                   Resolved by identity/templates/post-realm-bootstrap-job.yaml
+                   and stored in keycloak-oidc-secrets.resource-server-uuid.
+                   Mirrors the identical block on config-service/templates/deployment.yaml. */}}
+            - name: KEYCLOAK_RESOURCE_SERVER_UUID
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-oidc-secrets
+                  key: resource-server-uuid
+            {{- /* Lakekeeper client credentials for management API */}}
+            - name: LAKEKEEPER_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-oidc-secrets
+                  key: lakekeeper-client-id
+            - name: LAKEKEEPER_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-oidc-secrets
+                  key: lakekeeper-client-secret
+            {{- /* Add S3 gateway credentials from secret (same as s3gateway and gateway) */}}
+            {{- /* Use the same helper as s3gateway chart to ensure secret name matches */}}
+            - name: S3_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "nemo.s3gatewayCredentialsName" . }}
+                  key: access-key
+            - name: S3_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "nemo.s3gatewayCredentialsName" . }}
+                  key: secret-key
+            {{- /* Always set after env range so placeholder "" or omitted entries cannot leave endpoint unset */}}
+            - name: S3_ENDPOINT
+              value: {{ .Values.s3.endpoint | default "http://s3gateway:7070" | quote }}
+            - name: S3_REGION
+              value: {{ .Values.s3.region | default "us-east-1" | quote }}
+            - name: NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            {{- if .Values.global.observability.otlpEndpoint }}
+            - name: AGENT_STUDIO_OBSERVABILITY_OTLP_TRACES_ENDPOINT
+              value: {{ .Values.global.observability.otlpEndpoint | quote }}
+            - name: AGENT_STUDIO_OBSERVABILITY_METRICS_OTLP_ENDPOINT
+              value: {{ .Values.global.observability.otlpEndpoint | quote }}
+            - name: AGENT_STUDIO_OBSERVABILITY_OTLP_LOGS_ENDPOINT
+              value: {{ .Values.global.observability.otlpEndpoint | quote }}
+            {{- end }}
+            - name: AGENT_STUDIO_OBSERVABILITY_LOG_FILE_PATH
+              value: "/dev/stdout"
+            - name: AGENT_STUDIO_OBSERVABILITY_TRACE_FILE_PATH
+              value: "/tmp/App_Logs/trace.jsonl"
+            - name: AGENT_STUDIO_OBSERVABILITY_TRACE_JSONL_FILTER
+              value: "all"
+            - name: OTEL_SERVICE_NAME
+              value: "workflow-engine"
+            {{- if .Values.tracing.otlpEndpoint }}
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: {{ .Values.tracing.otlpEndpoint | quote }}
+            {{- end }}
+          livenessProbe:
+            {{- toYaml .Values.livenessProbe | nindent 12 }}
+          readinessProbe:
+            {{- toYaml .Values.readinessProbe | nindent 12 }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- range . }}
+        {{- if kindIs "string" . }}
+        - name: {{ . | quote }}
+        {{- else if kindIs "map" . }}
+        - {{- toYaml . | nindent 10 }}
+        {{- else }}
+        - name: {{ . | quote }}
+        {{- end }}
+        {{- end }}
+      {{- end }}
+{{- end }}
+

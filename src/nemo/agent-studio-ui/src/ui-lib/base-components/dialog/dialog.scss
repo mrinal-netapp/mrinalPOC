@@ -1,0 +1,215 @@
+// -- Timing & easing (centralized for easy adjustment) --
+$dialog-enter-duration: 250ms;
+$dialog-exit-duration: 180ms;
+$dialog-easing: ease-out;
+
+$dialog-z-backdrop: var(--zindex-dialog-backdrop);
+$dialog-z-popup: var(--zindex-dialog-popup);
+
+// ---------------------------------------------------------------------------
+// Backdrop
+// ---------------------------------------------------------------------------
+
+.dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: $dialog-z-backdrop;
+  opacity: 0.5;
+}
+
+// -- Backdrop animation variants --
+
+.dialog-backdrop--animation-fade {
+  transition: opacity $dialog-enter-duration $dialog-easing;
+
+  &[data-starting-style] {
+    opacity: 0;
+  }
+
+  &[data-closed] {
+    opacity: 0;
+    transition-duration: $dialog-exit-duration;
+  }
+}
+
+.dialog-backdrop--animation-none {
+  transition: none;
+}
+
+// -- Backdrop color variants --
+
+.dialog-backdrop--color-default {
+  background: var(--background-mask, #1c1c1c);
+}
+
+.dialog-backdrop--color-none {
+  background: transparent;
+}
+
+// ---------------------------------------------------------------------------
+// Popup
+// ---------------------------------------------------------------------------
+
+.dialog-popup {
+  position: fixed;
+  inset: 0;
+  margin: auto;
+  width: fit-content;
+  height: fit-content;
+  max-height: calc(100vh - 2rem);
+  z-index: $dialog-z-popup;
+
+  display: flex;
+  flex-direction: column;
+  background-color: var(--background-content);
+  border-radius: 8px;
+  box-shadow: 0 8px 32px var(--border-drop-shadow);
+  overflow-y: auto;
+  outline: none;
+
+  // Prevent flex children (e.g. Card) from shrinking below their content
+  // height, which would clip content via overflow: hidden on the child.
+  > * {
+    flex-shrink: 0;
+  }
+}
+
+// -- Size variants --
+
+.dialog-popup--size-sm {
+  max-width: min(400px, calc(100% - 2rem));
+  width: 400px;
+}
+
+.dialog-popup--size-md {
+  max-width: min(560px, calc(100% - 2rem));
+  width: 560px;
+}
+
+.dialog-popup--size-lg {
+  max-width: min(720px, calc(100% - 2rem));
+  width: 720px;
+}
+
+.dialog-popup--size-full {
+  width: calc(100% - 2rem);
+  height: calc(100% - 2rem);
+  max-width: none;
+  max-height: calc(100% - 2rem);
+}
+
+// -- Popup animation variants --
+
+.dialog-popup--animation-fade {
+  opacity: 1;
+  transition: opacity $dialog-enter-duration $dialog-easing;
+
+  &[data-starting-style] {
+    opacity: 0;
+  }
+
+  &[data-closed] {
+    opacity: 0;
+    transition-duration: $dialog-exit-duration;
+  }
+}
+
+.dialog-popup--animation-scale {
+  opacity: 1;
+  transform: scale(1);
+  transition:
+    opacity $dialog-enter-duration $dialog-easing,
+    transform $dialog-enter-duration $dialog-easing;
+
+  &[data-starting-style] {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+
+  &[data-closed] {
+    opacity: 0;
+    transform: scale(0.95);
+    transition-duration: $dialog-exit-duration;
+  }
+}
+
+.dialog-popup--animation-slideUp {
+  opacity: 1;
+  transform: translateY(0);
+  transition:
+    opacity $dialog-enter-duration $dialog-easing,
+    transform $dialog-enter-duration $dialog-easing;
+
+  &[data-starting-style] {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+
+  &[data-closed] {
+    opacity: 0;
+    transform: translateY(16px);
+    transition-duration: $dialog-exit-duration;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Sub-components
+// ---------------------------------------------------------------------------
+
+// -- Header --
+
+.dialog-header {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-bottom: 16px;
+}
+
+// -- Footer --
+
+.dialog-footer {
+  display: flex;
+  flex-direction: row;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border-main);
+}
+
+// -- Title --
+
+.dialog-title {
+  margin: 0;
+  color: var(--text-title);
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 28px;
+}
+
+// -- Description --
+
+.dialog-description {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 14px;
+  line-height: 20px;
+}
+
+// -- Close button --
+
+.dialog-close {
+  flex-shrink: 0;
+  color: var(--icon-secondary);
+
+  &:hover {
+    color: var(--icon-secondary-hover);
+  }
+}
+
+.dialog-close--header {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  z-index: 1;
+}

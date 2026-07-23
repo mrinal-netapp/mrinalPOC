@@ -1,0 +1,79 @@
+{{/*
+Cross-namespace aliases for services tier.
+
+Default mode is externalName: a CoreDNS-resolvable Service alias that works for
+pre-sidecar init containers and plain DNS clients. Set crossNsServices.mode=
+serviceEntry only when Istio DNS capture is enabled mesh-wide (otherwise the
+ServiceEntry host is NXDOMAIN for non-mesh DNS lookups).
+Each alias can still be disabled via .Values.crossNsServices.<name>.disabled.
+*/}}
+
+{{- $platformNs := .Values.platformNamespace | default "agentstudio-platform" }}
+{{- $workersNs  := .Values.workersNamespace  | default "agentstudio-workers" }}
+{{- $identityNs := .Values.keycloakNamespace | default "agentstudio-identity" }}
+{{- $llmNs := .Values.llmGatewayNamespace | default "agentstudio-llm-gateway" }}
+{{- $crossNs := (index .Values "crossNsServices" | default dict) }}
+{{- $mode := (index $crossNs "mode" | default "externalName") }}
+{{- $releaseNs := .Release.Namespace }}
+{{- $services := dict
+    "temporal" (dict "host" (printf "temporal.%s.svc.cluster.local" $platformNs) "port" 7233 "name" "grpc-temporal" "protocol" "GRPC")
+    "bifrost-proxy" (dict "host" (printf "bifrost-proxy.%s.svc.cluster.local" $llmNs) "port" 8080 "name" "http-api" "protocol" "HTTP")
+    "lakekeeper" (dict "host" (printf "lakekeeper.%s.svc.cluster.local" $platformNs) "port" 8181 "name" "http-api" "protocol" "HTTP")
+    "redis-master" (dict "host" (printf "redis-master.%s.svc.cluster.local" $platformNs) "port" 6379 "name" "tcp-redis" "protocol" "TCP")
+    "s3gateway" (dict "host" (printf "s3gateway.%s.svc.cluster.local" $workersNs) "port" 7070 "name" "tcp-s3" "protocol" "TCP")
+    "keycloak-svc" (dict "host" (printf "keycloak.%s.svc.cluster.local" $identityNs) "port" 8080 "name" "http-api" "protocol" "HTTP")
+}}
+{{- range $name, $cfg := $services }}
+{{- if not (index $.Values "crossNsServices" | default dict | dig $name "disabled" false) }}
+{{- $proto := upper ($cfg.protocol | toString) }}
+{{- /* Istio only permits multiple hosts on a ServiceEntry when every port is
+       L7-routable (HTTP/HTTP2/GRPC/TLS); L4 (TCP/etc.) ports must declare a
+       single host or validation.istio.io rejects the object with
+       "multiple hosts provided with non-HTTP, non-TLS ports". */ -}}
+{{- $l7 := or (eq $proto "HTTP") (eq $proto "HTTP2") (eq $proto "GRPC") (eq $proto "GRPCWEB") (eq $proto "TLS") (eq $proto "HTTPS") }}
+---
+{{- if eq $mode "externalName" }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  namespace: {{ $releaseNs }}
+  labels:
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: cross-namespace-proxy
+spec:
+  type: ExternalName
+  externalName: {{ $cfg.host }}
+  ports:
+    - name: {{ $cfg.name }}
+      port: {{ $cfg.port }}
+      targetPort: {{ $cfg.port }}
+{{- else }}
+apiVersion: networking.istio.io/v1beta1
+kind: ServiceEntry
+metadata:
+  name: {{ $name }}-cross-ns
+  namespace: {{ $releaseNs }}
+  labels:
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: cross-namespace-proxy
+spec:
+  hosts:
+    {{- /* FQDN is what the in-namespace resolver produces for the short name,
+           so it is the single host kept for L4 services; L7 services also keep
+           the bare alias for convenience. */}}
+    {{- if $l7 }}
+    - {{ $name }}
+    {{- end }}
+    - {{ $name }}.{{ $releaseNs }}.svc.cluster.local
+  location: MESH_INTERNAL
+  resolution: DNS
+  endpoints:
+    - address: {{ $cfg.host }}
+  ports:
+    - number: {{ $cfg.port }}
+      name: {{ $cfg.name }}
+      protocol: {{ $cfg.protocol }}
+{{- end }}
+{{- end }}
+{{- end }}

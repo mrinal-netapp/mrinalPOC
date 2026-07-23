@@ -1,0 +1,21 @@
+{
+  "_note": "Set AZURE_CLIENT_ID to the clientId output and AZURE_TENANT_ID / AZURE_SUBSCRIPTION_ID in your GitHub Actions workflow or environment secrets. Add one entry per repo+filter combination that needs Azure access.",
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "uamiName": {
+      "value": "REPLACE_WITH_uami_name"
+    },
+    "githubActionsOidcIssuerUrl": {
+      "value": "REPLACE_WITH_github_actions_oidc_issuer_url"
+    },
+    "federatedCredentials": {
+      "value": [
+        {
+          "name": "REPLACE_WITH_fic_name",
+          "subject": "REPLACE_WITH: repo:<githubOrg>/<githubRepo>:ref:refs/heads/<branch>"
+        }
+      ]
+    }
+  }
+}

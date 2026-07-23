@@ -1,0 +1,105 @@
+# preprod.yaml -- AgentStudio AWS infra config for the pre-prod environment.
+#
+# Drives deployments/aws/stacks/agentstudio-foundation.yaml (CloudFormation) via the
+# gated CI workflow (.github/workflows/deploy-env.yml, cloud=aws) or:
+#   make infra CLOUD=aws ENV=preprod ACTION=plan
+#   make infra CLOUD=aws ENV=preprod ACTION=apply
+#
+# A distinct VPC CIDR avoids overlap with the dev stack if both live in one
+# account/region. `application.environment` maps to the template's allowed
+# 'test' value (dev|test|prod only); the ENV file name stays 'preprod'.
+
+env: preprod
+region: us-east-2
+stackName: agentstudio-preprod
+
+application:
+  endpoint: agentstudio-aws.preprod.openeng.netapp.com
+  projectName: agentstudio
+  environment: test
+
+# Stack tag (propagated to taggable resources by CloudFormation deploy --tags).
+tags:
+  creator: ap99158
+
+networking:
+  vpcCidr: 10.251.0.0/16
+  publicSubnet1Cidr: 10.251.0.0/20
+  publicSubnet2Cidr: 10.251.16.0/20
+  privateSubnet1Cidr: 10.251.32.0/20
+  privateSubnet2Cidr: 10.251.48.0/20
+
+eks:
+  kubernetesVersion: "1.32"   # must match live cluster; EKS allows only +1 minor per apply
+  endpointPublicAccess: true
+  endpointPrivateAccess: true
+  nodeGroups:
+    - name: general-m6i4xl
+      # 16 vCPU / 64 GiB per node (matches Azure preprod Standard_D16s_v5 class).
+      # Name must change when instance type changes — EKS node groups cannot replace in-place.
+      instanceTypes: [m6i.4xlarge]
+      amiType: AL2_x86_64
+      capacityType: ON_DEMAND
+      scaling:
+        desiredSize: 4
+        minSize: 4
+        maxSize: 8
+      labels:
+        workload: general
+      # Rolling replace when instance type changes; 2 speeds up 4-node migration.
+      updateMaxUnavailable: 2
+    # Example additional workload-isolated pool (uncomment to enable):
+    # - name: workload
+    #   instanceTypes: [m6i.xlarge]
+    #   amiType: AL2_x86_64
+    #   capacityType: ON_DEMAND
+    #   scaling:
+    #     desiredSize: 0
+    #     minSize: 0
+    #     maxSize: 5
+    #   labels:
+    #     pool: workload
+    #   taints:
+    #     - key: workload
+    #       value: "true"
+    #       effect: NO_SCHEDULE
+
+fsx:
+  storageCapacityGiB: 4096
+  throughputCapacity: 768
+  deploymentType: SINGLE_AZ_2
+  # svmName defaults to <stackName>-svm (agentstudio-preprod-svm) when omitted
+
+installer:
+  enableInstance: false             # infra-only; no installer AMI required
+  instanceType: t3.large
+  volumeSizeGiB: 100
+  tridentHelmVersion: "100.2410.0"
+
+storage:
+  trident:
+    helmVersion: "100.2410.0"
+    namespace: trident
+    serviceAccount: trident-controller
+  fsxn:
+    backendName: fsxn-nas-backend
+    storageClassName: fsxn-nas
+    markAsDefault: true
+    credentialsFrom: stackOutput
+
+# Shared ECR for all envs (images built/pushed by CI — not created per stack).
+containerRegistry:
+  mode: shared
+  loginServer: 721140971281.dkr.ecr.us-east-2.amazonaws.com
+
+# Operator/CI roles granted EKS cluster admin via CFN (comma-separated ARNs).
+operatorAccess:
+  principalArns: []                 # e.g. arn:aws:iam::721140971281:role/GitHubActions-Preprod
+
+dns:
+  createHostedZone: false           # set true if Route53 manages this env's zone
+  # hostedZoneName: agentstudio-preprod.example.com
+
+edge:
+  allocateGatewayEips: false
+  gatewayEipAllocations: eipalloc-03345a1d6d0456b9e,eipalloc-0bd356f95a371496e

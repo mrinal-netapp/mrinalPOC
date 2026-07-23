@@ -1,0 +1,69 @@
+{{- if (index .Values "kube-prometheus-stack" "enabled") }}
+# NetworkPolicy for the Prometheus pod.
+#
+# Restricts who can reach Prometheus port 9090:
+#   - prometheus-proxy  : the only path for Grafana datasource queries
+#   - mcp-stdio-runner  : analytics MCP server queries
+#   - prometheus itself : self-scrape and federation
+#
+# Grafana is deliberately NOT in this allowlist — all Grafana queries must
+# go through prometheus-proxy which enforces per-user project scope.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: prometheus-ingress-restrict
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: prometheus
+  policyTypes:
+    - Ingress
+  ingress:
+    # prometheus-proxy → Prometheus: the only path for Grafana datasource queries.
+    {{- if (index .Values "prometheus-proxy" "enabled") }}
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus-proxy
+      ports:
+        - port: 9090
+          protocol: TCP
+    {{- end }}
+    # mcp-stdio-runner → Prometheus: analytics MCP server metric queries.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.servicesNamespace | default "agentstudio-services" }}
+          podSelector:
+            matchLabels:
+              component: mcp-stdio-runner
+      ports:
+        - port: 9090
+          protocol: TCP
+    # Prometheus self-scrape and prometheus-operator (same namespace).
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - port: 9090
+          protocol: TCP
+    # Prometheus-adapter (bridges custom metrics API for HPA).
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus-adapter
+      ports:
+        - port: 9090
+          protocol: TCP
+{{- end }}

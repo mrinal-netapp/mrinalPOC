@@ -1,0 +1,244 @@
+{
+  "_schema_version": "2.0.0",
+  "project_id": "550e8400-e29b-41d4-a716-446655440000",
+  "_description": "Single-agent team with a general-purpose assistant.",
+  "agent": {
+    "framework": "maf",
+    "model": "azure/gpt-4.1-mini",
+    "temperature": 0.3,
+    "max_tokens": 512,
+    "timeout_seconds": 60
+  },
+  "semantic_kernel": {
+    "agents": [
+      {
+        "name": "guardrails_catalog",
+        "description": "A helpful assistant for answering questions and following user requests.",
+        "instructions": "You are a helpful assistant. Be clear, accurate, and concise. Follow the user's instructions carefully.",
+        "model": "azure/gpt-4o-mini",
+        "temperature": 0.3,
+        "max_tokens": 512,
+        "tools": [],
+        "mcp_servers": [],
+        "function_choice_behavior": "auto"
+      }
+    ],
+    "orchestration": {
+      "type": "single"
+    },
+    "default_function_choice_behavior": "auto",
+    "chat_history_max_messages": 20,
+    "enable_telemetry": false,
+    "session_ttl_seconds": 3600
+  },
+  "gateway": {
+    "url": "http://agent-studio-bifrost-dev.eastus2.cloudapp.azure.com/v1",
+    "default_model": "azure/gpt-4.1-mini",
+    "request_timeout_seconds": 60,
+    "retry_on_timeout": true,
+    "max_retries": 2
+  },
+  "guardrails": {
+    "enabled": true,
+    "fail_open": false,
+    "log_blocked_requests": true,
+    "input_guardrails": [
+      {
+        "name": "adversarial_unicode",
+        "type": "security",
+        "enabled": false,
+        "priority": 1,
+        "action_on_trigger": "modify",
+        "message": "Input contained adversarial Unicode and was normalized.",
+        "config": {
+          "strip_zero_width": true,
+          "strip_control": true,
+          "strip_bidi": true,
+          "strip_tag_chars": true,
+          "normalize_nfkc": true
+        }
+      },
+      {
+        "name": "input_validator",
+        "type": "validation",
+        "enabled": false,
+        "priority": 2,
+        "action_on_trigger": "block",
+        "message": "Input does not meet validation requirements.",
+        "config": {
+          "max_length": 5000,
+          "min_length": 1
+        }
+      },
+      {
+        "name": "prompt_injection",
+        "type": "security",
+        "enabled": false,
+        "priority": 3,
+        "action_on_trigger": "block",
+        "message": "Potential prompt injection detected.",
+        "config": {
+          "patterns": [
+            "ignore previous instructions",
+            "system prompt"
+          ]
+        }
+      },
+      {
+        "name": "language",
+        "type": "content_policy",
+        "enabled": false,
+        "priority": 4,
+        "action_on_trigger": "block",
+        "message": "Input language is not allowed.",
+        "config": {
+          "allowed_languages": ["en"],
+          "confidence_threshold": 0.9,
+          "min_length": 20
+        }
+      },
+      {
+        "name": "pii_masker",
+        "type": "privacy",
+        "enabled": false,
+        "priority": 6,
+        "action_on_trigger": "modify",
+        "message": "PII detected and redacted.",
+        "config": {
+          "mask_email": true,
+          "mask_phone": true,
+          "mask_ssn": true,
+          "mask_cc": true,
+          "safe_email_domains": ["example.com"]
+        }
+      },
+      {
+        "name": "content_filter",
+        "type": "security",
+        "enabled": false,
+        "priority": 7,
+        "action_on_trigger": "block",
+        "message": "Input contains potentially sensitive content.",
+        "config": {}
+      },
+      {
+        "name": "tool_result_guardrail",
+        "type": "security",
+        "enabled": false,
+        "priority": 8,
+        "action_on_trigger": "block",
+        "message": "Tool result contains a prompt-injection pattern.",
+        "config": {
+          "patterns": []
+        }
+      }
+    ],
+    "output_guardrails": [
+      {
+        "name": "content_filter",
+        "type": "security",
+        "enabled": false,
+        "priority": 1,
+        "action_on_trigger": "block",
+        "message": "Response contains potentially sensitive content.",
+        "config": {}
+      },
+      {
+        "name": "pii_masker",
+        "type": "privacy",
+        "enabled": true,
+        "priority": 2,
+        "action_on_trigger": "modify",
+        "message": "PII detected and redacted.",
+        "config": {
+          "mask_email": true,
+          "mask_phone": true,
+          "mask_ssn": true,
+          "mask_cc": true,
+          "safe_email_domains": ["example.com"]
+        }
+      },
+      {
+        "name": "phi_masker",
+        "type": "privacy",
+        "enabled": false,
+        "priority": 3,
+        "action_on_trigger": "modify",
+        "message": "PHI detected and redacted.",
+        "config": {
+          "mrn": true,
+          "npi": true,
+          "icd": true,
+          "insurance": true
+        }
+      },
+      {
+        "name": "output_sanitizer",
+        "type": "security",
+        "enabled": false,
+        "priority": 4,
+        "action_on_trigger": "warn",
+        "message": "Response contains unsafe HTML or URLs.",
+        "config": {
+          "sanitize_html": true,
+          "check_urls": true,
+          "allowed_schemes": ["http", "https", "mailto"],
+          "block_private_ips": true
+        }
+      },
+      {
+        "name": "system_prompt_leakage",
+        "type": "security",
+        "enabled": false,
+        "priority": 6,
+        "action_on_trigger": "warn",
+        "message": "Response may leak system instructions or chain-of-thought.",
+        "config": {
+          "detect_system_prompt": true,
+          "detect_cot": true,
+          "similarity_threshold": 0.85
+        }
+      },
+      {
+        "name": "schema_validator",
+        "type": "accuracy",
+        "enabled": false,
+        "priority": 7,
+        "action_on_trigger": "warn",
+        "message": "Output format does not match expected schema.",
+        "config": {
+          "expected_format": "",
+          "required_fields": []
+        }
+      },
+      {
+        "name": "output_length",
+        "type": "validation",
+        "enabled": false,
+        "priority": 8,
+        "action_on_trigger": "block",
+        "message": "Response exceeds maximum length.",
+        "config": {
+          "max_chars": 50000
+        }
+      }
+    ],
+    "tool_guardrails": {
+      "mode": "denylist",
+      "tools": [],
+      "max_calls_per_request": 20
+    }
+  },
+  "mcp": {
+    "lazy_connect": true
+  },
+  "mcp_servers": [],
+  "memory": {
+    "enabled": false
+  },
+  "logging": {
+    "level": "DEBUG",
+    "format": "json",
+    "include_timestamp": true
+  }
+}

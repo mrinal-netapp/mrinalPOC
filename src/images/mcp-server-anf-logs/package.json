@@ -1,0 +1,33 @@
+{
+  "name": "mcp-server-anf-logs",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Self-contained MCP server exposing read-only Azure NetApp Files (ANF) logs/errors/events tools backed by the Azure Monitor Activity Log.",
+  "type": "module",
+  "bin": {
+    "anf-logs-mcp": "build/index.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "start": "node build/index.js"
+  },
+  "dependencies": {
+    "@azure/arm-monitor": "^7.0.0",
+    "@azure/identity": "^4.5.0",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "pino": "^9.5.0",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "^24.1.0",
+    "@vitest/coverage-v8": "^3.2.6",
+    "typescript": "^5.8.3",
+    "vitest": "^3.2.6"
+  }
+}

@@ -1,0 +1,47 @@
+{{- if and .Values.enabled .Values.serviceAccount.create }}
+# RBAC for Storage Manager to manage StorageClasses, Secrets, PVCs, and PVs
+# Note: PVs are cluster-scoped resources, so ClusterRole is required
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "storage-manager.fullname" . }}-storageclass-manager
+  labels:
+    {{- include "storage-manager.labels" . | nindent 4 }}
+rules:
+- apiGroups: ["storage.k8s.io"]
+  resources: ["storageclasses"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: [""]
+  resources: ["persistentvolumeclaims"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: [""]
+  resources: ["persistentvolumes"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["apps"]
+  resources: ["deployments"]
+  verbs: ["get", "list", "watch", "patch", "update"]
+- apiGroups: [""]
+  resources: ["events"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "storage-manager.fullname" . }}-storageclass-manager
+  labels:
+    {{- include "storage-manager.labels" . | nindent 4 }}
+subjects:
+- kind: ServiceAccount
+  name: {{ include "storage-manager.serviceAccountName" . }}
+  namespace: {{ .Release.Namespace }}
+roleRef:
+  kind: ClusterRole
+  name: {{ include "storage-manager.fullname" . }}-storageclass-manager
+  apiGroup: rbac.authorization.k8s.io
+{{- end }}

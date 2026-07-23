@@ -1,0 +1,270 @@
+# Deploy Environment — generic, env-parameterised multi-cloud pipeline.
+#
+# The entry point for ad-hoc / non-standard environments (localtest, sandbox,
+# staging, ...). Pick a cloud + environment + image tag and it runs the full
+# infra -> storage -> deploy pipeline.
+#
+# NOT for `preprod` or `dev`: those have dedicated pinned pipelines
+# (deploy-preprod-{azure,aws,gcp}.yml) and are rejected here on purpose.
+#
+#   azure -> Azure Deployment Stacks (Bicep) over deployments/azure/stacks/,
+#            driven by deployments/azure/envs/<environment>.yaml   (cluster: aks)
+#   aws   -> CloudFormation over deployments/aws/stacks/,
+#            driven by deployments/aws/envs/<environment>.yaml     (cluster: eks)
+#   gcp   -> Infrastructure Manager over deployments/gcp/stacks/ (Terraform),
+#            driven by deployments/gcp/envs/<environment>.yaml     (cluster: gke)
+#
+# `environment` is free-text (minus preprod/dev): the runner validates that
+# deployments/<cloud>/envs/<env>.yaml exists, so a new env works with no edit.
+#
+# ─── OIDC / GitHub Environments ─────────────────────────────────────────────
+# The GitHub Environment matches the selected cloud (azure | aws | gcp) and
+# provides the OIDC identity + vars:
+#   azure -> AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID
+#   aws   -> AWS_ROLE_ARN, AWS_REGION
+#   gcp   -> GCP_PROJECT_ID, GCP_WORKLOAD_IDENTITY_PROVIDER, GCP_SERVICE_ACCOUNT
+#
+# Usage:
+#   Actions -> "Deploy Environment" -> Run workflow
+#     cloud=gcp environment=localtest image_tag=<tag>
+#
+# NOTE: forward provisioning only (plan/apply). Teardown (destroy) is not part
+# of this pipeline — add a dedicated teardown workflow if you need it.
+
+name: Deploy Environment
+
+on:
+  workflow_dispatch:
+    inputs:
+      cloud:
+        description: "Cloud to target (azure=AKS, aws=EKS, gcp=GKE)."
+        required: true
+        type: choice
+        options: [azure, aws, gcp]
+        default: gcp
+      environment:
+        description: "Target env (deployments/<cloud>/envs/<name>.yaml). NOT preprod/dev."
+        required: true
+        type: string
+        default: localtest
+      image_tag:
+        description: "Container image tag to deploy (e.g. v1.2.3)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write   # OIDC token exchange for cloud logins
+
+# Serialise runs against the same cloud+environment; never cancel an in-flight apply.
+concurrency:
+  group: deploy-env-${{ inputs.cloud }}-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate (${{ inputs.cloud }}/${{ inputs.environment }})
+    runs-on: ubuntu-latest
+    steps:
+      - name: Reject reserved environments
+        shell: bash -e {0}
+        run: |
+          case "${{ inputs.environment }}" in
+            preprod|dev)
+              echo "::error::'${{ inputs.environment }}' has a dedicated pipeline; use deploy-preprod-${{ inputs.cloud }}.yml (preprod) or the dev workflow. deploy-env.yml is for ad-hoc envs only." >&2
+              exit 1 ;;
+          esac
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify env yaml exists
+        shell: bash -e {0}
+        run: |
+          ENV_FILE="deployments/${{ inputs.cloud }}/envs/${{ inputs.environment }}.yaml"
+          if [[ ! -f "$ENV_FILE" ]]; then
+            echo "::error::Missing $ENV_FILE" >&2
+            exit 1
+          fi
+          echo "Using $ENV_FILE (image_tag=${{ inputs.image_tag }})" | tee -a "$GITHUB_STEP_SUMMARY"
+
+  infra-plan:
+    name: Infra plan (${{ inputs.cloud }}/${{ inputs.environment }})
+    needs: validate
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.cloud }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure login (OIDC)
+        if: ${{ inputs.cloud == 'azure' }}
+        uses: azure/login@v2
+        with:
+          client-id:       ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id:       ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Ensure Bicep is available
+        if: ${{ inputs.cloud == 'azure' }}
+        run: az bicep install || az bicep version
+
+      - name: AWS login (OIDC)
+        if: ${{ inputs.cloud == 'aws' }}
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region:     ${{ vars.AWS_REGION }}
+
+      - name: GCP login (OIDC)
+        if: ${{ inputs.cloud == 'gcp' }}
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account:            ${{ vars.GCP_SERVICE_ACCOUNT }}
+
+      - name: Setup gcloud
+        if: ${{ inputs.cloud == 'gcp' }}
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Infra plan
+        env:
+          GCP_SERVICE_ACCOUNT: ${{ vars.GCP_SERVICE_ACCOUNT }}
+        shell: bash -euo pipefail {0}
+        run: |
+          make infra CLOUD='${{ inputs.cloud }}' ENV='${{ inputs.environment }}' ACTION=plan \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+
+  infra-apply:
+    name: Infra apply (${{ inputs.cloud }}/${{ inputs.environment }})
+    needs: infra-plan
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.cloud }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure login (OIDC)
+        if: ${{ inputs.cloud == 'azure' }}
+        uses: azure/login@v2
+        with:
+          client-id:       ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id:       ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Ensure Bicep is available
+        if: ${{ inputs.cloud == 'azure' }}
+        run: az bicep install || az bicep version
+
+      - name: AWS login (OIDC)
+        if: ${{ inputs.cloud == 'aws' }}
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region:     ${{ vars.AWS_REGION }}
+
+      - name: GCP login (OIDC)
+        if: ${{ inputs.cloud == 'gcp' }}
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account:            ${{ vars.GCP_SERVICE_ACCOUNT }}
+
+      - name: Setup gcloud
+        if: ${{ inputs.cloud == 'gcp' }}
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Infra apply
+        env:
+          GCP_SERVICE_ACCOUNT: ${{ vars.GCP_SERVICE_ACCOUNT }}
+        shell: bash -euo pipefail {0}
+        run: |
+          make infra CLOUD='${{ inputs.cloud }}' ENV='${{ inputs.environment }}' ACTION=apply \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+
+  storage:
+    name: Storage (${{ inputs.cloud }}/${{ inputs.environment }})
+    needs: infra-apply
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: ${{ inputs.cloud }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure login (OIDC)
+        if: ${{ inputs.cloud == 'azure' }}
+        uses: azure/login@v2
+        with:
+          client-id:       ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id:       ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: AWS login (OIDC)
+        if: ${{ inputs.cloud == 'aws' }}
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region:     ${{ vars.AWS_REGION }}
+
+      - name: GCP login (OIDC)
+        if: ${{ inputs.cloud == 'gcp' }}
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account:            ${{ vars.GCP_SERVICE_ACCOUNT }}
+
+      - name: Setup gcloud
+        if: ${{ inputs.cloud == 'gcp' }}
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          install_components: gke-gcloud-auth-plugin
+
+      - name: Storage (make storage)
+        shell: bash -euo pipefail {0}
+        run: |
+          python3 -c "import yaml" 2>/dev/null || python3 -m pip install --user pyyaml
+          make storage CLOUD='${{ inputs.cloud }}' ENV='${{ inputs.environment }}' \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+
+  deploy-placeholder:
+    name: Deploy placeholder (${{ inputs.cloud }}/${{ inputs.environment }})
+    needs: storage
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.cloud }}
+    steps:
+      - name: Deploy not implemented
+        shell: bash -e {0}
+        env:
+          IMAGE_TAG: ${{ inputs.image_tag }}
+        run: |
+          case "${{ inputs.cloud }}" in
+            azure) cluster=aks ;;
+            aws)   cluster=eks ;;
+            gcp)   cluster=gke ;;
+          esac
+          {
+            echo "## Deploy (placeholder)"
+            echo ""
+            echo "Helm deploy is **not wired** yet (infra + storage is current scope)."
+            echo "Requested image_tag: \`$IMAGE_TAG\`"
+            echo "Planned: image_tag checkout + deploy-reusable (cloud=$cluster)."
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "::notice::Deploy stage is a placeholder (cloud=${{ inputs.cloud }} -> cluster=$cluster, image_tag=$IMAGE_TAG)."
+
+  pipeline-status:
+    name: Pipeline result
+    if: always()
+    needs: [validate, infra-plan, infra-apply, storage, deploy-placeholder]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail if any stage failed
+        shell: bash -e {0}
+        run: |
+          fail() { echo "::error::$1" >&2; exit 1; }
+          [[ "${{ needs.validate.result }}"           == "success" ]] || fail "Validate failed"
+          [[ "${{ needs.infra-plan.result }}"         == "success" ]] || fail "Infra plan failed"
+          [[ "${{ needs.infra-apply.result }}"        == "success" ]] || fail "Infra apply failed"
+          [[ "${{ needs.storage.result }}"            == "success" ]] || fail "Storage failed"
+          [[ "${{ needs.deploy-placeholder.result }}" == "success" ]] || fail "Deploy failed"
+          echo "All stages succeeded."

@@ -1,0 +1,30 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "vnetName": {
+      "value": "REPLACE_WITH_vnet_name"
+    },
+    "vnetAddressPrefix": {
+      "value": "REPLACE_WITH_vnet_address_prefix"
+    },
+    "aksSubnetName": {
+      "value": "REPLACE_WITH_aks_subnet_name"
+    },
+    "aksSubnetPrefix": {
+      "value": "REPLACE_WITH_aks_subnet_cidr"
+    },
+    "ilbSubnetName": {
+      "value": "REPLACE_WITH_ilb_subnet_name"
+    },
+    "ilbSubnetPrefix": {
+      "value": "REPLACE_WITH_ilb_subnet_cidr"
+    },
+    "anfSubnetName": {
+      "value": "REPLACE_WITH_anf_subnet_name"
+    },
+    "anfSubnetPrefix": {
+      "value": "REPLACE_WITH_anf_subnet_cidr"
+    }
+  }
+}

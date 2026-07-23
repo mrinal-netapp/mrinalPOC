@@ -1,0 +1,30 @@
+{{- if .Values.serviceMonitor.enabled }}
+# ServiceMonitor that tells Prometheus (managed by kube-prometheus-stack) to
+# scrape the OTel Collector's Prometheus exporter on port 8889.
+#
+# The exporter exposes OTLP-push metrics received from all AgentStudio services
+# under the "otelcol" namespace (e.g. otelcol_http_request_duration_seconds,
+# otelcol_process_runtime_*). Without this, the :8889 port is unreachable to
+# Prometheus even though the collector is already exposing it.
+#
+# kube-prometheus-stack is configured with serviceMonitorSelectorNilUsesHelmValues: false
+# so it discovers all ServiceMonitors in all namespaces — no label match required.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "otel-collector.fullname" . }}
+  labels:
+    {{- include "otel-collector.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "otel-collector.selectorLabels" . | nindent 6 }}
+  endpoints:
+    - port: prometheus
+      path: /metrics
+      interval: {{ .Values.serviceMonitor.interval }}
+      scrapeTimeout: {{ .Values.serviceMonitor.scrapeTimeout }}
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace }}
+{{- end }}

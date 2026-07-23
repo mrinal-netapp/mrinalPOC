@@ -1,0 +1,52 @@
+{{- /*
+  Renders one namespace-wide PeerAuthentication per namespace from .Values.namespaces.
+  Switch mtls.mode to STRICT after validating traffic with PERMISSIVE.
+  To flip a single namespace without re-deploying the chart:
+    kubectl -n <ns> patch peerauthentication default \
+      --type merge -p '{"spec":{"mtls":{"mode":"STRICT"}}}'
+
+  Also renders workload-specific PeerAuthentications with port-level overrides
+  from .Values.mtls.portLevelOverrides, used for pods that accept traffic from
+  outside the Istio mesh (e.g. ingress gateways receiving browser connections).
+*/}}
+{{- range .Values.namespaces }}
+---
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
+metadata:
+  name: default
+  namespace: {{ .name }}
+  labels:
+    {{- include "istio-mesh-policies.labels" $ | nindent 4 }}
+spec:
+  mtls:
+    mode: {{ $.Values.mtls.mode }}
+{{- end }}
+
+{{- /*
+  Workload-specific PeerAuthentications with port-level mTLS overrides.
+  Each entry in .Values.mtls.portLevelOverrides becomes one PeerAuthentication
+  scoped to a specific pod via selector, inheriting the namespace-wide mode
+  but overriding individual ports.
+*/}}
+{{- range .Values.mtls.portLevelOverrides }}
+---
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: {{ .name }}
+  namespace: {{ .namespace }}
+  labels:
+    {{- include "istio-mesh-policies.labels" $ | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- toYaml .selector | nindent 6 }}
+  mtls:
+    mode: {{ $.Values.mtls.mode }}
+  portLevelMtls:
+    {{- range $port, $mode := .ports }}
+    "{{ $port }}":
+      mode: {{ $mode }}
+    {{- end }}
+{{- end }}

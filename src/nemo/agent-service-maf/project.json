@@ -1,0 +1,39 @@
+{
+  "name": "agent-service-maf",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "src/nemo/agent-service-maf/src",
+  "projectType": "application",
+  "tags": ["language:python"],
+  "targets": {
+    "build": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "dependsOn": [],
+      "options": {
+        "cwd": "src/nemo/agent-service-maf",
+        "commands": [
+          "test -d .venv || $(command -v python3.12 || command -v python3.13 || command -v python3.11) -m venv .venv",
+          ".venv/bin/pip install --quiet --upgrade pip",
+          ".venv/bin/pip install --quiet ../../common-py/observability/observability-client",
+          ".venv/bin/pip install --quiet -e '.[agent-framework]'",
+          ".venv/bin/python -m compileall -q src",
+          ".venv/bin/python -c \"import sys; sys.path.insert(0, 'src'); import agent_service_maf.interface_layer.api\""
+        ],
+        "parallel": false
+      }
+    },
+    "test": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "dependsOn": ["build"],
+      "options": {
+        "cwd": "src/nemo/agent-service-maf",
+        "commands": [
+          ".venv/bin/pip install --quiet -e '.[dev,agent-framework]'",
+          ".venv/bin/pytest tests/unit tests/integration -q"
+        ],
+        "parallel": false
+      }
+    }
+  }
+}

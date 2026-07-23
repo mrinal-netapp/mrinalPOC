@@ -1,0 +1,77 @@
+@use '@/styles/mixins' as *;
+
+.mcp-config-dialog-card .card-content {
+  padding: 20px 24px;
+
+  @include mobile {
+    padding: 16px;
+  }
+}
+
+.mcp-config-dialog-card .card-content > div {
+  padding-right: 4px;
+}
+
+.mcp-config-dialog__content {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-height: 60vh;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+
+.mcp-config-dialog__toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.mcp-config-dialog__toggle-label {
+  font-size: 14px;
+}
+
+.mcp-config-dialog__warning {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 8px;
+  color: var(--notification-warning);
+  font-size: 13px;
+  flex-wrap: wrap;
+}
+
+.mcp-config-dialog__headers-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.mcp-config-dialog__header-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: end;
+
+  @include tablet {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+
+    .mcp-config-dialog__header-row-action {
+      grid-column: 1 / -1;
+      justify-self: flex-end;
+    }
+  }
+
+  @include mobile {
+    grid-template-columns: 1fr;
+
+    .mcp-config-dialog__header-row-action {
+      grid-column: auto;
+      justify-self: flex-start;
+    }
+  }
+}
+
+.mcp-config-dialog__header-row-action {
+  align-self: end;
+}

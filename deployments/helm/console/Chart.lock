@@ -1,0 +1,9 @@
+dependencies:
+- name: gui
+  repository: file://./charts/gui
+  version: 1.0.0
+- name: agent-studio-ui
+  repository: file://./charts/agent-studio-ui
+  version: 1.0.0
+digest: sha256:b4c3179f6ce8d2f1aeb7360f633606f47a97e4a0d6fc269f158e418ec06e5311
+generated: "2026-06-14T03:07:00.760522+05:30"

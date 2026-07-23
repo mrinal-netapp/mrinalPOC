@@ -1,0 +1,59 @@
+.connector-browser-dialog {
+  max-width: 1064px;
+  width: 100%;
+}
+
+// -- Region selector --
+
+.connector-browser-dialog__region {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.connector-browser-dialog__region-select {
+  padding: 4px 8px;
+  border: 1px solid var(--border-default, var(--text-secondary));
+  border-radius: 4px;
+  background-color: var(--background-default);
+  color: var(--text-primary);
+  font-size: 14px;
+}
+
+// -- Breadcrumbs --
+
+.connector-browser-dialog__breadcrumbs {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+  padding-bottom: 0;
+}
+
+.connector-browser-dialog__breadcrumb-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.connector-browser-dialog__breadcrumb-separator {
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+.connector-browser-dialog__breadcrumb-segment {
+  all: unset;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 4px;
+
+  &:hover:not(:disabled) {
+    background-color: var(--background-hover);
+  }
+
+  &:disabled {
+    cursor: default;
+  }
+}

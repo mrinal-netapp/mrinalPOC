@@ -1,0 +1,132 @@
+# _schema.yaml -- reference shape for a per-environment Azure infra config.
+#
+# This file is NOT deployed. It documents the single shared schema that every
+# envs/<env>.yaml follows. Adding a new environment (prod, staging, sandbox,
+# ...) is purely additive: copy an existing env file, edit the values, and the
+# same command works with no Make/template/script change:
+#
+#   make infra CLOUD=azure ENV=<env> ACTION=plan|apply|destroy
+#
+# The infra runner (deployments/azure/scripts/infra.sh) splits the keys below
+# into two groups. Edge tier helm overrides (PIP, LB RG, JWT issuer) are emitted
+# by deployments/azure/scripts/aks-edge-helm-sets.sh from the same env yaml.
+#   1. Runner-only keys (consumed by the script or make storage/deploy, NOT passed to Bicep):
+#        env, subscriptionId, resourceGroup, stackName, actionOnUnmanage, endpoint,
+#        storage, keycloak, deploy
+#   2. Everything else -> passed straight through as parameters to
+#        stacks/main.bicep (location, tenantId, and one object per template).
+
+# ---- Runner-only keys -------------------------------------------------------
+env: <env-name>                 # logical name; must match the file stem (<env>.yaml)
+subscriptionId: "<sub-id>"      # target subscription (az account set --subscription)
+resourceGroup: <rg-name>        # one resource group per env = isolation boundary
+stackName: <stack-name>         # Azure Deployment Stack name (one per env)
+actionOnUnmanage: deleteResources  # detachAll | deleteResources | deleteAll
+                                   #   default applied to create/update; overridable
+                                   #   per run via UNMANAGE=. deleteAll is forced on
+                                   #   ACTION=destroy regardless of this value.
+endpoint: <fqdn>                 # public gateway DNS for make deploy / CI (Helm ENDPOINT)
+
+# ---- main.bicep parameters --------------------------------------------------
+location: <azure-region>        # e.g. eastus2
+tenantId: "<tenant-id>"         # az account show --query tenantId -o tsv
+
+networking:
+  vnetName: <vnet-name>
+  vnetAddressPrefix: <cidr>     # e.g. 10.0.0.0/16
+  aksSubnetName: <name>
+  aksSubnetPrefix: <cidr>       # large enough for nodes + Azure CNI pod IPs
+  ilbSubnetName: <name>
+  ilbSubnetPrefix: <cidr>
+  anfSubnetName: <name>
+  anfSubnetPrefix: <cidr>
+
+aks:
+  clusterName: <name>
+  kubernetesVersion: "<x.y>"    # az aks get-versions -l <region>
+  dnsPrefix: <unique-prefix>
+  nodePools:                    # >=1 pool; exactly one must be mode: System
+    - name: <pool-name>         # e.g. nodepool1 (system), workload (user)
+      mode: System              # System | User
+      vmSize: <sku>             # e.g. Standard_D4s_v5
+      count: <int>              # initial node count
+      enableAutoScaling: true   # per-pool cluster autoscaler toggle
+      minCount: <int>           # autoscaler min (ignored if autoscaling off, but required)
+      maxCount: <int>           # autoscaler max (ignored if autoscaling off, but required)
+      osDiskSizeGB: <int>       # 0 = Azure default for the SKU
+      # ---- optional per-pool keys ----
+      # osSKU: Ubuntu           # Ubuntu | AzureLinux
+      # osDiskType: Managed     # Managed | Ephemeral
+      # maxPods: <int>          # omit for the network-plugin default
+      # availabilityZones: ["1","3"]   # eastus2: zones 1+3 only (zone 2 unsupported)
+      # nodeLabels: { key: value }
+      # nodeTaints: ["key=value:NoSchedule"]
+      # maxSurge: 10%           # upgrade surge (count or %)
+  autoUpgradeProfile:           # optional; omit for none/NodeImage defaults
+    upgradeChannel: none        # none | patch | stable | rapid | node-image
+    nodeOSUpgradeChannel: NodeImage  # None | Unmanaged | SecurityPatch | NodeImage
+  autoScalerProfile: {}         # optional cluster-autoscaler tuning; {} = defaults
+    # Keys are kebab-case per AKS ARM API / cluster-autoscaler (NOT camelCase).
+    # scan-interval: 10s
+    # scale-down-delay-after-add: 10m   # integer + m only (e.g. "10m")
+    # scale-down-unneeded-time: 10m
+    # expander: random                  # random | least-waste | most-pods | priority
+
+anf:
+  anfAccountName: <name>
+  pools:                        # >=1 capacity pool (volumes created by Trident)
+    - name: <name>
+      serviceLevel: Standard    # Standard | Premium | Ultra
+      sizeTiB: <int>            # billed on provisioned size, min 1 TiB
+      qosType: Auto             # Auto | Manual
+      coolAccessEnabled: false  # requires Premium/Ultra
+      # encryptionType: Single  # Single | Double
+
+containerRegistry:
+  mode: create                    # create | shared (shared = use org-wide ACR, grant AcrPull only)
+  registryName: <name>            # required when mode=create (5-50 alphanumeric, globally unique)
+  sku: Standard                   # Basic | Standard | Premium
+  adminUserEnabled: false
+  zoneRedundancyEnabled: false    # requires Premium
+  # ---- when mode=shared ----
+  # loginServer: cragentstudiodeveus2001.azurecr.io
+  # resourceId: /subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.ContainerRegistry/registries/<name>
+
+edge:
+  gatewayPipName: <pip-name>        # e.g. pip-agentstudio-gw-preprod-eus2-001
+  sku: Standard                   # Standard | Basic
+
+dns:
+  createZone: false               # true to create Azure DNS zone + app/auth A records -> gateway PIP
+  zoneName: <zone-resource-name>  # e.g. agentstudio-preprod-example-com
+  dnsName: <fqdn-with-dot>        # e.g. agentstudio-preprod.example.com.
+  appRecordName: app
+  authRecordName: auth
+
+keyVault:
+  keyVaultName: <name>          # 3-24 chars, alphanumeric + hyphens, globally unique
+  purgeProtectionEnabled: false # true for prod
+  softDeleteRetentionInDays: 7  # 7..90; use 90 for prod
+
+# Optional. Keycloak Azure bootstrap (make aks-keycloak-provision). CI/deploy only;
+# NOT passed to main.bicep.
+keycloak:
+  uamiName: <uami-name>         # e.g. id-agentstudio-preprod-keycloak
+
+workloadIdentity:
+  uamiNamePrefix: <prefix>      # final UAMI name = <prefix><serviceName>
+  services:                     # one entry per service that reads Key Vault secrets
+    - name: <service-name>
+      namespace: <k8s-namespace>
+      resources: []             # documents intended per-secret scope (future PR)
+
+# ---- storage (Trident bootstrap — consumed by make storage, not infra) ------
+storage:
+  trident:
+    helmVersion: "100.2410.0"
+    namespace: trident
+  anf:
+    backendName: anf-backend-nfs
+    storageClassName: anf-nfs
+    exportRule: auto              # auto = derive node-pool CIDRs for export policy
+    # markAsDefault: false        # optional; set anf-nfs as cluster default SC

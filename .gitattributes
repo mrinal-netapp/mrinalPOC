@@ -1,0 +1,7 @@
+# Auto-generated lock and checksum files — excluded from Copilot code review
+package-lock.json      linguist-generated=true
+go.sum                 linguist-generated=true
+Chart.lock             linguist-generated=true
+
+# Auto-generated OpenAPI consolidations
+openapi-consolidated.yaml  linguist-generated=true

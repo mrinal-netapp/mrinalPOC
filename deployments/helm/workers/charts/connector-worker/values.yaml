@@ -1,0 +1,106 @@
+enabled: true
+fullnameOverride: "workers-connector"
+
+terminationGracePeriodSeconds: 120
+gracefulShutdownTimeout: "90"
+podSecurityContext: {}
+nodeSelector: {}
+tolerations: []
+redisStandalone: false
+deploymentName: "nemo"
+
+temporalHost: "temporal.agentstudio-platform.svc.cluster.local"
+keycloakInternalIssuer: "http://keycloak.agentstudio-identity.svc.cluster.local:8080/realms/nemo"
+lakekeeperUrl: "http://lakekeeper.agentstudio-platform.svc.cluster.local:8181"
+defaultBucketPvcName: "s3gateway-default-bucket"
+
+# Name of the secret containing S3 gateway credentials (synced into workers namespace by CI)
+s3gatewayCredentialsSecretName: "nemo-s3gateway-credentials"
+
+certs:
+  enabled: false
+  secretName: netapp-ca-certs-secret
+  mountPath: /etc/ssl/certs/custom
+  certFileName: netapp-ca-cert.pem
+
+image:
+  repository: connector-worker
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
+replicas: 1
+resources:
+  requests:
+    cpu: "500m"
+    memory: "1Gi"
+  limits:
+    cpu: "2"
+    memory: "4Gi"
+
+env:
+  - name: TEMPORAL_ADDRESS
+    value: "temporal.agentstudio-platform.svc.cluster.local:7233"
+  - name: TEMPORAL_NAMESPACE
+    value: "default"
+  - name: TASK_QUEUE
+    value: "connector-operations"
+  - name: MAX_CONCURRENT_ACTIVITIES
+    value: "3"
+  - name: CONFIG_SERVICE_URL
+    value: "http://config-service.agentstudio-services.svc.cluster.local:3000"
+  - name: S3_ENDPOINT
+    value: "http://s3gateway:7070"  # s3gateway now co-located in agentstudio-workers
+  - name: WORKFLOW_ENGINE_URL
+    value: "http://workflow-engine.agentstudio-services.svc.cluster.local:8080"
+  - name: AGENT_STUDIO_OBSERVABILITY_LOG_FILE_PATH
+    value: "/dev/stdout"
+  - name: OTEL_SERVICE_NAME
+    value: "connector-worker"
+  # Acquisition pipeline Redis (DB 3). Use FQDN so connector-worker
+  # (agentstudio-workers) can resolve Redis (agentstudio-platform) cross-namespace.
+  - name: ACQ_REDIS_URL
+    value: "redis://redis-master.{{ .Values.global.platformNamespace | default \"agentstudio-platform\" }}.svc.cluster.local:6379/3"
+  - name: ACQ_REDIS_SENTINEL_URL
+    value: ""
+  - name: ACQ_REDIS_SENTINEL_MASTER
+    value: ""
+  - name: ACQ_REDIS_DB
+    value: "3"
+  - name: ACQ_BATCH_SIZE
+    value: "64"
+  - name: ACQ_MAX_BATCHES_PER_ACTIVITY
+    value: "8"
+  - name: ACQ_STREAM_MAXLEN
+    value: "50000"
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 70
+  customMetric:
+    enabled: false
+    name: "temporal_queue_backlog_connector"
+    target:
+      averageValue: "10"
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 120
+    scaleUp:
+      stabilizationWindowSeconds: 30
+      policies:
+        - type: Pods
+          value: 2
+          periodSeconds: 60
+
+serviceAccount:
+  create: false
+  name: ""
+  azureClientId: ""
+
+workloadIdentity:
+  enabled: false

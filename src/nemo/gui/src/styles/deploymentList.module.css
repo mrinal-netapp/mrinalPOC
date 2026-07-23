@@ -1,0 +1,52 @@
+.container {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.title {
+  font-size: 24px;
+  font-weight: 600;
+}
+
+.card {
+  padding: 16px;
+}
+
+.loadingContainer {
+  display: flex;
+  justify-content: center;
+  padding: 48px;
+}
+
+.expandableContent {
+  padding: 16px;
+  background-color: var(--colorNeutralBackground2);
+  border-top: 1px solid var(--colorNeutralStroke2);
+}
+
+.detailsGrid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.label {
+  font-weight: 600;
+  margin-right: 8px;
+}
+
+.subText {
+  font-size: 12px;
+  color: var(--colorNeutralForeground2);
+  display: block;
+  margin-top: 4px;
+}
+

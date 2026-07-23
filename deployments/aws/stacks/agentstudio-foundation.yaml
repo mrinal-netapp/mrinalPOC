@@ -1,0 +1,1254 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  AgentStudio AWS foundation stack.
+  Provisions VPC, subnets, NAT, EKS, FSx ONTAP, bootstrap secrets, installer host,
+  Application images are pulled from ECR (see Mappings.Config.Images).
+  EKS node groups and FSx capacity are driven by per-env YAML (see deployments/aws/envs/).
+  Stack template: deployments/aws/stacks/agentstudio-foundation.yaml
+
+# Region-specific installer AMI IDs. Replace placeholders after copying AMIs to each region.
+# Marketplace alternative (like Falco): use SSM parameter type
+#   Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+#   Default: /aws/service/marketplace/<product-id>/<version>
+Mappings:
+  Config:
+    Images:
+      ContainerImageRepo: 721140971281.dkr.ecr.us-east-2.amazonaws.com
+      ImageTag: latest
+  RegionMap:
+    us-east-1:
+      InstallerAmi: ami-REPLACE_ME_US_EAST_1
+    us-east-2:
+      InstallerAmi: ami-REPLACE_ME_US_EAST_2
+    us-west-1:
+      InstallerAmi: ami-REPLACE_ME_US_WEST_1
+    us-west-2:
+      InstallerAmi: ami-REPLACE_ME_US_WEST_2
+    eu-west-1:
+      InstallerAmi: ami-REPLACE_ME_EU_WEST_1
+    eu-central-1:
+      InstallerAmi: ami-REPLACE_ME_EU_CENTRAL_1
+    ap-southeast-1:
+      InstallerAmi: ami-REPLACE_ME_AP_SOUTHEAST_1
+    ap-northeast-1:
+      InstallerAmi: ami-REPLACE_ME_AP_NORTHEAST_1
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: Network (optional — defaults work for most deployments)
+        Parameters:
+          - VpcCidr
+          - PublicSubnet1Cidr
+          - PublicSubnet2Cidr
+          - PrivateSubnet1Cidr
+          - PrivateSubnet2Cidr
+      - Label:
+          default: Application
+        Parameters:
+          - Endpoint
+          - ProjectName
+          - Environment
+      - Label:
+          default: EKS cluster
+        Parameters:
+          - EksKubernetesVersion
+          - EksEndpointPublicAccess
+          - EksEndpointPrivateAccess
+      - Label:
+          default: EKS primary node group
+        Parameters:
+          - EksPrimaryNodeGroupName
+          - EksNodeInstanceTypes
+          - EksNodeAmiType
+          - EksNodeCapacityType
+          - EksNodeDesiredSize
+          - EksNodeMinSize
+          - EksNodeMaxSize
+          - EksNodeWorkloadLabel
+          - EksNodeDiskSizeGiB
+          - EksNodeUpdateMaxUnavailable
+      - Label:
+          default: EKS optional second node group
+        Parameters:
+          - EksNodeGroup2Name
+          - EksNodeGroup2InstanceTypes
+          - EksNodeGroup2AmiType
+          - EksNodeGroup2CapacityType
+          - EksNodeGroup2DesiredSize
+          - EksNodeGroup2MinSize
+          - EksNodeGroup2MaxSize
+      - Label:
+          default: FSx for ONTAP
+        Parameters:
+          - FsxStorageCapacityGiB
+          - FsxThroughputCapacity
+          - FsxDeploymentType
+          - FsxSvmName
+      - Label:
+          default: Installer host
+        Parameters:
+          - EnableInstallerInstance
+          - InstallerInstanceType
+          - InstallerVolumeSizeGiB
+          - TridentHelmVersion
+          - InstallerAmiId
+
+Parameters:
+  VpcCidr:
+    Type: String
+    Default: 10.250.0.0/16
+    AllowedPattern: "^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\\/([0-9]|[1-2][0-9]|3[0-2]))$"
+    Description: VPC CIDR block. Change if this range overlaps an existing VPC in the account.
+  PublicSubnet1Cidr:
+    Type: String
+    Default: 10.250.0.0/20
+    AllowedPattern: "^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\\/([0-9]|[1-2][0-9]|3[0-2]))$"
+    Description: Public subnet CIDR in the first availability zone.
+  PublicSubnet2Cidr:
+    Type: String
+    Default: 10.250.16.0/20
+    AllowedPattern: "^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\\/([0-9]|[1-2][0-9]|3[0-2]))$"
+    Description: Public subnet CIDR in the second availability zone.
+  PrivateSubnet1Cidr:
+    Type: String
+    Default: 10.250.32.0/20
+    AllowedPattern: "^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\\/([0-9]|[1-2][0-9]|3[0-2]))$"
+    Description: Private subnet CIDR in the first availability zone (EKS nodes, FSx).
+  PrivateSubnet2Cidr:
+    Type: String
+    Default: 10.250.48.0/20
+    AllowedPattern: "^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\\/([0-9]|[1-2][0-9]|3[0-2]))$"
+    Description: Private subnet CIDR in the second availability zone (EKS nodes).
+  EnableInstallerInstance:
+    Type: String
+    Default: "true"
+    AllowedValues:
+      - "true"
+      - "false"
+    Description: >
+      Set to false to provision VPC/EKS/FSx only (no bootstrap EC2). When true, set
+      InstallerAmiId or replace RegionMap placeholders with valid AMIs per region.
+  InstallerAmiId:
+    Type: String
+    Default: ""
+    Description: >
+      Optional installer AMI override. Leave empty to use RegionMap for the stack region.
+  Endpoint:
+    Type: String
+    Default: agentstudio.test
+    Description: Application hostname (console at https://app.<endpoint>/console/).
+  ProjectName:
+    Type: String
+    Default: agentstudio
+    AllowedPattern: "^[a-z0-9-]+$"
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - dev
+      - test
+      - prod
+  EksKubernetesVersion:
+    Type: String
+    Default: "1.32"
+    Description: EKS Kubernetes control-plane version.
+  EksEndpointPublicAccess:
+    Type: String
+    Default: "true"
+    AllowedValues: ["true", "false"]
+    Description: Allow public API server endpoint access.
+  EksEndpointPrivateAccess:
+    Type: String
+    Default: "true"
+    AllowedValues: ["true", "false"]
+    Description: Allow private API server endpoint access.
+  EksNodeGroupName:
+    Type: String
+    Default: general
+    AllowedPattern: "^[a-z0-9-]+$"
+    Description: Name suffix for the primary EKS managed node group (first entry in env eks.nodeGroups).
+  EksNodeInstanceTypes:
+    Type: CommaDelimitedList
+    Default: m6i.2xlarge
+    Description: EC2 instance types for the primary node group (comma-separated for multiple).
+  EksNodeAmiType:
+    Type: String
+    Default: AL2_x86_64
+    AllowedValues:
+      - AL2_x86_64
+      - AL2_x86_64_GPU
+      - AL2_ARM_64
+      - BOTTLEROCKET_ARM_64
+      - BOTTLEROCKET_x86_64
+      - BOTTLEROCKET_ARM_64_NVIDIA
+      - BOTTLEROCKET_x86_64_NVIDIA
+      - WINDOWS_CORE_2019_x86_64
+      - WINDOWS_CORE_2022_x86_64
+      - WINDOWS_FULL_2019_x86_64
+      - WINDOWS_FULL_2022_x86_64
+    Description: AMI type for the primary node group.
+  EksNodeCapacityType:
+    Type: String
+    Default: ON_DEMAND
+    AllowedValues: [ON_DEMAND, SPOT]
+    Description: Capacity type for the primary node group.
+  EksNodeDesiredSize:
+    Type: Number
+    Default: 3
+    MinValue: 0
+    Description: Desired node count for the primary node group.
+  EksNodeMinSize:
+    Type: Number
+    Default: 2
+    MinValue: 0
+    Description: Autoscaler minimum for the primary node group.
+  EksNodeMaxSize:
+    Type: Number
+    Default: 8
+    MinValue: 0
+    Description: Autoscaler maximum for the primary node group.
+  EksNodeWorkloadLabel:
+    Type: String
+    Default: general
+    Description: Value for the workload= label on primary nodes (key is fixed as workload).
+  EksNodeTaintKey:
+    Type: String
+    Default: ""
+    Description: Optional primary node taint key (empty = no taints).
+  EksNodeTaintValue:
+    Type: String
+    Default: ""
+    Description: Optional primary node taint value (required when EksNodeTaintKey is set).
+  EksNodeTaintEffect:
+    Type: String
+    Default: NO_SCHEDULE
+    AllowedValues: [NO_SCHEDULE, NO_EXECUTE, PREFER_NO_SCHEDULE]
+    Description: Effect for the optional primary node taint.
+  EksNodeDiskSizeGiB:
+    Type: Number
+    Default: 0
+    MinValue: 0
+    Description: Remote disk size in GiB for primary nodes. 0 = EKS default for the instance type.
+  EksNodeUpdateMaxUnavailable:
+    Type: Number
+    Default: 1
+    MinValue: 1
+    Description: Max unavailable nodes during primary node group rolling updates.
+  EksAdditionalNodeGroupsJson:
+    Type: String
+    Default: ""
+    Description: Reserved (unused). Additional groups use EksNodeGroup2* parameters below.
+  EksNodeGroup2Name:
+    Type: String
+    Default: ""
+    Description: Optional second node group name (empty = disabled).
+  EksNodeGroup2InstanceTypes:
+    Type: CommaDelimitedList
+    Default: m6i.xlarge
+  EksNodeGroup2AmiType:
+    Type: String
+    Default: AL2_x86_64
+  EksNodeGroup2CapacityType:
+    Type: String
+    Default: ON_DEMAND
+  EksNodeGroup2DesiredSize:
+    Type: Number
+    Default: 0
+  EksNodeGroup2MinSize:
+    Type: Number
+    Default: 0
+  EksNodeGroup2MaxSize:
+    Type: Number
+    Default: 1
+  EksNodeGroup2WorkloadLabel:
+    Type: String
+    Default: workload
+  EksNodeGroup2TaintKey:
+    Type: String
+    Default: ""
+  EksNodeGroup2TaintValue:
+    Type: String
+    Default: ""
+  EksNodeGroup2TaintEffect:
+    Type: String
+    Default: NO_SCHEDULE
+    AllowedValues: [NO_SCHEDULE, NO_EXECUTE, PREFER_NO_SCHEDULE]
+  FsxStorageCapacityGiB:
+    Type: Number
+    Default: 1024
+    MinValue: 1024
+    Description: FSx for ONTAP provisioned storage capacity in GiB (minimum 1024).
+  FsxThroughputCapacity:
+    Type: Number
+    Default: 384
+    Description: FSx for ONTAP throughput capacity in MB/s (depends on deployment type).
+  FsxDeploymentType:
+    Type: String
+    Default: SINGLE_AZ_2
+    AllowedValues:
+      - SINGLE_AZ_1
+      - SINGLE_AZ_2
+      - MULTI_AZ_1
+      - MULTI_AZ_2
+    Description: FSx for ONTAP deployment type.
+  FsxSvmName:
+    Type: String
+    Default: fsx_svm1
+    AllowedPattern: "^[a-zA-Z][a-zA-Z0-9_-]{0,46}$"
+    Description: >
+      FSx storage virtual machine name (ONTAP_SVM for Trident).
+      Infra runner default is <stackName>-svm; override via fsx.svmName in env yaml.
+  InstallerInstanceType:
+    Type: String
+    Default: t3.large
+    Description: EC2 instance type for the bootstrap installer host.
+  InstallerVolumeSizeGiB:
+    Type: Number
+    Default: 100
+    MinValue: 30
+    Description: Root EBS volume size (GiB) for the installer host.
+  TridentHelmVersion:
+    Type: String
+    Default: "100.2410.0"
+    Description: NetApp Trident Helm chart version installed by the bootstrap host.
+  TridentNamespace:
+    Type: String
+    Default: trident
+    Description: Kubernetes namespace for Trident (EKS Pod Identity association).
+  TridentServiceAccount:
+    Type: String
+    Default: trident-controller
+    Description: Trident controller service account name for EKS Pod Identity.
+  ContainerImageRepo:
+    Type: String
+    Default: ""
+    Description: >
+      Shared ECR registry URI for app images (e.g. 721140971281.dkr.ecr.us-east-2.amazonaws.com).
+      Empty uses Mappings.Config.Images.ContainerImageRepo. Registry is not created per stack.
+  OperatorAccessPrincipalArn:
+    Type: String
+    Default: ""
+    Description: >
+      IAM principal ARN (user/role) granted EKS cluster admin for kubectl/CI. Empty skips access entry.
+  CreateRoute53HostedZone:
+    Type: String
+    Default: "false"
+    AllowedValues: ["true", "false"]
+    Description: Create a Route53 public hosted zone for application DNS.
+  Route53HostedZoneName:
+    Type: String
+    Default: ""
+    Description: FQDN for the hosted zone (e.g. agentstudio-preprod.example.com). Required when CreateRoute53HostedZone=true.
+  AllocateGatewayEips:
+    Type: String
+    Default: "false"
+    AllowedValues: ["true", "false"]
+    Description: Allocate two Elastic IPs for optional NLB static addresses (one per AZ).
+
+Conditions:
+  EnableInstaller: !Equals [!Ref EnableInstallerInstance, "true"]
+  UseInstallerAmiOverride: !Not [!Equals [!Ref InstallerAmiId, ""]]
+  UseContainerImageRepoOverride: !Not [!Equals [!Ref ContainerImageRepo, ""]]
+  HasOperatorAccess: !Not [!Equals [!Ref OperatorAccessPrincipalArn, ""]]
+  CreateRoute53Zone: !Equals [!Ref CreateRoute53HostedZone, "true"]
+  AllocateGatewayEipsEnabled: !Equals [!Ref AllocateGatewayEips, "true"]
+  CreateRoute53Records: !And
+    - !Condition CreateRoute53Zone
+    - !Condition AllocateGatewayEipsEnabled
+  EksEndpointPublicAccessEnabled: !Equals [!Ref EksEndpointPublicAccess, "true"]
+  EksEndpointPrivateAccessEnabled: !Equals [!Ref EksEndpointPrivateAccess, "true"]
+  HasPrimaryNodeTaint: !Not [!Equals [!Ref EksNodeTaintKey, ""]]
+  HasPrimaryNodeDiskSize: !Not [!Equals [!Ref EksNodeDiskSizeGiB, 0]]
+  HasNodeGroup2: !Not [!Equals [!Ref EksNodeGroup2Name, ""]]
+  HasNodeGroup2Taint: !Not [!Equals [!Ref EksNodeGroup2TaintKey, ""]]
+
+Resources:
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCidr
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-vpc"
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-igw"
+  VpcIgwAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      CidrBlock: !Ref PublicSubnet1Cidr
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-public-a"
+        - Key: kubernetes.io/role/elb
+          Value: "1"
+        - Key: !Sub "kubernetes.io/cluster/${AWS::StackName}"
+          Value: shared
+
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      CidrBlock: !Ref PublicSubnet2Cidr
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-public-b"
+        - Key: kubernetes.io/role/elb
+          Value: "1"
+        - Key: !Sub "kubernetes.io/cluster/${AWS::StackName}"
+          Value: shared
+
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      CidrBlock: !Ref PrivateSubnet1Cidr
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-private-a"
+        - Key: kubernetes.io/role/internal-elb
+          Value: "1"
+        - Key: !Sub "kubernetes.io/cluster/${AWS::StackName}"
+          Value: shared
+
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      CidrBlock: !Ref PrivateSubnet2Cidr
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-private-b"
+        - Key: kubernetes.io/role/internal-elb
+          Value: "1"
+        - Key: !Sub "kubernetes.io/cluster/${AWS::StackName}"
+          Value: shared
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+
+  PublicDefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: VpcIgwAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnet1Association:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnet1
+
+  PublicSubnet2Association:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnet2
+
+  NatEip:
+    Type: AWS::EC2::EIP
+    DependsOn: VpcIgwAttachment
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-nat-eip"
+
+  NatGateway:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NatEip.AllocationId
+      SubnetId: !Ref PublicSubnet1
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-nat"
+
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+
+  PrivateDefaultRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway
+
+  PrivateSubnet1Association:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      SubnetId: !Ref PrivateSubnet1
+
+  PrivateSubnet2Association:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      SubnetId: !Ref PrivateSubnet2
+
+  EksClusterSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for EKS control plane
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-eks-cluster-sg"
+
+  EksClusterRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: eks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonEKSClusterPolicy
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-eks-cluster-role"
+
+  EksNodeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy
+        - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly
+        - arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-eks-node-role"
+
+  EksCluster:
+    Type: AWS::EKS::Cluster
+    Properties:
+      Name: !Ref AWS::StackName
+      Version: !Ref EksKubernetesVersion
+      RoleArn: !GetAtt EksClusterRole.Arn
+      AccessConfig:
+        AuthenticationMode: API_AND_CONFIG_MAP
+      ResourcesVpcConfig:
+        EndpointPublicAccess: !If [EksEndpointPublicAccessEnabled, true, false]
+        EndpointPrivateAccess: !If [EksEndpointPrivateAccessEnabled, true, false]
+        SubnetIds:
+          - !Ref PublicSubnet1
+          - !Ref PublicSubnet2
+          - !Ref PrivateSubnet1
+          - !Ref PrivateSubnet2
+        SecurityGroupIds:
+          - !Ref EksClusterSecurityGroup
+      Tags:
+        - Key: Name
+          Value: !Ref AWS::StackName
+
+  EksPrimaryNodeGroup:
+    Type: AWS::EKS::Nodegroup
+    DependsOn: EksCluster
+    Properties:
+      ClusterName: !Ref EksCluster
+      NodegroupName: !Sub "${AWS::StackName}-${EksNodeGroupName}"
+      NodeRole: !GetAtt EksNodeRole.Arn
+      Subnets:
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+      InstanceTypes: !Ref EksNodeInstanceTypes
+      AmiType: !Ref EksNodeAmiType
+      CapacityType: !Ref EksNodeCapacityType
+      ScalingConfig:
+        DesiredSize: !Ref EksNodeDesiredSize
+        MinSize: !Ref EksNodeMinSize
+        MaxSize: !Ref EksNodeMaxSize
+      Labels:
+        workload: !Ref EksNodeWorkloadLabel
+      Taints: !If
+        - HasPrimaryNodeTaint
+        - - Key: !Ref EksNodeTaintKey
+            Value: !Ref EksNodeTaintValue
+            Effect: !Ref EksNodeTaintEffect
+        - !Ref AWS::NoValue
+      DiskSize: !If
+        - HasPrimaryNodeDiskSize
+        - !Ref EksNodeDiskSizeGiB
+        - !Ref AWS::NoValue
+      UpdateConfig:
+        MaxUnavailable: !Ref EksNodeUpdateMaxUnavailable
+
+  EksSecondaryNodeGroup:
+    Type: AWS::EKS::Nodegroup
+    Condition: HasNodeGroup2
+    DependsOn: EksPrimaryNodeGroup
+    Properties:
+      ClusterName: !Ref EksCluster
+      NodegroupName: !Sub "${AWS::StackName}-${EksNodeGroup2Name}"
+      NodeRole: !GetAtt EksNodeRole.Arn
+      Subnets:
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+      InstanceTypes: !Ref EksNodeGroup2InstanceTypes
+      AmiType: !Ref EksNodeGroup2AmiType
+      CapacityType: !Ref EksNodeGroup2CapacityType
+      ScalingConfig:
+        DesiredSize: !Ref EksNodeGroup2DesiredSize
+        MinSize: !Ref EksNodeGroup2MinSize
+        MaxSize: !Ref EksNodeGroup2MaxSize
+      Labels:
+        workload: !Ref EksNodeGroup2WorkloadLabel
+      Taints: !If
+        - HasNodeGroup2Taint
+        - - Key: !Ref EksNodeGroup2TaintKey
+            Value: !Ref EksNodeGroup2TaintValue
+            Effect: !Ref EksNodeGroup2TaintEffect
+        - !Ref AWS::NoValue
+      UpdateConfig:
+        MaxUnavailable: 1
+
+  EksOidcProvider:
+    Type: AWS::IAM::OIDCProvider
+    DependsOn: EksCluster
+    Properties:
+      Url: !GetAtt EksCluster.OpenIdConnectIssuerUrl
+      ClientIdList:
+        - sts.amazonaws.com
+      ThumbprintList:
+        - 9e99a48a9960b14926bb7f6b34e45218a0c6aba2
+
+  OperatorEksAccessEntry:
+    Type: AWS::EKS::AccessEntry
+    Condition: HasOperatorAccess
+    DependsOn: EksCluster
+    Properties:
+      ClusterName: !Ref EksCluster
+      PrincipalArn: !Ref OperatorAccessPrincipalArn
+      Type: STANDARD
+      AccessPolicies:
+        - PolicyArn: arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy
+          AccessScope:
+            Type: cluster
+
+  LoadBalancerControllerPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub "${AWS::StackName}-AWSLoadBalancerControllerPolicy"
+      Description: IAM policy for AWS Load Balancer Controller (install Helm separately).
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action:
+              - iam:CreateServiceLinkedRole
+            Resource: "*"
+            Condition:
+              StringEquals:
+                iam:AWSServiceName: elasticloadbalancing.amazonaws.com
+          - Effect: Allow
+            Action:
+              - ec2:Describe*
+              - elasticloadbalancing:Describe*
+              - elasticloadbalancing:CreateLoadBalancer
+              - elasticloadbalancing:CreateTargetGroup
+              - elasticloadbalancing:CreateListener
+              - elasticloadbalancing:DeleteListener
+              - elasticloadbalancing:CreateRule
+              - elasticloadbalancing:DeleteRule
+              - elasticloadbalancing:AddTags
+              - elasticloadbalancing:RemoveTags
+              - elasticloadbalancing:ModifyLoadBalancerAttributes
+              - elasticloadbalancing:SetSubnets
+              - elasticloadbalancing:DeleteLoadBalancer
+              - elasticloadbalancing:ModifyTargetGroup
+              - elasticloadbalancing:ModifyTargetGroupAttributes
+              - elasticloadbalancing:DeleteTargetGroup
+              - elasticloadbalancing:RegisterTargets
+              - elasticloadbalancing:DeregisterTargets
+              - ec2:CreateSecurityGroup
+              - ec2:AuthorizeSecurityGroupIngress
+              - ec2:RevokeSecurityGroupIngress
+              - ec2:DeleteSecurityGroup
+              - ec2:CreateTags
+              - acm:ListCertificates
+              - acm:DescribeCertificate
+            Resource: "*"
+
+  LoadBalancerControllerRole:
+    Type: AWS::IAM::Role
+    DependsOn:
+      - EksOidcProvider
+      - LoadBalancerControllerPolicy
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-aws-load-balancer-controller"
+      AssumeRolePolicyDocument:
+        Fn::Sub:
+          - |
+            {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Principal": { "Federated": "${OidcProviderArn}" },
+                  "Action": "sts:AssumeRoleWithWebIdentity",
+                  "Condition": {
+                    "StringEquals": {
+                      "${OidcIssuer}:sub": "system:serviceaccount:kube-system:aws-load-balancer-controller",
+                      "${OidcIssuer}:aud": "sts.amazonaws.com"
+                    }
+                  }
+                }
+              ]
+            }
+          - OidcProviderArn: !Ref EksOidcProvider
+            OidcIssuer: !Select
+              - 1
+              - !Split
+                - "://"
+                - !GetAtt EksCluster.OpenIdConnectIssuerUrl
+      ManagedPolicyArns:
+        - !Ref LoadBalancerControllerPolicy
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-lbc-role"
+
+  GatewayEip1:
+    Type: AWS::EC2::EIP
+    Condition: AllocateGatewayEipsEnabled
+    DependsOn: VpcIgwAttachment
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-gateway-eip-a"
+
+  GatewayEip2:
+    Type: AWS::EC2::EIP
+    Condition: AllocateGatewayEipsEnabled
+    DependsOn: VpcIgwAttachment
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-gateway-eip-b"
+
+  Route53HostedZone:
+    Type: AWS::Route53::HostedZone
+    Condition: CreateRoute53Zone
+    Properties:
+      Name: !Ref Route53HostedZoneName
+
+  Route53AppRecord:
+    Type: AWS::Route53::RecordSet
+    Condition: CreateRoute53Records
+    Properties:
+      HostedZoneId: !Ref Route53HostedZone
+      Name: !Sub "app.${Route53HostedZoneName}"
+      Type: A
+      TTL: 300
+      ResourceRecords:
+        - !GetAtt GatewayEip1.PublicIp
+
+  Route53AuthRecord:
+    Type: AWS::Route53::RecordSet
+    Condition: CreateRoute53Records
+    Properties:
+      HostedZoneId: !Ref Route53HostedZone
+      Name: !Sub "auth.${Route53HostedZoneName}"
+      Type: A
+      TTL: 300
+      ResourceRecords:
+        - !GetAtt GatewayEip1.PublicIp
+
+  VpcCniAddon:
+    Type: AWS::EKS::Addon
+    DependsOn:
+      - EksPrimaryNodeGroup
+    Properties:
+      AddonName: vpc-cni
+      ClusterName: !Ref EksCluster
+      ResolveConflicts: OVERWRITE
+
+  KubeProxyAddon:
+    Type: AWS::EKS::Addon
+    DependsOn:
+      - EksPrimaryNodeGroup
+    Properties:
+      AddonName: kube-proxy
+      ClusterName: !Ref EksCluster
+      ResolveConflicts: OVERWRITE
+
+  CoreDnsAddon:
+    Type: AWS::EKS::Addon
+    DependsOn:
+      - EksPrimaryNodeGroup
+    Properties:
+      AddonName: coredns
+      ClusterName: !Ref EksCluster
+      ResolveConflicts: OVERWRITE
+
+  EksPodIdentityAgentAddon:
+    Type: AWS::EKS::Addon
+    DependsOn:
+      - EksPrimaryNodeGroup
+    Properties:
+      AddonName: eks-pod-identity-agent
+      ClusterName: !Ref EksCluster
+      ResolveConflicts: OVERWRITE
+
+  InstallerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Condition: EnableInstaller
+    Properties:
+      GroupDescription: Security group for AgentStudio installer host
+      VpcId: !Ref VPC
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-installer-sg"
+
+  InstallerToEksApiIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Condition: EnableInstaller
+    Properties:
+      GroupId: !GetAtt EksCluster.ClusterSecurityGroupId
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+      SourceSecurityGroupId: !Ref InstallerSecurityGroup
+      Description: Allow installer host to reach EKS API private endpoint
+
+  InstallerRole:
+    Type: AWS::IAM::Role
+    Condition: EnableInstaller
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: AgentStudioInstallerRead
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - cloudformation:DescribeStacks
+                  - cloudformation:ListStackResources
+                  - ec2:DescribeSubnets
+                  - ec2:DescribeSecurityGroups
+                  - eks:DescribeCluster
+                  - eks:ListClusters
+                  - eks:ListNodegroups
+                  - eks:DescribeNodegroup
+                  - eks:AccessKubernetesApi
+                  - secretsmanager:GetSecretValue
+                  - secretsmanager:DescribeSecret
+                Resource: "*"
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-installer-role"
+
+  InstallerEksAccessEntry:
+    Type: AWS::EKS::AccessEntry
+    Condition: EnableInstaller
+    DependsOn:
+      - EksCluster
+      - InstallerRole
+    Properties:
+      ClusterName: !Ref EksCluster
+      PrincipalArn: !GetAtt InstallerRole.Arn
+      Type: STANDARD
+      AccessPolicies:
+        - PolicyArn: arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy
+          AccessScope:
+            Type: cluster
+
+  InstallerInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Condition: EnableInstaller
+    Properties:
+      Roles:
+        - !Ref InstallerRole
+
+  InstallerInstance:
+    Type: AWS::EC2::Instance
+    Condition: EnableInstaller
+    DependsOn:
+      - InstallerPodIdentityPolicy
+      - InstallerEksAccessEntry
+    Properties:
+      ImageId: !If
+        - UseInstallerAmiOverride
+        - !Ref InstallerAmiId
+        - !FindInMap [RegionMap, !Ref "AWS::Region", InstallerAmi]
+      InstanceType: !Ref InstallerInstanceType
+      IamInstanceProfile: !Ref InstallerInstanceProfile
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            Encrypted: true
+            DeleteOnTermination: true
+            VolumeSize: !Ref InstallerVolumeSizeGiB
+            VolumeType: gp3
+      SubnetId: !Ref PublicSubnet1
+      SecurityGroupIds:
+        - !Ref InstallerSecurityGroup
+      UserData:
+        Fn::Base64: !Sub
+          - |
+            #!/bin/bash
+            set -euxo pipefail
+            exec > >(tee -a /var/log/agentstudio-installer-bootstrap.log | logger -t agentstudio-installer-bootstrap) 2>&1
+
+            INSTALL_DIR="/home/ec2-user/agentstudio"
+            BOOTSTRAP_SCRIPT="$INSTALL_DIR/scripts/aws-installer-bootstrap.sh"
+
+            if [ ! -f "$INSTALL_DIR/Makefile" ]; then
+              echo "ERROR: deployment kit not found on AMI at $INSTALL_DIR/Makefile"
+              exit 1
+            fi
+            if [ ! -f "$BOOTSTRAP_SCRIPT" ]; then
+              echo "ERROR: bootstrap script not found at $BOOTSTRAP_SCRIPT"
+              exit 1
+            fi
+            chmod +x "$BOOTSTRAP_SCRIPT"
+
+            # Re-runnable wrapper (same env as UserData); operators: bash ~/agentstudio/bootstrap.sh
+            cat > "$INSTALL_DIR/bootstrap.sh" <<'BOOTSTRAP_ENV_EOF'
+            #!/bin/bash
+            set -euo pipefail
+            export AWS_REGION="${AWS::Region}"
+            export STACK_NAME="${AWS::StackName}"
+            export CLUSTER_NAME="${EksCluster}"
+            export FSX_FILESYSTEM_ID="${FsxFileSystemId}"
+            export ONTAP_SVM="${FsxSvmNameValue}"
+            export FSXN_CREDENTIALS_ARN="${FsxCredentialsArn}"
+            export TRIDENT_POD_ID_ROLE_ARN="${TridentPodIdRoleArn}"
+            export ENDPOINT="${Endpoint}"
+            export CONTAINER_IMAGE_REPO="${ContainerImageRepo}"
+            export IMAGE_TAG="${ImageTag}"
+            export INSTALL_DIR="/home/ec2-user/agentstudio"
+            export TRIDENT_HELM_VERSION="${TridentHelmVersion}"
+            export TRIDENT_POD_IDENTITY_STACK_MANAGED=1
+            exec "$INSTALL_DIR/scripts/aws-installer-bootstrap.sh"
+            BOOTSTRAP_ENV_EOF
+
+            chown ec2-user:ec2-user "$INSTALL_DIR/bootstrap.sh"
+            chmod 750 "$INSTALL_DIR/bootstrap.sh"
+            runuser -l ec2-user -c "$INSTALL_DIR/bootstrap.sh"
+          - FsxFileSystemId: !Ref FsxOntapFileSystem
+            FsxSvmNameValue: !Ref FsxSvmName
+            FsxCredentialsArn: !Ref FsxSvmAdminSecret
+            TridentPodIdRoleArn: !GetAtt TridentFsxPodIdentityRole.Arn
+            TridentHelmVersion: !Ref TridentHelmVersion
+            ContainerImageRepo: !If
+              - UseContainerImageRepoOverride
+              - !Ref ContainerImageRepo
+              - !FindInMap [Config, Images, ContainerImageRepo]
+            ImageTag: !FindInMap [Config, Images, ImageTag]
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-installer"
+
+  FsxSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: FSx ONTAP access from EKS private subnets
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 111
+          ToPort: 111
+          CidrIp: !Ref PrivateSubnet1Cidr
+        - IpProtocol: tcp
+          FromPort: 635
+          ToPort: 635
+          CidrIp: !Ref PrivateSubnet1Cidr
+        - IpProtocol: tcp
+          FromPort: 2049
+          ToPort: 2049
+          CidrIp: !Ref PrivateSubnet1Cidr
+        - IpProtocol: tcp
+          FromPort: 4045
+          ToPort: 4045
+          CidrIp: !Ref PrivateSubnet1Cidr
+        - IpProtocol: tcp
+          FromPort: 4046
+          ToPort: 4046
+          CidrIp: !Ref PrivateSubnet1Cidr
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: !Ref PrivateSubnet1Cidr
+        - IpProtocol: tcp
+          FromPort: 111
+          ToPort: 111
+          CidrIp: !Ref PrivateSubnet2Cidr
+        - IpProtocol: tcp
+          FromPort: 635
+          ToPort: 635
+          CidrIp: !Ref PrivateSubnet2Cidr
+        - IpProtocol: tcp
+          FromPort: 2049
+          ToPort: 2049
+          CidrIp: !Ref PrivateSubnet2Cidr
+        - IpProtocol: tcp
+          FromPort: 4045
+          ToPort: 4045
+          CidrIp: !Ref PrivateSubnet2Cidr
+        - IpProtocol: tcp
+          FromPort: 4046
+          ToPort: 4046
+          CidrIp: !Ref PrivateSubnet2Cidr
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: !Ref PrivateSubnet2Cidr
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-fsx-sg"
+
+  FsxOntapFileSystem:
+    Type: AWS::FSx::FileSystem
+    Properties:
+      FileSystemType: ONTAP
+      StorageCapacity: !Ref FsxStorageCapacityGiB
+      SubnetIds:
+        - !Ref PrivateSubnet1
+      SecurityGroupIds:
+        - !Ref FsxSecurityGroup
+      OntapConfiguration:
+        DeploymentType: !Ref FsxDeploymentType
+        ThroughputCapacity: !Ref FsxThroughputCapacity
+        PreferredSubnetId: !Ref PrivateSubnet1
+      Tags:
+        - Key: Name
+          Value: !Ref AWS::StackName
+
+  FsxSvmAdminSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub "/${ProjectName}/${AWS::StackName}/fsx/svm-admin"
+      Description: FSx ONTAP SVM admin for Trident (auto-generated password)
+      GenerateSecretString:
+        SecretStringTemplate: '{"username":"vsadmin"}'
+        GenerateStringKey: password
+        PasswordLength: 32
+        ExcludePunctuation: true
+        RequireEachIncludedType: true
+
+  FsxStorageVirtualMachine:
+    Type: AWS::FSx::StorageVirtualMachine
+    DependsOn:
+      - FsxSvmAdminSecret
+      - FsxOntapFileSystem
+    Properties:
+      FileSystemId: !Ref FsxOntapFileSystem
+      Name: !Ref FsxSvmName
+      RootVolumeSecurityStyle: UNIX
+      SvmAdminPassword: !Sub '{{resolve:secretsmanager:${FsxSvmAdminSecret}:SecretString:password}}'
+
+  TridentFsxPodIdentityRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: pods.eks.amazonaws.com
+            Action:
+              - sts:AssumeRole
+              - sts:TagSession
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonFSxReadOnlyAccess
+      Policies:
+        - PolicyName: fsxn-secret-read
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                  - secretsmanager:DescribeSecret
+                Resource: !Sub
+                  - '${SecretArn}*'
+                  - SecretArn: !Ref FsxSvmAdminSecret
+
+  TridentPodIdentityAssociation:
+    Type: AWS::EKS::PodIdentityAssociation
+    DependsOn:
+      - EksPodIdentityAgentAddon
+      - TridentFsxPodIdentityRole
+    Properties:
+      ClusterName: !Ref EksCluster
+      Namespace: !Ref TridentNamespace
+      ServiceAccount: !Ref TridentServiceAccount
+      RoleArn: !GetAtt TridentFsxPodIdentityRole.Arn
+
+  InstallerPodIdentityPolicy:
+    Type: AWS::IAM::Policy
+    Condition: EnableInstaller
+    DependsOn:
+      - InstallerRole
+      - TridentFsxPodIdentityRole
+    Properties:
+      PolicyName: AgentStudioInstallerPodIdentity
+      Roles:
+        - !Ref InstallerRole
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action:
+              - eks:CreatePodIdentityAssociation
+              - eks:DescribePodIdentityAssociation
+              - eks:ListPodIdentityAssociations
+            Resource: "*"
+          - Effect: Allow
+            Action:
+              - iam:PassRole
+              - iam:GetRole
+            Resource: !GetAtt TridentFsxPodIdentityRole.Arn
+
+  KeycloakAdminSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub "/${ProjectName}/${AWS::StackName}/keycloak/admin"
+      Description: Keycloak admin bootstrap secret
+      GenerateSecretString:
+        SecretStringTemplate: '{"username":"admin"}'
+        GenerateStringKey: password
+        PasswordLength: 24
+        ExcludePunctuation: true
+
+  PostgresAppSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub "/${ProjectName}/${AWS::StackName}/postgres/app"
+      Description: App PostgreSQL secret
+      GenerateSecretString:
+        SecretStringTemplate: '{"username":"agentstudio"}'
+        GenerateStringKey: password
+        PasswordLength: 24
+        ExcludePunctuation: true
+
+Outputs:
+  ConsoleUrlHint:
+    Description: Equivalent to ARM consoleUrlHint
+    Value: !Sub "https://app.${Endpoint}/console/"
+  EksClusterName:
+    Description: EKS cluster name
+    Value: !Ref EksCluster
+  EksClusterArn:
+    Description: EKS cluster ARN
+    Value: !GetAtt EksCluster.Arn
+  VpcId:
+    Description: VPC ID
+    Value: !Ref VPC
+  PrivateSubnets:
+    Description: Private subnet IDs
+    Value: !Join
+      - ","
+      - - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+  KeycloakAdminSecretArn:
+    Description: Keycloak admin secret ARN
+    Value: !Ref KeycloakAdminSecret
+  PostgresAppSecretArn:
+    Description: PostgreSQL app secret ARN
+    Value: !Ref PostgresAppSecret
+  FsxFileSystemId:
+    Description: FSx for ONTAP file system ID
+    Value: !Ref FsxOntapFileSystem
+  FsxSvmName:
+    Description: FSx storage virtual machine name used as ONTAP_SVM
+    Value: !Ref FsxSvmName
+  FsxSvmAdminSecretArn:
+    Description: >
+      Secrets Manager ARN for FSx SVM vsadmin credentials (password auto-generated).
+      Retrieve with: aws secretsmanager get-secret-value --secret-id <this-arn>
+    Value: !Ref FsxSvmAdminSecret
+  TridentPodIdentityRoleArn:
+    Description: IAM role ARN for trident-controller pod identity association
+    Value: !GetAtt TridentFsxPodIdentityRole.Arn
+  InstallerInstanceId:
+    Condition: EnableInstaller
+    Description: EC2 instance ID for optional installer host
+    Value: !Ref InstallerInstance
+  InstallerRoleArn:
+    Condition: EnableInstaller
+    Description: IAM role ARN attached to optional installer host
+    Value: !GetAtt InstallerRole.Arn
+  InstallerBootstrapLogPath:
+    Condition: EnableInstaller
+    Description: Log file path on installer host for bootstrap actions
+    Value: /var/log/agentstudio-installer-bootstrap.log
+  InstallerBootstrapScriptPath:
+    Condition: EnableInstaller
+    Description: Re-runnable bootstrap script on installer (bash ~/agentstudio/bootstrap.sh)
+    Value: /home/ec2-user/agentstudio/bootstrap.sh
+  ContainerImageRepoUri:
+    Description: Shared ECR registry URI for app images (not created by this stack).
+    Value: !If
+      - UseContainerImageRepoOverride
+      - !Ref ContainerImageRepo
+      - !FindInMap [Config, Images, ContainerImageRepo]
+  LoadBalancerControllerRoleArn:
+    Description: IAM role ARN for AWS Load Balancer Controller IRSA (Helm install separate).
+    Value: !GetAtt LoadBalancerControllerRole.Arn
+  GatewayEip1AllocationId:
+    Condition: AllocateGatewayEipsEnabled
+    Description: Elastic IP allocation ID for NLB annotation (AZ-a).
+    Value: !GetAtt GatewayEip1.AllocationId
+  GatewayEip2AllocationId:
+    Condition: AllocateGatewayEipsEnabled
+    Description: Elastic IP allocation ID for NLB annotation (AZ-b).
+    Value: !GetAtt GatewayEip2.AllocationId
+  Route53HostedZoneId:
+    Condition: CreateRoute53Zone
+    Description: Route53 hosted zone ID when CreateRoute53HostedZone=true.
+    Value: !Ref Route53HostedZone
+  Route53NameServers:
+    Condition: CreateRoute53Zone
+    Description: Route53 name servers for the hosted zone (delegate at registrar).
+    Value: !Join [",", !GetAtt Route53HostedZone.NameServers]

@@ -1,0 +1,79 @@
+replicaCount: 1
+fullnameOverride: "phoenix"
+
+image:
+  repository: arizephoenix/phoenix
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  # Also drives PHOENIX_PORT in the Deployment (required to override K8s tcp:// injection when Service name is "phoenix").
+  port: 6006
+
+resources:
+  requests:
+    cpu: 500m
+    memory: 1Gi
+  limits:
+    cpu: 1000m
+    memory: 2Gi
+
+# backend: sqlite — store data on the PVC at PHOENIX_WORKING_DIR (default). No shared Postgres required (Phase 0 friendly).
+# backend: postgresql — set PHOENIX_SQL_DATABASE_URL or leave empty to build from database.* below; optional init container creates DB.
+database:
+  backend: sqlite
+  create: false
+  host: shared-postgresql.database.svc.cluster.local
+  port: 5432
+  name: phoenix
+  user: postgres
+  password: agentstudio-postgres-password
+  initImage: init-tools:latest  # Overridden by parent chart at deploy time
+
+env:
+  - name: PHOENIX_SQL_DATABASE_URL
+    value: ""
+  - name: PHOENIX_WORKING_DIR
+    value: "/data"
+  - name: PHOENIX_TELEMETRY_ENABLED
+    value: "false"
+  - name: PHOENIX_DEFAULT_RETENTION_POLICY_DAYS
+    value: "30"
+
+persistence:
+  enabled: true
+  size: 10Gi
+  storageClass: ""
+  mountPath: /data
+
+# HTTPRoute is opt-in. Cloud envs expose Phoenix via the edge tier's
+# httproute-phoenix-istio.yaml; only local dev enables this subchart route
+# (see observability/values-local.yaml). Default off so cloud renders cleanly.
+httproute:
+  enabled: false
+  hostname: ""
+  gateway:
+    name: agentstudio-gateway
+    namespace: agentstudio-edge
+    sectionName: https
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# migration.guard — init container that detects Alembic revision mismatches before
+# Phoenix starts, preventing a permanent CrashLoopBackOff when the Phoenix image
+# version changes.  Enabled by default for both SQLite and PostgreSQL backends.
+#
+# What it does:
+#   - Reads the stored Alembic revision from the database.
+#   - Walks the migration chain embedded in the running Phoenix image.
+#   - If the stored revision is NOT present (e.g. after a version change or
+#     downgrade), backs up the incompatible DB and lets Phoenix recreate it fresh.
+#   - If the revision IS present (the normal case), takes no action.
+#
+# Disable only if you manage Phoenix DB schema lifecycle manually.
+migration:
+  guard:
+    enabled: true

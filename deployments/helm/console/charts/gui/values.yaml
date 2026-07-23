@@ -1,0 +1,105 @@
+# Default values for gui sub-chart
+enabled: true
+replicaCount: 1
+
+image:
+  repository: nemo/gui
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 9000
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+# API service name for proxying (now uses config-service)
+# Note: gui now uses config-service directly via VITE_CONFIG_SERVICE_BASE_PATH
+apiService:
+  name: config-service
+  port: 3000
+
+# Workflow engine service for proxying /workflow requests
+workflowService:
+  name: workflow-engine
+  port: 8080
+
+# Base path for the application (used at build time)
+# When deployed behind a gateway at /console, set this to /console
+# This must match the VITE_BASE_PATH used when building the Docker image
+# Default is / for standalone mode
+basePath: "/console"
+
+# Config service base path (used at runtime)
+# When behind apigateway, config-service is available at /config
+# This will be set as VITE_CONFIG_SERVICE_BASE_PATH environment variable
+# If not set, will default to /config when basePath is not /
+configServiceBasePath: "/config"
+
+# Workspace public hostname configuration.
+# Kubernetes sets WORKSPACE_* on the GUI pod at runtime (endpoint + gateway port).
+# Docker build --build-arg VITE_WORKSPACE_* should match the deployment endpoint for dev without Helm.
+#
+# Public format: {workspaceLabelPrefix}{workspaceId}.{endpoint}
+# (single label so a *.{endpoint} wildcard DNS record covers it).
+# At runtime Helm sets WORKSPACE_SUBDOMAIN_BASE to the deployment endpoint; build-time VITE_* should match.
+#
+# Example build command:
+#   docker build --build-arg VITE_WORKSPACE_SUBDOMAIN_BASE=agentstudio.io \
+#                --build-arg VITE_WORKSPACE_LABEL_PREFIX=ws- \
+#                --build-arg VITE_WORKSPACE_SUBDOMAIN_PROTOCOL=https \
+#                -f src/nemo/gui/Dockerfile .
+# For local development, use:
+#   VITE_WORKSPACE_SUBDOMAIN_BASE=agentstudio.local
+#   VITE_WORKSPACE_LABEL_PREFIX=ws-
+#   VITE_WORKSPACE_SUBDOMAIN_PROTOCOL=https (or http if not using SSL)
+workspaceSubdomainBase: "agentstudio.io"   # Legacy doc default; K8s injects endpoint at startup
+workspaceSubdomainProtocol: "https"      # Protocol for workspace subdomains
+workspaceLabelPrefix: "ws-"              # Hostname prefix applied to workspaceId (must match gateway)
+# When empty, https uses global.gatewayHttpsPort; http uses 8080
+workspacePublicPort: ""
+
+livenessProbe:
+  httpGet:
+    path: /
+    port: 9000
+  initialDelaySeconds: 10
+  periodSeconds: 30
+
+readinessProbe:
+  httpGet:
+    path: /
+    port: 9000
+  initialDelaySeconds: 5
+  periodSeconds: 10
+
+# Observability tool URLs (runtime-injected, not build-time)
+# The entrypoint inlines these values into index.html at container startup
+observability:
+  grafanaUrl: ""   # e.g. "https://grafana.agentstudio.io" or "http://localhost:3000"
+  jaegerUrl: ""    # e.g. "https://jaeger.agentstudio.io" or "http://localhost:16686"
+
+# These will be passed from parent chart
+namespace: ""
+serviceAccountName: ""
+podSecurityContext: {}
+securityContext: {}
+nodeSelector: {}
+affinity: {}
+tolerations: {}
+# Note: global values (imageRegistry, imagePullSecrets) are automatically inherited from parent chart's root-level global
+
+
+serviceAccount:
+  create: false
+  name: ""
+  azureClientId: ""
+
+workloadIdentity:
+  enabled: false

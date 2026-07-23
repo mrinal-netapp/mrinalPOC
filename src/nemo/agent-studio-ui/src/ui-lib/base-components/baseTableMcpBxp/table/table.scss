@@ -1,0 +1,81 @@
+/* TW: tw-:relative tw-:w-full tw-:overflow-x-auto */
+.table-container {
+  position: relative; /* tw-:relative */
+  width: 100%; /* tw-:w-full */
+  overflow-x: auto; /* tw-:overflow-x-auto */
+}
+
+/* TW: tw-:w-full tw-:caption-bottom tw-:text-sm */
+.table {
+  width: 100%; /* tw-:w-full */
+  caption-side: bottom; /* tw-:caption-bottom */
+  font-size: 0.875rem; /* tw-:text-sm */
+  line-height: 1.25rem; /* text-sm default line-height */
+  border-collapse: collapse;
+}
+
+
+/* TW: tw-:[&_tr]:border-b */
+.table-header tr {
+  border-bottom: 1px solid var(--border-main);
+}
+
+/* TW: tw-:[&_tr:last-child]:border-0 */
+.table-body tr:last-child {
+  border: 0;
+}
+
+/* TW: tw-:bg-muted/50 tw-:border-t tw-:font-medium tw-:[&>tr]:last:border-b-0 */
+.table-footer {
+  background-color: color-mix(in oklab, var(--muted) 50%, transparent); /* tw-:bg-muted/50 */
+  border-top: 1px solid var(--border-main); /* tw-:border-t */
+  font-weight: 500; /* tw-:font-medium */
+}
+.table-footer > tr:last-child {
+  border-bottom: 0; /* tw-:[&>tr]:last:border-b-0 */
+}
+
+/* TW: tw-:hover:bg-muted/50 tw-:data-[state=selected]:bg-muted tw-:border-b tw-:transition-colors */
+.table-row {
+  border-bottom: 1px solid var(--border-main); /* tw-:border-b */
+  transition: color 150ms ease, background-color 150ms ease; /* tw-:transition-colors */
+}
+.table-row:hover {
+  background-color: color-mix(in oklab, var(--muted) 50%, transparent); /* tw-:hover:bg-muted/50 */
+}
+.table-row[data-state="selected"] {
+  background-color: var(--muted); /* tw-:data-[state=selected]:bg-muted */
+}
+
+/* TW: tw-:text-foreground tw-:h-10 tw-:px-2 tw-:text-left tw-:align-middle tw-:font-medium tw-:whitespace-nowrap tw-:[&:has([role=checkbox])]:pr-0 */
+.table-head {
+  color: var(--text-primary); /* tw-:text-foreground */
+  height: 2.5rem; /* tw-:h-10 */
+  padding-left: 0.5rem; /* tw-:px-2 */
+  padding-right: 0.5rem; /* tw-:px-2 */
+  text-align: left; /* tw-:text-left */
+  vertical-align: middle; /* tw-:align-middle */
+  font-weight: 500; /* tw-:font-medium */
+  white-space: nowrap; /* tw-:whitespace-nowrap */
+}
+.table-head:has([role="checkbox"]) {
+  padding-right: 0; /* tw-:[&:has([role=checkbox])]:pr-0 */
+}
+
+/* TW: tw-:p-2 tw-:align-middle tw-:whitespace-nowrap tw-:[&:has([role=checkbox])]:pr-0 */
+.table-cell {
+  padding: 0.5rem; /* tw-:p-2 */
+  vertical-align: middle; /* tw-:align-middle */
+  white-space: nowrap; /* tw-:whitespace-nowrap */
+}
+.table-cell:has([role="checkbox"]) {
+  padding-right: 0; /* tw-:[&:has([role=checkbox])]:pr-0 */
+}
+
+/* TW: tw-:text-muted-foreground tw-:mt-4 tw-:text-sm */
+.table-caption {
+  color: var(--muted-foreground); /* tw-:text-muted-foreground */
+  margin-top: 1rem; /* tw-:mt-4 */
+  font-size: 0.875rem; /* tw-:text-sm */
+  line-height: 1.25rem;
+}

@@ -1,0 +1,86 @@
+# Default values for apigateway-service sub-chart
+enabled: true
+namespace: ""
+replicaCount: 1
+image:
+  repository: nemo/apigateway-service
+  tag: "latest"
+  pullPolicy: IfNotPresent
+service:
+  type: ClusterIP
+  port: 8080  # Internal service port for HTTP
+  httpsPort: 8443  # Internal HTTPS service port (if using separate HTTPS service)
+  metricsPort: 8000  # Dedicated Prometheus port served by the observability client lib
+resources:
+  limits:
+    cpu: 1000m
+    memory: 1Gi
+  requests:
+    cpu: 250m
+    memory: 256Mi
+# Post-Istio-migration env footprint. The reverse-proxy backends
+# (config-service, gui, lakekeeper, temporal-ui, kb-retrieval-service,
+# workflow-engine, agent-service, analytics-engine, prometheus, phoenix-ui,
+# Keycloak issuer + client secret) are gone -- the Istio gateway routes
+# directly to those backends and validates the JWT itself. Only S3 SigV4
+# + workspace dynamic backend remain in this pod.
+env:
+  - name: PORT
+    value: "8080"
+  - name: S3GATEWAY_URL
+    value: "http://s3gateway:7070"
+  - name: S3_REGION
+    value: "us-east-1"
+  # Traces flow: service → OTel collector → Phoenix.
+  # Value is injected from global.observability.otlpEndpoint at deploy time; placeholder kept for reference.
+  - name: AGENT_STUDIO_OBSERVABILITY_OTLP_TRACES_ENDPOINT
+    value: ""
+  - name: AGENT_STUDIO_OBSERVABILITY_METRICS_SERVICE_NAME
+    value: "apigateway-service"
+  - name: OTEL_SERVICE_NAME
+    value: "apigateway-service"
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 8080
+  initialDelaySeconds: 10
+  periodSeconds: 30
+readinessProbe:
+  httpGet:
+    path: /ready
+    port: 8080
+  initialDelaySeconds: 5
+  periodSeconds: 10
+
+# Observability — Prometheus RED metrics served by the observability client lib on metricsPort
+metrics:
+  path: /metrics
+  port: metrics
+  serviceMonitor:
+    enabled: true
+    interval: 30s
+tracing:
+  otlpEndpoint: ""  # Legacy; AGENT_STUDIO_OBSERVABILITY_OTLP_TRACES_ENDPOINT is used instead
+
+# These will be passed from parent chart
+serviceAccountName: ""
+podSecurityContext: {}
+securityContext: {}
+nodeSelector: {}
+affinity: {}
+tolerations: {}
+# Note: global values (imageRegistry, imagePullSecrets) are automatically inherited from parent chart's root-level global
+
+
+serviceAccount:
+  create: false
+  name: ""
+  azureClientId: ""
+
+workloadIdentity:
+  enabled: false
+
+# Global defaults for nil-safe sub-chart rendering; overridden by parent chart global.
+global:
+  observability:
+    otlpEndpoint: ""

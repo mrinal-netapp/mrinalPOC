@@ -1,0 +1,45 @@
+# AWS EKS overlay for shared PostgreSQL on FSx ONTAP (Trident StorageClass fsxn-nas).
+# Applied by `make deploy-eks` via EKS_OVERLAY on helm-database-upgrade.
+#
+# Why probe tuning below:
+#   Bitnami PostgreSQL on FSx NFS (fsxn-nas) is slower than local/block storage on
+#   first start and after unclean shutdown — WAL replay and NFS mount latency can
+#   take several minutes. The chart defaults use short probe timeouts and low
+#   failureThreshold values, so kubelet restarts the container before postgres
+#   accepts connections (CrashLoopBackOff). That blocks database → identity →
+#   platform and looks like a deploy failure even though the PVC/data are fine.
+#
+#   startupProbe  — long window (~10 min) while PG initializes or recovers
+#   readinessProbe — slower checks so NFS blips do not drop the pod from Service
+#   livenessProbe  — relaxed so recovery is not killed mid-WAL-replay
+#
+# Manual re-apply after probe changes:
+#   make helm-database-upgrade HELM_EXTRA_ARGS="-f deployments/helm/database/values-eks.yaml"
+#
+# Prerequisites: Trident backend + StorageClass fsxn-nas (see AWS runbook Step 6–7).
+
+postgresql:
+  primary:
+    persistence:
+      storageClass: "fsxn-nas"
+    startupProbe:
+      enabled: true
+      initialDelaySeconds: 10
+      periodSeconds: 15
+      timeoutSeconds: 10
+      failureThreshold: 40
+      successThreshold: 1
+    readinessProbe:
+      enabled: true
+      initialDelaySeconds: 30
+      periodSeconds: 15
+      timeoutSeconds: 10
+      failureThreshold: 12
+      successThreshold: 1
+    livenessProbe:
+      enabled: true
+      initialDelaySeconds: 60
+      periodSeconds: 20
+      timeoutSeconds: 10
+      failureThreshold: 10
+      successThreshold: 1

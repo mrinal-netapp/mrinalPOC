@@ -1,0 +1,75 @@
+# dev.yaml -- AgentStudio AWS infra config for the dev environment.
+#
+# SYNCED FROM LIVE (2026-06-27): cluster `agentstudio-eks` in us-east-2 — provisioned
+# out-of-band (no CloudFormation stack). Values below match the running VPC/EKS/FSx
+# so `make infra CLOUD=aws ENV=dev ACTION=plan` reflects drift vs live. Do NOT run
+# ACTION=apply until you intend a new stack or have an import/adoption strategy.
+#
+#   make infra CLOUD=aws ENV=dev ACTION=plan
+#
+# Live inventory: EKS 1.36, node group agentstudio-eks-ng-1 (m5.xlarge x5),
+# VPC vpc-0eed33c80f9e0621f (10.1.0.0/22), FSx fs-0bf2754065c045927.
+
+env: dev
+region: us-east-2
+stackName: agentstudio-eks
+
+application:
+  endpoint: agentstudio-aws.dev.openeng.netapp.com
+  projectName: agentstudio
+  environment: dev
+
+tags:
+  creator: agentstudio
+
+networking:
+  vpcCidr: 10.1.0.0/22
+  publicSubnet1Cidr: 10.1.0.0/26
+  publicSubnet2Cidr: 10.1.0.64/26
+  privateSubnet1Cidr: 10.1.1.0/24
+  privateSubnet2Cidr: 10.1.2.0/24
+
+eks:
+  kubernetesVersion: "1.36"
+  endpointPublicAccess: true
+  endpointPrivateAccess: true
+  nodeGroups:
+    - name: ng-1
+      instanceTypes: [m5.xlarge]
+      amiType: AL2_x86_64
+      capacityType: ON_DEMAND
+      scaling:
+        desiredSize: 5
+        minSize: 2
+        maxSize: 8
+      labels:
+        workload: general
+      diskSizeGiB: 100
+
+fsx:
+  storageCapacityGiB: 1024
+  throughputCapacity: 384
+  deploymentType: SINGLE_AZ_2
+  svmName: fsx_svm1  # live cluster; new stacks default to <stackName>-svm when omitted
+
+installer:
+  enableInstance: false
+  instanceType: t3.large
+  volumeSizeGiB: 100
+  tridentHelmVersion: "100.2410.0"
+
+storage:
+  trident:
+    helmVersion: "100.2410.0"
+    namespace: trident
+    serviceAccount: trident-controller
+  fsxn:
+    backendName: fsxn-nas-backend
+    storageClassName: fsxn-nas
+    markAsDefault: true
+    credentialsFrom: stackOutput
+
+# Shared ECR for all envs (images built/pushed by CI — not created per stack).
+containerRegistry:
+  mode: shared
+  loginServer: 721140971281.dkr.ecr.us-east-2.amazonaws.com

@@ -1,0 +1,44 @@
+@use "@/styles/mixins" as *;
+
+.playground-details {
+  &__body {
+    display: flex;
+    flex-direction: column;
+  }
+
+  &__empty {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    width: 100%;
+  }
+
+  &__fields {
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+    padding: 30px 40px 30px 30px;
+    margin: 0;
+  }
+
+  &__field {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  &__field-label {
+    color: var(--text-primary);
+  }
+
+  &__field-value {
+    color: var(--text-primary);
+    word-break: break-word;
+    white-space: pre-wrap;
+  }
+
+  &__score-description {
+    margin-top: 4px;
+  }
+}

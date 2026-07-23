@@ -1,0 +1,111 @@
+# .values-parity-allow.yaml — identity tier (Keycloak)
+#
+# Allow-list for lint-values-parity.py.
+# Intentional cross-cloud value differences for the identity tier.
+
+allow:
+  # ── Image registry ────────────────────────────────────────────────────────────
+  # base: ACR (agentstudioregistry.azurecr.io)  — AKS default
+  # EKS : quay.io (direct mirror; ECR not yet set up)
+  # GKE : same as base (ACR default works via image pull to GCR project)
+  # local: "" (empty = Docker Hub / dev registry, set in values-local.yaml)
+  - global.imageRegistry
+
+  # ── Replica count / backchannel (cross-cloud) ────────────────────────────────
+  # gke/eks set these explicitly in their overlays; aks inherits the base
+  # defaults (does not set them) — an intentional aks-vs-{gke,eks} difference.
+  - replicaCount
+  - "keycloak.backchannelDynamic"
+
+  # ── Keycloak hostname ─────────────────────────────────────────────────────────
+  # Each environment has a different public hostname.
+  # Injected via --set keycloak.hostname=... at deploy time; the overlay sets
+  # it to "" to enforce explicit override. local uses localhost/port-forward.
+  - "keycloak.hostname"
+
+  # ── Database / storage class ──────────────────────────────────────────────────
+  # AKS: anf-nfs, EKS: fsxn-nas, GKE: cluster default, local: standard
+  - "keycloak.persistence.storageClass"
+  - "postgresql.primary.persistence.storageClass"
+
+  # ── Azure Workload Identity + SecretProviderClass (AKS-only) ─────────────────
+  # WI + Key Vault SecretProviderClass are AKS-specific. GKE/EKS use
+  # chart-rendered secrets (temporary; KMS-backed secrets planned).
+  - "serviceAccount.*"
+  - "serviceAccount.azureClientId"
+  - "serviceAccount.annotations"
+  - "secretProviderClass.*"
+  - "realmBootstrap.*"
+
+  # ── realmBootstrap Entra IDs (AKS-only secrets) ──────────────────────────────
+  - "realmBootstrap.broker.*"
+
+  # ── Cache / JGroups (production clustering) ───────────────────────────────────
+  # AKS and EKS explicitly configure Infinispan JDBC persistence; local omits it.
+  - "keycloak.cache.*"
+  - "keycloak.extraEnv"
+
+  # ── Secrets (chart-rendered vs KV-backed) ────────────────────────────────────
+  # AKS: Keycloak admin + DB creds come from Key Vault via SPC.
+  # GKE/EKS/local: chart-rendered Secrets (generated passwords).
+  - "keycloak.adminSecret"
+  - "keycloak.dbSecret"
+  - "keycloak.existingSecret"
+  - "chartRenderedSecrets.*"
+
+  # ── Ingress / TLS (varies per cloud) ─────────────────────────────────────────
+  - "keycloak.ingress.*"
+  - "keycloak.tls.*"
+
+  # ── Pod disruption budget / affinity (production hardening) ──────────────────
+  - "keycloak.pdb.*"
+  - "keycloak.affinity.*"
+
+  # ── Image pull policy ─────────────────────────────────────────────────────────
+  - "global.imagePullPolicy"
+
+  # ── global.imageTag ───────────────────────────────────────────────────────────
+  # local/GKE/EKS pin imageTag="" explicitly; AKS inherits from base default.
+  - "global.imageTag"
+
+  # ── Keycloak OIDC client credentials ─────────────────────────────────────────
+  # All overlays set keycloak.oidcClients.* (per-environment client IDs and
+  # secrets). These keys are not declared in the base values.yaml because they
+  # are always environment-specific secrets. The chart templates reference them
+  # directly. Suppressing orphan + drift noise on the whole subtree.
+  - "keycloak.oidcClients.*"
+  - "keycloak.oidcClients.resourceServerUuid"
+
+  # ── Keycloak bootstrap admin credentials (chart-rendered vs KV) ──────────────
+  # AKS: uses keycloak.bootstrapAdmin.existingSecret (KV-backed).
+  # GKE/EKS/local: uses keycloak.bootstrapAdmin.password (chart-rendered).
+  # Both forms are accepted by the chart; the structural difference is intentional.
+  - "keycloak.bootstrapAdmin.existingSecret"
+  - "keycloak.bootstrapAdmin.password"
+  - "keycloak.bootstrapAdmin.username"
+
+  # ── PostgreSQL credentials (KV-backed vs chart-rendered) ─────────────────────
+  # AKS: postgres.auth.existingSecret (from Key Vault).
+  # GKE/EKS/local: postgres.auth.password (chart-rendered / static for dev).
+  - "postgres.auth.existingSecret"
+  - "postgres.auth.password"
+  - "postgres.auth.username"
+
+  # ── PostgreSQL host/port/database (prod only) ─────────────────────────────────
+  # Cloud overlays configure the external shared-postgresql host; local uses
+  # a bundled dev DB or doesn't set these (uses chart defaults).
+  - "postgres.host"
+  - "postgres.port"
+  - "postgres.database"
+
+  # ── HTTPRoute configuration ───────────────────────────────────────────────────
+  # local overlay enables the auth HTTPRoute for local dev gateway access.
+  # Some fields are local-only (removeHSTS, parentRef.sectionName); others
+  # appear on cloud but not local (enabled flag, hostnames).
+  - "httpRoute.enabled"
+  - "httpRoute.hostnames"
+  - "httpRoute.parentRef.name"
+  - "httpRoute.parentRef.namespace"
+  - "httpRoute.parentRef.sectionName"
+  - "httpRoute.removeHSTS"
+

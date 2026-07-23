@@ -1,0 +1,141 @@
+{{- if .Values.enabled }}
+# NetworkPolicy for the grafana-proxy pod.
+#
+# Ingress allowed from:
+#   - The nemo-gateway (external traffic from the browser)
+#   - Grafana pods (in the monitoring namespace) for /.auth/projects calls
+#   - Keycloak (agentstudio-identity namespace) for backchannel logout POSTs
+#
+# Egress allowed to:
+#   - Keycloak (agent-studio-identity namespace) for OIDC token exchange
+#   - config-service (.Values.configService.namespace) for project membership queries
+#   - kube-dns for DNS resolution
+#   - The Grafana upstream service (within monitoring namespace)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "grafana-proxy.fullname" . }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "grafana-proxy.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "grafana-proxy.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+
+  ingress:
+    # Gateway → proxy: all external browser traffic.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.gateway.namespace }}
+      ports:
+        - port: 8080
+          protocol: TCP
+    # Grafana → proxy: /.auth/projects calls from Infinity datasource backend.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: grafana
+      ports:
+        - port: 8080
+          protocol: TCP
+    # Keycloak → proxy: backchannel logout POSTs to /oauth2/backchannel-logout.
+    # Keycloak sends these server-side when any SSO session ends, allowing the
+    # proxy to immediately revoke the corresponding browser session.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: agentstudio-identity
+      ports:
+        - port: 8080
+          protocol: TCP
+
+  egress:
+    # DNS resolution (kube-dns).
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    # Keycloak for OIDC token exchange and JWKS fetch.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: agentstudio-identity
+      ports:
+        - port: 8080
+          protocol: TCP
+        - port: 8443
+          protocol: TCP
+    # config-service for GET /api/v1/users/:userId/projects.
+    # config-service's Kubernetes Service exposes port 3000 (not 8080).
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.configService.namespace }}
+          podSelector:
+            matchLabels:
+              component: config-service
+      ports:
+        - port: 3000
+          protocol: TCP
+    # Grafana upstream (within monitoring namespace).
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: grafana
+      ports:
+        - port: 3000
+          protocol: TCP
+        - port: 80
+          protocol: TCP
+---
+# Restrict Grafana to only accept connections from the grafana-proxy.
+# This prevents anything that can reach Grafana directly from forging
+# X-WEBAUTH-* headers and bypassing authentication.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: grafana-ingress-from-proxy-only
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "grafana-proxy.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: grafana
+  policyTypes:
+    - Ingress
+  ingress:
+    # Allow only the grafana-proxy to reach Grafana.
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "grafana-proxy.selectorLabels" . | nindent 14 }}
+      ports:
+        - port: 3000
+          protocol: TCP
+        - port: 80
+          protocol: TCP
+    # Allow Prometheus scraping from within the monitoring namespace.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - port: 3000
+          protocol: TCP
+{{- end }}

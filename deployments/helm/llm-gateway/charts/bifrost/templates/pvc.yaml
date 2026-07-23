@@ -1,0 +1,18 @@
+{{- if and .Values.enabled .Values.persistence.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "bifrost.fullname" . }}-data
+  labels:
+    {{- include "bifrost.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - {{ .Values.global.accessMode | default .Values.persistence.accessMode | default "ReadWriteOnce" }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.size }}
+  {{- $sc := .Values.persistence.storageClass | default (default "" .Values.global.storageClass) }}
+  {{- if $sc }}
+  storageClassName: {{ $sc | quote }}
+  {{- end }}
+{{- end }}

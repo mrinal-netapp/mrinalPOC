@@ -1,0 +1,52 @@
+{{- /*
+NGF catch-all HTTPRoute -- rendered only on the NGF branch
+(gateway.provider == "nginx") to preserve pre-Istio behaviour:
+every public hostname terminates on the same NGF Gateway, every request
+flows through `apigateway-service` for subdomain/path dispatch and JWT
+validation.
+
+The Istio branch replaces this single catch-all with per-hostname /
+per-path HTTPRoutes that route directly to backend Services -- see
+httproute-istio-*.yaml.
+*/ -}}
+{{- if and .Values.gateway.enabled (eq (.Values.gateway.provider | default "nginx") "nginx") -}}
+{{- $gatewayServiceName := "apigateway-service" }}
+{{- $gatewayServicePort := 8080 }}
+{{- $gatewayName := include "nemo.gatewayName" . }}
+{{- $httprouteName := printf "%s-httproute" $gatewayName }}
+{{- $namespace := include "nemo.namespace" . }}
+{{- $servicesNs := include "nemo.servicesNamespace" . }}
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ $httprouteName }}
+  namespace: {{ $namespace }}
+  labels:
+    {{- include "edge.labels" . | nindent 4 }}
+  annotations:
+    debug.gateway-api.service-name: {{ $gatewayServiceName | quote }}
+    debug.gateway-api.service-port: {{ $gatewayServicePort | quote }}
+    debug.gateway-api.parent-gateway: {{ $gatewayName | quote }}
+    debug.gateway-api.namespace: {{ $namespace | quote }}
+spec:
+  parentRefs:
+    - name: {{ $gatewayName }}
+      namespace: {{ $namespace }}
+  {{- if not .Values.httproute.matchAllHosts }}
+  hostnames:
+    {{- if .Values.httproute.hosts }}
+    {{- toYaml .Values.httproute.hosts | nindent 4 }}
+    {{- else }}
+    {{- include "nemo.defaultGatewayHostnames" . | nindent 4 }}
+    {{- end }}
+  {{- end }}
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: "/"
+      backendRefs:
+        - name: {{ $gatewayServiceName }}
+          namespace: {{ $servicesNs }}
+          port: {{ $gatewayServicePort }}
+{{- end }}

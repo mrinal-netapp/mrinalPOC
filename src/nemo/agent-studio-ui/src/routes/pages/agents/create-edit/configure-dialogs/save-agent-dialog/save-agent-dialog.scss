@@ -1,0 +1,58 @@
+.save-agent-dialog {
+  width: 100%;
+  position: relative;
+
+  // Deploy mode renders a thin blue accent stripe across the top of the card,
+  // mirroring the Figma's "save and deploy" variant.
+  &--deploy::before {
+    content: "";
+    position: absolute;
+    inset: 0 0 auto 0;
+    height: 4px;
+    background: var(--interactive-primary, var(--blue-60, #0f62fe));
+    border-top-left-radius: inherit;
+    border-top-right-radius: inherit;
+  }
+
+  &__content {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    padding: 24px 40px;
+
+    h1, h2, h3, h4, h5, h6,
+    p, dl, dd, label {
+      margin: 0;
+    }
+  }
+
+  &__field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  &__unresolved-warning {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    padding: 12px 0 2px;
+  }
+
+  &__unresolved-message {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+  }
+
+  &__unresolved-icon {
+    flex-shrink: 0;
+    margin-top: 1px;
+    color: var(--notification-warning, var(--orange-60, #f1c21b));
+  }
+
+  &__unresolved-list {
+    margin: 6px 0 0 18px;
+    padding: 0;
+  }
+}

@@ -1,0 +1,70 @@
+# ---------------------------------------------------------------------------
+# Local OrbStack overrides for the observability stack
+# Usage:
+#   helm upgrade observability deployments/helm/observability \
+#     -n monitoring \
+#     -f deployments/helm/observability/values.yaml \
+#     -f deployments/helm/observability/values-local.yaml
+# ---------------------------------------------------------------------------
+
+nemoNamespace: agentstudio
+
+phoenix:
+  database:
+    initImage: docker.repo.eng.netapp.com/user/ag93878/init-tools:latest
+  httproute:
+    enabled: true
+    hostname: "phoenix.agentstudio.local"
+    gateway:
+      name: agentstudio-gateway
+      namespace: agentstudio-edge
+      sectionName: https
+
+grafana-proxy:
+  enabled: true
+  hostname: "grafana.agentstudio.local"
+  # Gateway listens on 8443 locally, not standard 443
+  redirectURIPort: "8443"
+  image:
+    repository: nemo/grafana-proxy
+    tag: latest
+    pullPolicy: IfNotPresent
+  keycloak:
+    # Internal cluster URL for token introspection / OIDC discovery (avoids TLS hairpin)
+    issuer: http://keycloak.agentstudio-identity.svc.cluster.local:8080/realms/nemo
+    # Public URL shown to the browser for redirect_uri / login page
+    publicIssuer: https://auth.agentstudio.local:8443/realms/nemo
+    clientId: agentstudio-grafana-proxy
+    # keycloak-oidc-secrets is synced into monitoring by helm-observability-upgrade-local
+    # (via sync-shared-secrets). grafana-proxy-client-secret is patched in by post-realm-bootstrap.
+    clientSecret: ""
+    existingSecret: "keycloak-oidc-secrets"
+    clientSecretKey: "grafana-proxy-client-secret"
+    tlsSkipVerify: true
+  session:
+    # Fixed dev-only keys so sessions survive helm upgrades.
+    # NEVER use these values in production; override with existingSecret there.
+    hashKey: "dev-session-hash-key-32-bytes!!!"
+    blockKey: "dev-block-key-16"
+  grafanaUpstreamURL: http://observability-grafana.monitoring.svc.cluster.local:80
+  configServiceURL: http://config-service.agentstudio-services.svc.cluster.local:3000
+  gateway:
+    name: agentstudio-gateway
+    namespace: agentstudio-edge
+    sectionName: https
+  # Shared secret for prometheus-proxy /.internal/projects auth.
+  # Must match prometheus-proxy.internalToken.value below.
+  # NEVER use this value in production.
+  internalToken:
+    value: "dev-internal-token-secret-32bytes!!"
+
+prometheus-proxy:
+  enabled: true
+  image:
+    repository: nemo/prometheus-proxy
+    tag: latest
+    pullPolicy: IfNotPresent
+  prometheusUpstreamURL: http://prometheus-prometheus.monitoring.svc.cluster.local:9090
+  grafanaProxyURL: http://grafana-proxy.monitoring.svc.cluster.local:8080
+  internalToken:
+    value: "dev-internal-token-secret-32bytes!!"

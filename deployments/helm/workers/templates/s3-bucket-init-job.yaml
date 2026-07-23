@@ -1,0 +1,160 @@
+{{- if and .Values.defaultSetup.enabled .Values.defaultSetup.registerDefaultBucket (or .Values.s3gateway.enabled (default false .Values.defaultSetup.s3gatewayBootstrapEnabled)) .Values.s3gateway.defaultBucket.enabled .Values.s3gateway.defaultBucket.name }}
+{{- /*
+  Post-install/post-upgrade hook: register default bucket in S3gateway (CreateBucket only).
+  Runs early (weight 4) so the bucket exists before keycloak-setup (5), lakekeeper-bootstrap (10).
+*/}}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "nemo.fullname" . }}-s3-bucket-init
+  namespace: {{ include "nemo.namespace" . }}
+  labels:
+    {{- include "nemo.labels" . | nindent 4 }}
+    app.kubernetes.io/component: s3-bucket-init
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "nemo.fullname" . }}-s3-bucket-init
+  namespace: {{ include "nemo.namespace" . }}
+  labels:
+    {{- include "nemo.labels" . | nindent 4 }}
+    app.kubernetes.io/component: s3-bucket-init
+rules:
+- apiGroups: [""]
+  resources: ["secrets"]
+  resourceNames:
+    - {{ include "nemo.s3gatewayCredentialsName" . | trim }}
+  verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "nemo.fullname" . }}-s3-bucket-init
+  namespace: {{ include "nemo.namespace" . }}
+  labels:
+    {{- include "nemo.labels" . | nindent 4 }}
+    app.kubernetes.io/component: s3-bucket-init
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "nemo.fullname" . }}-s3-bucket-init
+subjects:
+- kind: ServiceAccount
+  name: {{ include "nemo.fullname" . }}-s3-bucket-init
+  namespace: {{ include "nemo.namespace" . }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "nemo.fullname" . }}-s3-bucket-init
+  namespace: {{ include "nemo.namespace" . }}
+  labels:
+    {{- include "nemo.labels" . | nindent 4 }}
+    app.kubernetes.io/component: s3-bucket-init
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "4"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: {{ .Values.defaultSetup.s3BucketInitBackoffLimit | default 5 }}
+  template:
+    metadata:
+      name: {{ include "nemo.fullname" . }}-s3-bucket-init
+      annotations:
+        # Use native sidecar containers (k8s 1.28+, Istio 1.20+). istio-proxy
+        # becomes an initContainer with restartPolicy=Always, so:
+        #   1. wait-s3gateway / copy-script initContainers can use mTLS
+        #      (the sidecar is already running when they start)
+        #   2. istio-proxy exits automatically when the `register` main
+        #      container completes, so the Job's pod reaches Succeeded.
+        sidecar.istio.io/nativeSidecar: "true"
+    spec:
+      restartPolicy: OnFailure
+      serviceAccountName: {{ include "nemo.fullname" . }}-s3-bucket-init
+      volumes:
+      - name: script-volume
+        emptyDir: {}
+      initContainers:
+      - name: wait-s3gateway
+        image: {{ .Values.global.imageRepository }}/init-tools:latest
+        imagePullPolicy: {{ if .Values.global.imagePullPolicy }}{{ .Values.global.imagePullPolicy }}{{ else }}IfNotPresent{{ end }}
+        command:
+        - sh
+        - -c
+        - |
+          echo "Waiting for s3gateway at http://s3gateway:7070/health ..."
+          until wget -q --timeout=5 --tries=1 -O /dev/null http://s3gateway:7070/health 2>/dev/null; do
+            echo "  s3gateway not ready yet, retrying in 5s..."
+            sleep 5
+          done
+          echo "s3gateway is ready."
+        resources:
+          limits:
+            cpu: 50m
+            memory: 32Mi
+      - name: copy-script
+        image: {{ .Values.global.imageRepository }}/init-tools:latest
+        imagePullPolicy: {{ if .Values.global.imagePullPolicy }}{{ .Values.global.imagePullPolicy }}{{ else }}IfNotPresent{{ end }}
+        command: ['sh', '-c']
+        args:
+        - |
+          echo '{{ .Files.Get "files/scripts/default-bucket-register.py" | b64enc }}' | base64 -d > /shared/default_bucket_register.py
+        volumeMounts:
+        - name: script-volume
+          mountPath: /shared
+      containers:
+      - name: register
+        image: {{ .Values.keycloak.setup.image.repository | default (printf "%s/job-setup" .Values.global.imageRepository) }}:{{ .Values.keycloak.setup.image.tag | default .Values.global.imageTag | default "latest" }}
+        imagePullPolicy: {{ .Values.keycloak.setup.image.pullPolicy | default "Always" }}
+        volumeMounts:
+        - name: script-volume
+          mountPath: /tmp
+        env:
+        - name: PYTHONUNBUFFERED
+          value: "1"
+        - name: S3_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "nemo.s3gatewayCredentialsName" . }}
+              key: access-key
+        - name: S3_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "nemo.s3gatewayCredentialsName" . }}
+              key: secret-key
+        - name: DEFAULT_BUCKET_NAME
+          value: {{ .Values.s3gateway.defaultBucket.name | quote }}
+        - name: S3GATEWAY_URL
+          value: {{ .Values.defaultSetup.s3GatewayUrl | default "http://s3gateway:7070" | quote }}
+        - name: S3GATEWAY_WAIT_SEC
+          value: {{ .Values.defaultSetup.s3GatewayWaitSec | default 600 | quote }}
+        - name: S3_REGION
+          value: {{ .Values.s3gateway.region | default "us-east-1" | quote }}
+        # Sidecar lifecycle: `sidecar.istio.io/nativeSidecar: "true"` on
+        # the pod template makes the kubelet handle the istio-proxy
+        # lifecycle (auto-exit when this main container completes), so
+        # the Job reaches Succeeded without a sidecar-lifecycle hang.
+        # Earlier versions wrapped this in `sh -c` with a `trap '…
+        # /quitquitquit' EXIT`, but that interferes with native sidecars
+        # (kubelet restarts the sidecar when it exits while main is
+        # still alive, restartPolicy=Always).
+        command:
+        - python3
+        - /tmp/default_bucket_register.py
+        resources:
+          limits:
+            cpu: 100m
+            memory: 128Mi
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- range . }}
+        {{- if kindIs "string" . }}
+        - name: {{ . | quote }}
+        {{- else }}
+        - {{ toYaml . | nindent 10 | trim }}
+        {{- end }}
+        {{- end }}
+      {{- end }}
+{{- end }}

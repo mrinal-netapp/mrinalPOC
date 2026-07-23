@@ -1,0 +1,94 @@
+{{- /*
+Istio Gateway. Rendered when gateway.provider == "istio".
+
+Uses the Gateway API automated deployment model: istiod's controller
+auto-provisions a Deployment + Service + HPA + PDB named
+`<gatewayName>-istio` (default `agentstudio-gateway-istio`, overridden
+to `istio-gateway` via the `gateway.istio.io/name-override` annotation
+below) into this namespace
+when this Gateway resource is reconciled. The Service inherits the
+infrastructure.annotations below — that's how the static cloud LB
+binds across the cutover (Azure PIP / GCP forwarding rule / AWS NLB).
+
+Two listeners (HTTP 80, HTTPS 443) per [§5.4] of the design doc. Per-cloud
+LB annotations live in values-<cloud>.yaml under
+`gateway.istio.infrastructure.annotations`.
+*/ -}}
+{{- if and .Values.gateway.enabled (eq (.Values.gateway.provider | default "nginx") "istio") -}}
+{{- $gatewayName := include "nemo.gatewayName" . }}
+{{- $namespace := include "nemo.namespace" . }}
+{{- $gatewayClassName := .Values.gateway.istio.className | default "istio" }}
+{{- $tlsSecret := .Values.gateway.istio.listeners.https.tlsSecretName | default "nemo-gateway-tls" }}
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: {{ $gatewayName }}
+  namespace: {{ $namespace }}
+  labels:
+    {{- include "edge.labels" . | nindent 4 }}
+  annotations:
+    debug.gateway-api.name: {{ $gatewayName | quote }}
+    debug.gateway-api.namespace: {{ $namespace | quote }}
+    debug.gateway-api.class-name: {{ $gatewayClassName | quote }}
+    {{- /*
+    Optional override for the auto-provisioned Deployment / Service / Pod
+    name. When set, istiod's Gateway API controller names the runtime
+    resources after this value instead of the default `<Gateway.metadata.name>-istio`.
+    The Gateway resource itself stays at $gatewayName (default `agentstudio-gateway`)
+    so HTTPRoute parentRefs and the identity chart's parentRef are unaffected.
+    Forward path: when Istio promotes name-override into a typed field on
+    Gateway.spec.infrastructure (in a future Gateway API minor), drop the
+    annotation and use the typed field.
+    */ -}}
+    {{- with .Values.gateway.istio.deploymentNameOverride }}
+    gateway.istio.io/name-override: {{ . | quote }}
+    {{- end }}
+spec:
+  gatewayClassName: {{ $gatewayClassName }}
+  {{- /* Pin to a pre-reserved LB address (GKE static IP / AWS EIP /
+  Azure PIP). Empty list => istiod allocates ephemeral. */ -}}
+  {{- with .Values.gateway.addresses }}
+  addresses:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- /*
+  Only emit `spec.infrastructure` when at least one of annotations / labels
+  is populated. Gateway API CRD validation rejects `infrastructure: null`,
+  which is what an unconditional key with empty `{}` children renders to.
+  */ -}}
+  {{- $hasAnnotations := and .Values.gateway.istio.infrastructure.annotations (gt (len .Values.gateway.istio.infrastructure.annotations) 0) }}
+  {{- $hasLabels      := and .Values.gateway.istio.infrastructure.labels      (gt (len .Values.gateway.istio.infrastructure.labels)      0) }}
+  {{- if or $hasAnnotations $hasLabels }}
+  infrastructure:
+    {{- if $hasAnnotations }}
+    annotations:
+      {{- toYaml .Values.gateway.istio.infrastructure.annotations | nindent 6 }}
+    {{- end }}
+    {{- if $hasLabels }}
+    labels:
+      {{- toYaml .Values.gateway.istio.infrastructure.labels | nindent 6 }}
+    {{- end }}
+  {{- end }}
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: {{ .Values.gateway.istio.listeners.http.port | default 80 }}
+      allowedRoutes:
+        namespaces:
+          # `from: All` lets the existing Keycloak `auth.*` HTTPRoute in
+          # agentstudio-identity attach to this Gateway via cross-ns
+          # parentRef. Backend Service refs are still gated by per-namespace
+          # ReferenceGrants; no security gap.
+          from: All
+    - name: https
+      protocol: HTTPS
+      port: {{ .Values.gateway.istio.listeners.https.port | default 443 }}
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - kind: Secret
+            name: {{ $tlsSecret }}
+      allowedRoutes:
+        namespaces:
+          from: All
+{{- end }}

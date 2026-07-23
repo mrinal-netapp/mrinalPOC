@@ -1,0 +1,60 @@
+# Job Recommendation System - Sequence Diagram
+
+```mermaid
+%%{init: {'theme': 'dark'}}%%
+sequenceDiagram
+    participant U as User (App/Web)
+    participant GW as API Gateway
+    participant RS as Recommendation Service
+    participant CC as Candidate Cache (Redis)
+    participant PF as Profile Service
+    participant JS as Job Service
+    participant RK as Ranking Service
+    participant ML as ML Model (Feature Store)
+    participant KF as Kafka
+    participant OL as Offline Pipeline (Spark)
+    participant ES as Elasticsearch
+    participant DB as PostgreSQL / Cassandra
+
+    Note over U,DB: === Real-Time Recommendation Flow ===
+
+    U->>GW: GET /v1/recommendations?user_id=123&page=1&size=20
+    GW->>RS: Forward (auth validated, rate-limited)
+
+    RS->>CC: Check cached candidates for user 123
+    alt Cache HIT
+        CC-->>RS: Return top-K candidate job_ids
+    else Cache MISS
+        RS->>PF: Fetch user profile (skills, location, experience)
+        PF-->>RS: UserProfile
+        RS->>ES: Recall query (skills, title, location, preferences)
+        ES-->>RS: Candidate job_ids (top 500)
+        RS->>CC: Store candidates (TTL 15 min)
+    end
+
+    RS->>JS: Batch fetch job details for candidate_ids
+    JS-->>RS: List<JobDetail>
+
+    RS->>RK: Rank(user_profile, candidate_jobs)
+    RK->>ML: Get user embedding + job embeddings + real-time features
+    ML-->>RK: Feature vectors
+    RK-->>RS: Scored & ranked job_ids
+
+    RS->>RS: Apply business rules (dedup, freshness, diversity)
+    RS-->>GW: Paginated recommendations (job details + scores)
+    GW-->>U: 200 OK - JSON response
+
+    Note over U,DB: === Feedback Loop ===
+
+    U->>GW: POST /v1/events {type: "click", job_id: 456}
+    GW->>KF: Publish interaction event
+    KF->>OL: Consume for model retraining
+    KF->>RS: Consume for real-time feature update
+
+    Note over U,DB: === Offline Pipeline (runs every few hours) ===
+
+    OL->>DB: Read user interactions, job postings
+    OL->>OL: Train/update ML models (collaborative filtering, deep ranking)
+    OL->>ML: Push updated embeddings to Feature Store
+    OL->>ES: Rebuild/refresh job index
+```

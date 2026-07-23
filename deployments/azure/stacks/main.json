@@ -1,0 +1,1404 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "languageVersion": "2.0",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "_generator": {
+      "name": "bicep",
+      "version": "0.44.1.10279",
+      "templateHash": "12938757893679268785"
+    }
+  },
+  "parameters": {
+    "location": {
+      "type": "string",
+      "defaultValue": "[resourceGroup().location]",
+      "metadata": {
+        "description": "Azure region for all resources. Defaults to the resource group location."
+      }
+    },
+    "tenantId": {
+      "type": "string",
+      "metadata": {
+        "description": "Entra ID tenant ID (key-vault + workload-identity). az account show --query tenantId -o tsv"
+      }
+    },
+    "networking": {
+      "type": "object",
+      "metadata": {
+        "description": "Networking inputs: vnetName, vnetAddressPrefix, aksSubnetName/Prefix, ilbSubnetName/Prefix, anfSubnetName/Prefix."
+      }
+    },
+    "aks": {
+      "type": "object",
+      "metadata": {
+        "description": "AKS inputs: clusterName, kubernetesVersion, dnsPrefix, nodePools[], and optional autoUpgradeProfile + autoScalerProfile objects."
+      }
+    },
+    "anf": {
+      "type": "object",
+      "metadata": {
+        "description": "Azure NetApp Files inputs: anfAccountName and pools[]."
+      }
+    },
+    "containerRegistry": {
+      "type": "object",
+      "metadata": {
+        "description": "Container registry: mode create|shared. shared uses resourceId + loginServer; create provisions a new ACR."
+      }
+    },
+    "keyVault": {
+      "type": "object",
+      "metadata": {
+        "description": "Key Vault inputs: keyVaultName, purgeProtectionEnabled, softDeleteRetentionInDays."
+      }
+    },
+    "workloadIdentity": {
+      "type": "object",
+      "metadata": {
+        "description": "Workload Identity inputs: uamiNamePrefix, services[]."
+      }
+    },
+    "edge": {
+      "type": "object",
+      "defaultValue": {},
+      "metadata": {
+        "description": "Optional gateway static public IP: gatewayPipName, sku (Standard|Basic)."
+      }
+    },
+    "dns": {
+      "type": "object",
+      "defaultValue": {},
+      "metadata": {
+        "description": "Optional DNS zone: createZone, zoneName, dnsName, appRecordName, authRecordName."
+      }
+    }
+  },
+  "variables": {
+    "registryMode": "[coalesce(tryGet(parameters('containerRegistry'), 'mode'), 'create')]",
+    "useSharedAcr": "[equals(variables('registryMode'), 'shared')]",
+    "createAcr": "[equals(variables('registryMode'), 'create')]",
+    "acrResourceId": "[coalesce(tryGet(parameters('containerRegistry'), 'resourceId'), '')]",
+    "acrIdParts": "[split(variables('acrResourceId'), '/')]",
+    "sharedAcrSubscriptionId": "[if(greater(length(variables('acrIdParts')), 2), variables('acrIdParts')[2], subscription().subscriptionId)]",
+    "sharedAcrResourceGroupName": "[if(greater(length(variables('acrIdParts')), 4), variables('acrIdParts')[4], resourceGroup().name)]",
+    "gatewayPipName": "[coalesce(tryGet(parameters('edge'), 'gatewayPipName'), '')]",
+    "createGatewayPip": "[not(empty(variables('gatewayPipName')))]",
+    "createDnsZone": "[coalesce(tryGet(parameters('dns'), 'createZone'), false())]"
+  },
+  "resources": {
+    "anfAccount": {
+      "existing": true,
+      "type": "Microsoft.NetApp/netAppAccounts",
+      "apiVersion": "2023-11-01",
+      "name": "[parameters('anf').anfAccountName]",
+      "dependsOn": [
+        "anfMod"
+      ]
+    },
+    "anfKubeletContributorRole": {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[resourceId('Microsoft.NetApp/netAppAccounts', parameters('anf').anfAccountName)]",
+      "name": "[guid(resourceId('Microsoft.NetApp/netAppAccounts', parameters('anf').anfAccountName), parameters('aks').clusterName, 'kubelet-contributor')]",
+      "properties": {
+        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'b24988ac-6180-42a0-ab88-20f7382dd24c')]",
+        "principalId": "[reference('aksMod').outputs.kubeletIdentityObjectId.value]",
+        "principalType": "ServicePrincipal"
+      },
+      "dependsOn": [
+        "aksMod",
+        "anfMod"
+      ]
+    },
+    "networkingMod": {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "networking",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "vnetName": {
+            "value": "[parameters('networking').vnetName]"
+          },
+          "location": {
+            "value": "[parameters('location')]"
+          },
+          "vnetAddressPrefix": {
+            "value": "[parameters('networking').vnetAddressPrefix]"
+          },
+          "aksSubnetName": {
+            "value": "[parameters('networking').aksSubnetName]"
+          },
+          "aksSubnetPrefix": {
+            "value": "[parameters('networking').aksSubnetPrefix]"
+          },
+          "ilbSubnetName": {
+            "value": "[parameters('networking').ilbSubnetName]"
+          },
+          "ilbSubnetPrefix": {
+            "value": "[parameters('networking').ilbSubnetPrefix]"
+          },
+          "anfSubnetName": {
+            "value": "[parameters('networking').anfSubnetName]"
+          },
+          "anfSubnetPrefix": {
+            "value": "[parameters('networking').anfSubnetPrefix]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "description": "Virtual network and subnets for AgentStudio. Creates one VNet with three subnets: AKS nodes (Azure CNI), internal load balancer, and Azure NetApp Files (delegated to Microsoft.Netapp/volumes). Deploy this template before AKS and ANF."
+          },
+          "parameters": {
+            "vnetName": {
+              "type": "string",
+              "metadata": {
+                "description": "Name of the virtual network."
+              }
+            },
+            "location": {
+              "type": "string",
+              "defaultValue": "[resourceGroup().location]",
+              "metadata": {
+                "description": "Azure region; defaults to the resource group location."
+              }
+            },
+            "vnetAddressPrefix": {
+              "type": "string",
+              "metadata": {
+                "description": "Address space for the VNet (e.g. 10.0.0.0/16)."
+              }
+            },
+            "aksSubnetName": {
+              "type": "string",
+              "metadata": {
+                "description": "Name for the AKS node subnet."
+              }
+            },
+            "aksSubnetPrefix": {
+              "type": "string",
+              "metadata": {
+                "description": "CIDR for the AKS node subnet (e.g. 10.0.0.0/22). Must be large enough for nodes and Azure CNI pod IPs."
+              }
+            },
+            "ilbSubnetName": {
+              "type": "string",
+              "metadata": {
+                "description": "Name for the internal load balancer subnet."
+              }
+            },
+            "ilbSubnetPrefix": {
+              "type": "string",
+              "metadata": {
+                "description": "CIDR for the internal load balancer subnet (e.g. 10.0.4.0/24). Must not overlap other subnets."
+              }
+            },
+            "anfSubnetName": {
+              "type": "string",
+              "metadata": {
+                "description": "Name for the Azure NetApp Files delegated subnet."
+              }
+            },
+            "anfSubnetPrefix": {
+              "type": "string",
+              "metadata": {
+                "description": "CIDR for the ANF delegated subnet (e.g. 10.0.8.0/24). Must not overlap other subnets."
+              }
+            }
+          },
+          "resources": [
+            {
+              "type": "Microsoft.Network/virtualNetworks",
+              "apiVersion": "2023-11-01",
+              "name": "[parameters('vnetName')]",
+              "location": "[parameters('location')]",
+              "properties": {
+                "addressSpace": {
+                  "addressPrefixes": [
+                    "[parameters('vnetAddressPrefix')]"
+                  ]
+                },
+                "subnets": [
+                  {
+                    "name": "[parameters('aksSubnetName')]",
+                    "properties": {
+                      "addressPrefix": "[parameters('aksSubnetPrefix')]",
+                      "privateEndpointNetworkPolicies": "Disabled",
+                      "privateLinkServiceNetworkPolicies": "Enabled"
+                    }
+                  },
+                  {
+                    "name": "[parameters('ilbSubnetName')]",
+                    "properties": {
+                      "addressPrefix": "[parameters('ilbSubnetPrefix')]",
+                      "privateEndpointNetworkPolicies": "Disabled",
+                      "privateLinkServiceNetworkPolicies": "Enabled"
+                    }
+                  },
+                  {
+                    "name": "[parameters('anfSubnetName')]",
+                    "properties": {
+                      "addressPrefix": "[parameters('anfSubnetPrefix')]",
+                      "delegations": [
+                        {
+                          "name": "netAppDelegation",
+                          "properties": {
+                            "serviceName": "Microsoft.Netapp/volumes"
+                          }
+                        }
+                      ],
+                      "privateEndpointNetworkPolicies": "Disabled",
+                      "privateLinkServiceNetworkPolicies": "Enabled"
+                    }
+                  }
+                ]
+              }
+            }
+          ],
+          "outputs": {
+            "vnetId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.Network/virtualNetworks', parameters('vnetName'))]"
+            },
+            "vnetName": {
+              "type": "string",
+              "value": "[parameters('vnetName')]"
+            },
+            "aksSubnetId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.Network/virtualNetworks/subnets', parameters('vnetName'), parameters('aksSubnetName'))]"
+            },
+            "ilbSubnetId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.Network/virtualNetworks/subnets', parameters('vnetName'), parameters('ilbSubnetName'))]"
+            },
+            "anfSubnetId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.Network/virtualNetworks/subnets', parameters('vnetName'), parameters('anfSubnetName'))]"
+            }
+          }
+        }
+      }
+    },
+    "aksMod": {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "aks",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "clusterName": {
+            "value": "[parameters('aks').clusterName]"
+          },
+          "location": {
+            "value": "[parameters('location')]"
+          },
+          "kubernetesVersion": {
+            "value": "[parameters('aks').kubernetesVersion]"
+          },
+          "dnsPrefix": {
+            "value": "[parameters('aks').dnsPrefix]"
+          },
+          "aksSubnetResourceId": {
+            "value": "[reference('networkingMod').outputs.aksSubnetId.value]"
+          },
+          "nodePools": {
+            "value": "[parameters('aks').nodePools]"
+          },
+          "autoUpgradeProfile": {
+            "value": "[coalesce(tryGet(parameters('aks'), 'autoUpgradeProfile'), createObject('upgradeChannel', 'none', 'nodeOSUpgradeChannel', 'NodeImage'))]"
+          },
+          "autoScalerProfile": {
+            "value": "[coalesce(tryGet(parameters('aks'), 'autoScalerProfile'), createObject())]"
+          },
+          "serviceCidr": {
+            "value": "[coalesce(tryGet(parameters('aks'), 'serviceCidr'), '10.0.16.0/20')]"
+          },
+          "dnsServiceIP": {
+            "value": "[coalesce(tryGet(parameters('aks'), 'dnsServiceIP'), '10.0.16.10')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "description": "AKS cluster for AgentStudio. Provisions a Free-tier Base SKU cluster with Azure CNI, a Standard load balancer, OIDC issuer and workload identity enabled. Node pools are fully data-driven from the nodePools array (one System pool minimum; add User pools for workload isolation). Per-pool autoscaling, cluster auto-upgrade channels (autoUpgradeProfile), and cluster-autoscaler tuning (autoScalerProfile) are all parameterized. A Network Contributor role assignment is created on the AKS subnet so the cluster can manage network resources. Deploy networking.json first and pass its aksSubnetId output as aksSubnetResourceId."
+          },
+          "parameters": {
+            "clusterName": {
+              "type": "string",
+              "metadata": {
+                "description": "Name of the AKS managed cluster."
+              }
+            },
+            "location": {
+              "type": "string",
+              "defaultValue": "[resourceGroup().location]",
+              "metadata": {
+                "description": "Azure region; defaults to the resource group location."
+              }
+            },
+            "kubernetesVersion": {
+              "type": "string",
+              "metadata": {
+                "description": "Kubernetes version. Check supported versions: az aks get-versions -l <region> --query 'orchestrators[].orchestratorVersion' -o tsv"
+              }
+            },
+            "dnsPrefix": {
+              "type": "string",
+              "metadata": {
+                "description": "DNS prefix for the cluster FQDN. Must be unique within the region."
+              }
+            },
+            "aksSubnetResourceId": {
+              "type": "string",
+              "metadata": {
+                "description": "Full resource ID of the AKS node subnet. Get from networking.json output: aksSubnetId. Example: /subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.Network/virtualNetworks/<vnet>/subnets/<subnet>"
+              }
+            },
+            "nodePools": {
+              "type": "array",
+              "minLength": 1,
+              "metadata": {
+                "description": "One object per agent (node) pool. At least one pool with mode=System is required. Required keys per pool: name, mode (System|User), vmSize, count, enableAutoScaling (bool), minCount, maxCount, osDiskSizeGB (0=SKU default). Optional keys: osSKU (default Ubuntu), osDiskType (default Managed), maxPods (default: Azure default for the network plugin), availabilityZones (array, e.g. ['1','2','3']), nodeLabels (object), nodeTaints (array, e.g. ['workload=gpu:NoSchedule']), maxSurge (default 10%). minCount/maxCount are ignored when enableAutoScaling=false but must still be present."
+              }
+            },
+            "autoUpgradeProfile": {
+              "type": "object",
+              "defaultValue": {
+                "upgradeChannel": "none",
+                "nodeOSUpgradeChannel": "NodeImage"
+              },
+              "metadata": {
+                "description": "Cluster auto-upgrade channels. upgradeChannel: none|patch|stable|rapid|node-image (Kubernetes version auto-upgrade). nodeOSUpgradeChannel: None|Unmanaged|SecurityPatch|NodeImage (node OS image auto-upgrade)."
+              }
+            },
+            "autoScalerProfile": {
+              "type": "object",
+              "defaultValue": {},
+              "metadata": {
+                "description": "Cluster-autoscaler tuning (applies when any pool has enableAutoScaling=true). Pass-through object of kebab-case keys per AKS ARM API, e.g. scan-interval, scale-down-delay-after-add, scale-down-unneeded-time, expander, max-graceful-termination-sec, balance-similar-node-groups. Empty {} = Azure defaults."
+              }
+            },
+            "serviceCidr": {
+              "type": "string",
+              "defaultValue": "10.0.16.0/20",
+              "metadata": {
+                "description": "Kubernetes service CIDR. Must not overlap any VNet subnet (default clears AgentStudio layout: aks 10.0.0.0/22, ilb 10.0.4.0/24, anf 10.0.8.0/24)."
+              }
+            },
+            "dnsServiceIP": {
+              "type": "string",
+              "defaultValue": "10.0.16.10",
+              "metadata": {
+                "description": "Cluster DNS service IP; must be within serviceCidr."
+              }
+            }
+          },
+          "variables": {
+            "networkContributorRoleId": "4d97b98b-1d4f-4787-a291-c67834d212e7",
+            "networkContributorRoleDefinitionId": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Authorization/roleDefinitions/', variables('networkContributorRoleId'))]"
+          },
+          "resources": [
+            {
+              "type": "Microsoft.ContainerService/managedClusters",
+              "apiVersion": "2024-02-01",
+              "name": "[parameters('clusterName')]",
+              "location": "[parameters('location')]",
+              "identity": {
+                "type": "SystemAssigned"
+              },
+              "sku": {
+                "name": "Base",
+                "tier": "Free"
+              },
+              "properties": {
+                "dnsPrefix": "[parameters('dnsPrefix')]",
+                "kubernetesVersion": "[parameters('kubernetesVersion')]",
+                "supportPlan": "KubernetesOfficial",
+                "copy": [
+                  {
+                    "name": "agentPoolProfiles",
+                    "count": "[length(parameters('nodePools'))]",
+                    "input": {
+                      "name": "[parameters('nodePools')[copyIndex('agentPoolProfiles')].name]",
+                      "mode": "[parameters('nodePools')[copyIndex('agentPoolProfiles')].mode]",
+                      "type": "VirtualMachineScaleSets",
+                      "osType": "Linux",
+                      "osSKU": "[if(contains(parameters('nodePools')[copyIndex('agentPoolProfiles')], 'osSKU'), parameters('nodePools')[copyIndex('agentPoolProfiles')].osSKU, 'Ubuntu')]",
+                      "vmSize": "[parameters('nodePools')[copyIndex('agentPoolProfiles')].vmSize]",
+                      "count": "[parameters('nodePools')[copyIndex('agentPoolProfiles')].count]",
+                      "enableAutoScaling": "[parameters('nodePools')[copyIndex('agentPoolProfiles')].enableAutoScaling]",
+                      "minCount": "[if(parameters('nodePools')[copyIndex('agentPoolProfiles')].enableAutoScaling, parameters('nodePools')[copyIndex('agentPoolProfiles')].minCount, json('null'))]",
+                      "maxCount": "[if(parameters('nodePools')[copyIndex('agentPoolProfiles')].enableAutoScaling, parameters('nodePools')[copyIndex('agentPoolProfiles')].maxCount, json('null'))]",
+                      "osDiskSizeGB": "[parameters('nodePools')[copyIndex('agentPoolProfiles')].osDiskSizeGB]",
+                      "osDiskType": "[if(contains(parameters('nodePools')[copyIndex('agentPoolProfiles')], 'osDiskType'), parameters('nodePools')[copyIndex('agentPoolProfiles')].osDiskType, 'Managed')]",
+                      "maxPods": "[if(contains(parameters('nodePools')[copyIndex('agentPoolProfiles')], 'maxPods'), parameters('nodePools')[copyIndex('agentPoolProfiles')].maxPods, json('null'))]",
+                      "availabilityZones": "[if(contains(parameters('nodePools')[copyIndex('agentPoolProfiles')], 'availabilityZones'), parameters('nodePools')[copyIndex('agentPoolProfiles')].availabilityZones, json('null'))]",
+                      "nodeLabels": "[if(contains(parameters('nodePools')[copyIndex('agentPoolProfiles')], 'nodeLabels'), parameters('nodePools')[copyIndex('agentPoolProfiles')].nodeLabels, json('{}'))]",
+                      "nodeTaints": "[if(contains(parameters('nodePools')[copyIndex('agentPoolProfiles')], 'nodeTaints'), parameters('nodePools')[copyIndex('agentPoolProfiles')].nodeTaints, json('[]'))]",
+                      "vnetSubnetID": "[parameters('aksSubnetResourceId')]",
+                      "upgradeSettings": {
+                        "maxSurge": "[if(contains(parameters('nodePools')[copyIndex('agentPoolProfiles')], 'maxSurge'), parameters('nodePools')[copyIndex('agentPoolProfiles')].maxSurge, '10%')]"
+                      }
+                    }
+                  }
+                ],
+                "networkProfile": {
+                  "networkPlugin": "azure",
+                  "loadBalancerSku": "Standard",
+                  "outboundType": "loadBalancer",
+                  "serviceCidr": "[parameters('serviceCidr')]",
+                  "dnsServiceIP": "[parameters('dnsServiceIP')]"
+                },
+                "oidcIssuerProfile": {
+                  "enabled": true
+                },
+                "securityProfile": {
+                  "workloadIdentity": {
+                    "enabled": true
+                  }
+                },
+                "autoUpgradeProfile": {
+                  "upgradeChannel": "[parameters('autoUpgradeProfile').upgradeChannel]",
+                  "nodeOSUpgradeChannel": "[parameters('autoUpgradeProfile').nodeOSUpgradeChannel]"
+                },
+                "autoScalerProfile": "[if(empty(parameters('autoScalerProfile')), json('null'), parameters('autoScalerProfile'))]",
+                "addonProfiles": {}
+              }
+            },
+            {
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "name": "[guid(parameters('aksSubnetResourceId'), parameters('clusterName'), variables('networkContributorRoleId'))]",
+              "scope": "[parameters('aksSubnetResourceId')]",
+              "dependsOn": [
+                "[resourceId('Microsoft.ContainerService/managedClusters', parameters('clusterName'))]"
+              ],
+              "properties": {
+                "roleDefinitionId": "[variables('networkContributorRoleDefinitionId')]",
+                "principalId": "[reference(resourceId('Microsoft.ContainerService/managedClusters', parameters('clusterName')), '2024-02-01', 'Full').identity.principalId]",
+                "principalType": "ServicePrincipal"
+              }
+            }
+          ],
+          "outputs": {
+            "clusterName": {
+              "type": "string",
+              "value": "[parameters('clusterName')]"
+            },
+            "clusterResourceId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.ContainerService/managedClusters', parameters('clusterName'))]"
+            },
+            "oidcIssuerUrl": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.ContainerService/managedClusters', parameters('clusterName')), '2024-02-01').oidcIssuerProfile.issuerURL]"
+            },
+            "kubeletIdentityObjectId": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.ContainerService/managedClusters', parameters('clusterName')), '2024-02-01').identityProfile.kubeletidentity.objectId]"
+            },
+            "kubeletIdentityClientId": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.ContainerService/managedClusters', parameters('clusterName')), '2024-02-01').identityProfile.kubeletidentity.clientId]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "networkingMod"
+      ]
+    },
+    "anfMod": {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "azure-netapp-files",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "anfAccountName": {
+            "value": "[parameters('anf').anfAccountName]"
+          },
+          "location": {
+            "value": "[parameters('location')]"
+          },
+          "pools": {
+            "value": "[parameters('anf').pools]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "description": "Azure NetApp Files account and capacity pools for AgentStudio. Creates the ANF account and one capacity pool per entry in the pools array. Volumes are provisioned dynamically by the Trident/AKS storage classes and are NOT managed by this template. Deploy networking.json first — ANF requires a subnet delegated to Microsoft.Netapp/volumes. Cost note: ANF billing is on provisioned pool size, not on volume usage."
+          },
+          "parameters": {
+            "anfAccountName": {
+              "type": "string",
+              "metadata": {
+                "description": "Name of the Azure NetApp Files account."
+              }
+            },
+            "location": {
+              "type": "string",
+              "defaultValue": "[resourceGroup().location]",
+              "metadata": {
+                "description": "Azure region; defaults to the resource group location. Verify ANF availability: az netappfiles list-available-locations."
+              }
+            },
+            "pools": {
+              "type": "array",
+              "minLength": 1,
+              "metadata": {
+                "description": "One object per capacity pool. Required keys: name, serviceLevel (Standard|Premium|Ultra), sizeTiB (>=1, billed on provisioned size), qosType (Auto|Manual), coolAccessEnabled (bool; requires Premium/Ultra). Optional key: encryptionType (Single|Double, default Single)."
+              }
+            }
+          },
+          "resources": [
+            {
+              "type": "Microsoft.NetApp/netAppAccounts",
+              "apiVersion": "2023-11-01",
+              "name": "[parameters('anfAccountName')]",
+              "location": "[parameters('location')]",
+              "properties": {}
+            },
+            {
+              "type": "Microsoft.NetApp/netAppAccounts/capacityPools",
+              "apiVersion": "2023-11-01",
+              "copy": {
+                "name": "capacityPoolLoop",
+                "count": "[length(parameters('pools'))]"
+              },
+              "name": "[concat(parameters('anfAccountName'), '/', parameters('pools')[copyIndex()].name)]",
+              "location": "[parameters('location')]",
+              "dependsOn": [
+                "[resourceId('Microsoft.NetApp/netAppAccounts', parameters('anfAccountName'))]"
+              ],
+              "properties": {
+                "serviceLevel": "[parameters('pools')[copyIndex()].serviceLevel]",
+                "size": "[mul(parameters('pools')[copyIndex()].sizeTiB, 1099511627776)]",
+                "qosType": "[parameters('pools')[copyIndex()].qosType]",
+                "coolAccess": "[parameters('pools')[copyIndex()].coolAccessEnabled]",
+                "encryptionType": "[if(contains(parameters('pools')[copyIndex()], 'encryptionType'), parameters('pools')[copyIndex()].encryptionType, 'Single')]"
+              }
+            }
+          ],
+          "outputs": {
+            "anfAccountName": {
+              "type": "string",
+              "value": "[parameters('anfAccountName')]"
+            },
+            "anfAccountResourceId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.NetApp/netAppAccounts', parameters('anfAccountName'))]"
+            },
+            "poolResourceIds": {
+              "type": "array",
+              "copy": {
+                "count": "[length(parameters('pools'))]",
+                "input": "[resourceId('Microsoft.NetApp/netAppAccounts/capacityPools', parameters('anfAccountName'), parameters('pools')[copyIndex()].name)]"
+              }
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "networkingMod"
+      ]
+    },
+    "acrMod": {
+      "condition": "[variables('createAcr')]",
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "container-registry",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "registryName": {
+            "value": "[parameters('containerRegistry').registryName]"
+          },
+          "location": {
+            "value": "[parameters('location')]"
+          },
+          "sku": {
+            "value": "[parameters('containerRegistry').sku]"
+          },
+          "adminUserEnabled": {
+            "value": "[parameters('containerRegistry').adminUserEnabled]"
+          },
+          "zoneRedundancyEnabled": {
+            "value": "[parameters('containerRegistry').zoneRedundancyEnabled]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "description": "Azure Container Registry for AgentStudio. To allow AKS to pull images, grant the AKS kubelet identity the AcrPull role after deployment: az role assignment create --assignee <kubeletIdentityObjectId> --role AcrPull --scope <registryResourceId>."
+          },
+          "parameters": {
+            "registryName": {
+              "type": "string",
+              "minLength": 5,
+              "maxLength": 50,
+              "metadata": {
+                "description": "Globally unique ACR name (5-50 alphanumeric chars, no hyphens). Example: cragentstudiodeveus2001"
+              }
+            },
+            "location": {
+              "type": "string",
+              "defaultValue": "[resourceGroup().location]",
+              "metadata": {
+                "description": "Azure region; defaults to the resource group location."
+              }
+            },
+            "sku": {
+              "type": "string",
+              "allowedValues": [
+                "Basic",
+                "Standard",
+                "Premium"
+              ],
+              "metadata": {
+                "description": "ACR service tier. Standard includes 100 GiB storage. Premium required for geo-replication and private endpoints."
+              }
+            },
+            "adminUserEnabled": {
+              "type": "bool",
+              "metadata": {
+                "description": "Enable the admin user for username/password pull access. Set false for production workloads that use managed identity exclusively."
+              }
+            },
+            "zoneRedundancyEnabled": {
+              "type": "bool",
+              "metadata": {
+                "description": "Enable zone redundancy (requires Premium SKU)."
+              }
+            }
+          },
+          "resources": [
+            {
+              "type": "Microsoft.ContainerRegistry/registries",
+              "apiVersion": "2023-07-01",
+              "name": "[parameters('registryName')]",
+              "location": "[parameters('location')]",
+              "sku": {
+                "name": "[parameters('sku')]"
+              },
+              "properties": {
+                "adminUserEnabled": "[parameters('adminUserEnabled')]",
+                "publicNetworkAccess": "Enabled",
+                "zoneRedundancy": "[if(parameters('zoneRedundancyEnabled'), 'Enabled', 'Disabled')]",
+                "policies": {
+                  "retentionPolicy": {
+                    "status": "disabled"
+                  }
+                }
+              }
+            }
+          ],
+          "outputs": {
+            "registryName": {
+              "type": "string",
+              "value": "[parameters('registryName')]"
+            },
+            "registryResourceId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.ContainerRegistry/registries', parameters('registryName'))]"
+            },
+            "loginServer": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.ContainerRegistry/registries', parameters('registryName')), '2023-07-01').loginServer]"
+            }
+          }
+        }
+      }
+    },
+    "acrPullMod": {
+      "condition": "[variables('useSharedAcr')]",
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "acr-pull-role",
+      "subscriptionId": "[variables('sharedAcrSubscriptionId')]",
+      "resourceGroup": "[variables('sharedAcrResourceGroupName')]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "principalId": {
+            "value": "[reference('aksMod').outputs.kubeletIdentityObjectId.value]"
+          },
+          "registryResourceId": {
+            "value": "[variables('acrResourceId')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "description": "Grant AcrPull on a shared Container Registry to the AKS kubelet managed identity."
+          },
+          "parameters": {
+            "principalId": {
+              "type": "string",
+              "metadata": {
+                "description": "Object ID of the AKS kubelet managed identity."
+              }
+            },
+            "registryResourceId": {
+              "type": "string",
+              "metadata": {
+                "description": "Full resource ID of the shared ACR (scope for AcrPull)."
+              }
+            }
+          },
+          "variables": {
+            "acrPullRoleId": "7f951dda-4ed3-4680-a7ca-43fe172d538d",
+            "acrPullRoleDefinitionId": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Authorization/roleDefinitions/', variables('acrPullRoleId'))]"
+          },
+          "resources": [
+            {
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "name": "[guid(parameters('registryResourceId'), parameters('principalId'), 'AcrPull')]",
+              "scope": "[parameters('registryResourceId')]",
+              "properties": {
+                "roleDefinitionId": "[variables('acrPullRoleDefinitionId')]",
+                "principalId": "[parameters('principalId')]",
+                "principalType": "ServicePrincipal"
+              }
+            }
+          ]
+        }
+      },
+      "dependsOn": [
+        "aksMod"
+      ]
+    },
+    "anfKubeletReaderRoleMod": {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "anf-kubelet-reader-role",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "principalId": {
+            "value": "[reference('aksMod').outputs.kubeletIdentityObjectId.value]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "description": "Grant AKS kubelet identity Reader on the deployment resource group (required before Trident dynamic provisioning)."
+          },
+          "parameters": {
+            "principalId": {
+              "type": "string",
+              "metadata": {
+                "description": "Object ID of the AKS kubelet managed identity."
+              }
+            }
+          },
+          "variables": {
+            "readerRoleDefinitionId": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Authorization/roleDefinitions/', 'acdd72a7-3385-48ef-bd42-f606fba81ae7')]"
+          },
+          "resources": [
+            {
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "name": "[guid(resourceGroup().id, parameters('principalId'), 'Reader')]",
+              "properties": {
+                "roleDefinitionId": "[variables('readerRoleDefinitionId')]",
+                "principalId": "[parameters('principalId')]",
+                "principalType": "ServicePrincipal"
+              }
+            }
+          ]
+        }
+      },
+      "dependsOn": [
+        "aksMod"
+      ]
+    },
+    "keyVaultMod": {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "key-vault",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "keyVaultName": {
+            "value": "[parameters('keyVault').keyVaultName]"
+          },
+          "location": {
+            "value": "[parameters('location')]"
+          },
+          "tenantId": {
+            "value": "[parameters('tenantId')]"
+          },
+          "purgeProtectionEnabled": {
+            "value": "[parameters('keyVault').purgeProtectionEnabled]"
+          },
+          "softDeleteRetentionInDays": {
+            "value": "[parameters('keyVault').softDeleteRetentionInDays]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "description": "RBAC-enabled Azure Key Vault for AgentStudio Workload Identity secrets."
+          },
+          "parameters": {
+            "keyVaultName": {
+              "type": "string",
+              "minLength": 3,
+              "maxLength": 24,
+              "metadata": {
+                "description": "Globally unique Key Vault name (3-24 chars, alphanumeric and hyphens only). Example: kv-agentstudio-dev-eus2-001"
+              }
+            },
+            "location": {
+              "type": "string",
+              "defaultValue": "[resourceGroup().location]",
+              "metadata": {
+                "description": "Azure region; defaults to the resource group location."
+              }
+            },
+            "tenantId": {
+              "type": "string",
+              "metadata": {
+                "description": "Entra ID tenant ID. Run: az account show --query tenantId -o tsv"
+              }
+            },
+            "purgeProtectionEnabled": {
+              "type": "bool",
+              "metadata": {
+                "description": "Set true for production vaults. False keeps dev iteration fast."
+              }
+            },
+            "softDeleteRetentionInDays": {
+              "type": "int",
+              "minValue": 7,
+              "maxValue": 90,
+              "metadata": {
+                "description": "Soft-delete retention period. Minimum 7 days; use 90 for production."
+              }
+            }
+          },
+          "resources": [
+            {
+              "type": "Microsoft.KeyVault/vaults",
+              "apiVersion": "2023-07-01",
+              "name": "[parameters('keyVaultName')]",
+              "location": "[parameters('location')]",
+              "properties": {
+                "tenantId": "[parameters('tenantId')]",
+                "sku": {
+                  "family": "A",
+                  "name": "standard"
+                },
+                "enableRbacAuthorization": true,
+                "enabledForDeployment": false,
+                "enabledForDiskEncryption": false,
+                "enabledForTemplateDeployment": false,
+                "enableSoftDelete": true,
+                "softDeleteRetentionInDays": "[parameters('softDeleteRetentionInDays')]",
+                "enablePurgeProtection": "[if(parameters('purgeProtectionEnabled'), true(), null())]",
+                "publicNetworkAccess": "Enabled"
+              }
+            }
+          ],
+          "outputs": {
+            "keyVaultName": {
+              "type": "string",
+              "value": "[parameters('keyVaultName')]"
+            },
+            "keyVaultUri": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.KeyVault/vaults', parameters('keyVaultName')), '2023-07-01').vaultUri]"
+            },
+            "keyVaultResourceId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.KeyVault/vaults', parameters('keyVaultName'))]"
+            }
+          }
+        }
+      }
+    },
+    "workloadIdentityMod": {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "workload-identity",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "location": {
+            "value": "[parameters('location')]"
+          },
+          "oidcIssuerUrl": {
+            "value": "[reference('aksMod').outputs.oidcIssuerUrl.value]"
+          },
+          "keyVaultName": {
+            "value": "[reference('keyVaultMod').outputs.keyVaultName.value]"
+          },
+          "tenantId": {
+            "value": "[parameters('tenantId')]"
+          },
+          "uamiNamePrefix": {
+            "value": "[parameters('workloadIdentity').uamiNamePrefix]"
+          },
+          "services": {
+            "value": "[parameters('workloadIdentity').services]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "description": "Per-service UAMIs for AgentStudio Workload Identity. Creates one UAMI + federated credential per service, and assigns Key Vault Secrets User at the vault level. The services[].resources[] field documents intended per-secret access for a future PR that narrows scope to individual secrets."
+          },
+          "parameters": {
+            "location": {
+              "type": "string",
+              "defaultValue": "[resourceGroup().location]",
+              "metadata": {
+                "description": "Azure region for the UAMIs."
+              }
+            },
+            "oidcIssuerUrl": {
+              "type": "string",
+              "metadata": {
+                "description": "OIDC issuer URL of the cluster. For AKS: az aks show -g <rg> -n <cluster> --query oidcIssuerProfile.issuerUrl -o tsv"
+              }
+            },
+            "keyVaultName": {
+              "type": "string",
+              "metadata": {
+                "description": "Key Vault name. Each service UAMI receives Key Vault Secrets User on this vault."
+              }
+            },
+            "tenantId": {
+              "type": "string",
+              "metadata": {
+                "description": "Entra ID tenant ID. Run: az account show --query tenantId -o tsv"
+              }
+            },
+            "uamiNamePrefix": {
+              "type": "string",
+              "metadata": {
+                "description": "Name prefix for the UAMIs. Final UAMI name: <prefix><serviceName>."
+              }
+            },
+            "services": {
+              "type": "array",
+              "metadata": {
+                "description": "Array of { name, namespace, resources[] } objects. resources[] entries document intended per-secret access (future PR). The canonical list is generated at deploy time by `make wi-list-services`."
+              }
+            }
+          },
+          "variables": {
+            "keyVaultSecretsUserRoleId": "4633458b-17de-408a-b874-0445c86b69e6",
+            "keyVaultSecretsUserRoleDefinitionId": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Authorization/roleDefinitions/', variables('keyVaultSecretsUserRoleId'))]"
+          },
+          "resources": [
+            {
+              "type": "Microsoft.ManagedIdentity/userAssignedIdentities",
+              "apiVersion": "2023-01-31",
+              "name": "[concat(parameters('uamiNamePrefix'), parameters('services')[copyIndex()].name)]",
+              "location": "[parameters('location')]",
+              "copy": {
+                "name": "uamiCopy",
+                "count": "[length(parameters('services'))]"
+              }
+            },
+            {
+              "type": "Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials",
+              "apiVersion": "2023-01-31",
+              "name": "[concat(parameters('uamiNamePrefix'), parameters('services')[copyIndex()].name, '/primary-fic')]",
+              "dependsOn": [
+                "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', concat(parameters('uamiNamePrefix'), parameters('services')[copyIndex()].name))]"
+              ],
+              "copy": {
+                "name": "ficCopy",
+                "count": "[length(parameters('services'))]"
+              },
+              "properties": {
+                "issuer": "[parameters('oidcIssuerUrl')]",
+                "subject": "[concat('system:serviceaccount:', parameters('services')[copyIndex()].namespace, ':', parameters('services')[copyIndex()].name)]",
+                "audiences": [
+                  "api://AzureADTokenExchange"
+                ]
+              }
+            },
+            {
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "name": "[guid(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', concat(parameters('uamiNamePrefix'), parameters('services')[copyIndex()].name)), resourceId('Microsoft.KeyVault/vaults', parameters('keyVaultName')), variables('keyVaultSecretsUserRoleId'))]",
+              "scope": "[resourceId('Microsoft.KeyVault/vaults', parameters('keyVaultName'))]",
+              "dependsOn": [
+                "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', concat(parameters('uamiNamePrefix'), parameters('services')[copyIndex()].name))]"
+              ],
+              "copy": {
+                "name": "vaultAccessCopy",
+                "count": "[length(parameters('services'))]"
+              },
+              "properties": {
+                "roleDefinitionId": "[variables('keyVaultSecretsUserRoleDefinitionId')]",
+                "principalId": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', concat(parameters('uamiNamePrefix'), parameters('services')[copyIndex()].name)), '2023-01-31').principalId]",
+                "principalType": "ServicePrincipal"
+              }
+            }
+          ],
+          "outputs": {
+            "clientIds": {
+              "type": "array",
+              "copy": {
+                "count": "[length(parameters('services'))]",
+                "input": {
+                  "name": "[parameters('services')[copyIndex()].name]",
+                  "value": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', concat(parameters('uamiNamePrefix'), parameters('services')[copyIndex()].name)), '2023-01-31').clientId]"
+                }
+              }
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "aksMod",
+        "keyVaultMod"
+      ]
+    },
+    "gatewayPipMod": {
+      "condition": "[variables('createGatewayPip')]",
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "gateway-pip",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "pipName": {
+            "value": "[variables('gatewayPipName')]"
+          },
+          "location": {
+            "value": "[parameters('location')]"
+          },
+          "sku": {
+            "value": "[coalesce(tryGet(parameters('edge'), 'sku'), 'Standard')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "description": "Static public IP for the Istio/Gateway LoadBalancer. Reference in deployments/helm/edge/values-aks.yaml via azure-pip-name annotation."
+          },
+          "parameters": {
+            "pipName": {
+              "type": "string",
+              "metadata": {
+                "description": "Name of the public IP resource (e.g. pip-agentstudio-gw-preprod-eus2-001)."
+              }
+            },
+            "location": {
+              "type": "string",
+              "defaultValue": "[resourceGroup().location]"
+            },
+            "sku": {
+              "type": "string",
+              "defaultValue": "Standard",
+              "allowedValues": [
+                "Basic",
+                "Standard"
+              ]
+            }
+          },
+          "resources": [
+            {
+              "type": "Microsoft.Network/publicIPAddresses",
+              "apiVersion": "2023-11-01",
+              "name": "[parameters('pipName')]",
+              "location": "[parameters('location')]",
+              "sku": {
+                "name": "[parameters('sku')]"
+              },
+              "properties": {
+                "publicIPAllocationMethod": "Static",
+                "publicIPAddressVersion": "IPv4"
+              }
+            }
+          ],
+          "outputs": {
+            "pipName": {
+              "type": "string",
+              "value": "[parameters('pipName')]"
+            },
+            "ipAddress": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.Network/publicIPAddresses', parameters('pipName')), '2023-11-01').ipAddress]"
+            },
+            "resourceId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.Network/publicIPAddresses', parameters('pipName'))]"
+            }
+          }
+        }
+      }
+    },
+    "dnsZoneMod": {
+      "condition": "[and(variables('createDnsZone'), variables('createGatewayPip'))]",
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "dns-zone",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "zoneName": {
+            "value": "[parameters('dns').zoneName]"
+          },
+          "dnsName": {
+            "value": "[parameters('dns').dnsName]"
+          },
+          "appRecordName": {
+            "value": "[coalesce(tryGet(parameters('dns'), 'appRecordName'), 'app')]"
+          },
+          "authRecordName": {
+            "value": "[coalesce(tryGet(parameters('dns'), 'authRecordName'), 'auth')]"
+          },
+          "targetIpAddress": {
+            "value": "[reference('gatewayPipMod').outputs.ipAddress.value]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "description": "Optional Azure DNS public zone with app/auth A records pointing at the gateway static IP."
+          },
+          "parameters": {
+            "zoneName": {
+              "type": "string",
+              "metadata": {
+                "description": "Azure DNS zone resource name (e.g. agentstudio-preprod-example-com)."
+              }
+            },
+            "dnsName": {
+              "type": "string",
+              "metadata": {
+                "description": "FQDN of the zone with trailing dot (e.g. agentstudio-preprod.example.com.)."
+              }
+            },
+            "appRecordName": {
+              "type": "string",
+              "defaultValue": "app",
+              "metadata": {
+                "description": "Relative name for the console host (app.<zone>)."
+              }
+            },
+            "authRecordName": {
+              "type": "string",
+              "defaultValue": "auth",
+              "metadata": {
+                "description": "Relative name for Keycloak (auth.<zone>)."
+              }
+            },
+            "targetIpAddress": {
+              "type": "string",
+              "metadata": {
+                "description": "IPv4 address of the gateway public IP."
+              }
+            }
+          },
+          "resources": [
+            {
+              "type": "Microsoft.Network/dnsZones",
+              "apiVersion": "2018-05-01",
+              "name": "[parameters('zoneName')]",
+              "location": "global",
+              "properties": {}
+            },
+            {
+              "type": "Microsoft.Network/dnsZones/A",
+              "apiVersion": "2018-05-01",
+              "name": "[concat(parameters('zoneName'), '/', parameters('appRecordName'))]",
+              "dependsOn": [
+                "[resourceId('Microsoft.Network/dnsZones', parameters('zoneName'))]"
+              ],
+              "properties": {
+                "TTL": 300,
+                "ARecords": [
+                  {
+                    "ipv4Address": "[parameters('targetIpAddress')]"
+                  }
+                ]
+              }
+            },
+            {
+              "type": "Microsoft.Network/dnsZones/A",
+              "apiVersion": "2018-05-01",
+              "name": "[concat(parameters('zoneName'), '/', parameters('authRecordName'))]",
+              "dependsOn": [
+                "[resourceId('Microsoft.Network/dnsZones', parameters('zoneName'))]"
+              ],
+              "properties": {
+                "TTL": 300,
+                "ARecords": [
+                  {
+                    "ipv4Address": "[parameters('targetIpAddress')]"
+                  }
+                ]
+              }
+            }
+          ],
+          "outputs": {
+            "zoneName": {
+              "type": "string",
+              "value": "[parameters('zoneName')]"
+            },
+            "dnsName": {
+              "type": "string",
+              "value": "[parameters('dnsName')]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "gatewayPipMod"
+      ]
+    }
+  },
+  "outputs": {
+    "clusterName": {
+      "type": "string",
+      "metadata": {
+        "description": "AKS cluster name."
+      },
+      "value": "[reference('aksMod').outputs.clusterName.value]"
+    },
+    "oidcIssuerUrl": {
+      "type": "string",
+      "metadata": {
+        "description": "AKS OIDC issuer URL (workload identity federation)."
+      },
+      "value": "[reference('aksMod').outputs.oidcIssuerUrl.value]"
+    },
+    "kubeletIdentityObjectId": {
+      "type": "string",
+      "metadata": {
+        "description": "AKS kubelet identity objectId."
+      },
+      "value": "[reference('aksMod').outputs.kubeletIdentityObjectId.value]"
+    },
+    "kubeletIdentityClientId": {
+      "type": "string",
+      "metadata": {
+        "description": "AKS kubelet identity clientId (Trident ANF managedIdentityClientID)."
+      },
+      "value": "[reference('aksMod').outputs.kubeletIdentityClientId.value]"
+    },
+    "anfAccountName": {
+      "type": "string",
+      "metadata": {
+        "description": "ANF account name."
+      },
+      "value": "[reference('anfMod').outputs.anfAccountName.value]"
+    },
+    "anfPoolName": {
+      "type": "string",
+      "metadata": {
+        "description": "Primary ANF capacity pool name (first entry in anf.pools)."
+      },
+      "value": "[parameters('anf').pools[0].name]"
+    },
+    "vnetName": {
+      "type": "string",
+      "metadata": {
+        "description": "VNet name for Trident backend."
+      },
+      "value": "[parameters('networking').vnetName]"
+    },
+    "anfSubnetName": {
+      "type": "string",
+      "metadata": {
+        "description": "ANF delegated subnet name for Trident backend."
+      },
+      "value": "[parameters('networking').anfSubnetName]"
+    },
+    "acrLoginServer": {
+      "type": "string",
+      "metadata": {
+        "description": "Container registry login server (shared or stack-created)."
+      },
+      "value": "[if(variables('useSharedAcr'), parameters('containerRegistry').loginServer, reference('acrMod').outputs.loginServer.value)]"
+    },
+    "keyVaultUri": {
+      "type": "string",
+      "metadata": {
+        "description": "Key Vault URI."
+      },
+      "value": "[reference('keyVaultMod').outputs.keyVaultUri.value]"
+    },
+    "gatewayPipName": {
+      "type": "string",
+      "metadata": {
+        "description": "Gateway public IP name for edge Helm (azure-pip-name annotation)."
+      },
+      "value": "[if(variables('createGatewayPip'), reference('gatewayPipMod').outputs.pipName.value, '')]"
+    },
+    "gatewayIpAddress": {
+      "type": "string",
+      "metadata": {
+        "description": "Gateway public IP address."
+      },
+      "value": "[if(variables('createGatewayPip'), reference('gatewayPipMod').outputs.ipAddress.value, '')]"
+    },
+    "anfSubnetId": {
+      "type": "string",
+      "metadata": {
+        "description": "ANF delegated subnet ID (for Trident backend virtualNetwork)."
+      },
+      "value": "[reference('networkingMod').outputs.anfSubnetId.value]"
+    },
+    "dnsZoneName": {
+      "type": "string",
+      "metadata": {
+        "description": "Azure DNS zone name when createZone=true."
+      },
+      "value": "[if(and(variables('createDnsZone'), variables('createGatewayPip')), reference('dnsZoneMod').outputs.zoneName.value, '')]"
+    }
+  }
+}

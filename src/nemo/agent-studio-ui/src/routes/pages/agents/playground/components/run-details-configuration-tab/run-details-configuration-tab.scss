@@ -1,0 +1,53 @@
+.run-details-configuration {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+
+  &__section {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  &__section-title {
+    margin: 0;
+  }
+
+  &__group {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+
+    &:not(:last-child) {
+      margin-bottom: 8px;
+    }
+  }
+
+  &__row {
+    display: flex;
+    flex-direction: row;
+    align-items: baseline;
+    gap: 16px;
+
+    .card-block__label {
+      width: 140px;
+      flex-shrink: 0;
+    }
+
+    .card-block__value {
+      flex: 1;
+      min-width: 0;
+    }
+  }
+
+  &__link {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    text-decoration: none;
+
+    &:hover {
+      text-decoration: underline;
+    }
+  }
+}

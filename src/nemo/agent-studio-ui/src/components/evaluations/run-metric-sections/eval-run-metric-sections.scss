@@ -1,0 +1,106 @@
+@use "@/styles/mixins" as *;
+
+.eval-run-metric-sections {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+// Even-column scorecard strip matching the Overview "Latest run" row: cells
+// share the full width via flex, separated by thin vertical dividers, and wrap
+// (then stack on mobile) as more metrics are added.
+.eval-run-metric-sections__grid {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+}
+
+.eval-run-metric-sections__cell {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+  min-width: 0;
+  flex: 1 1 180px;
+  padding: 16px 24px;
+
+  &:not(:first-child) {
+    border-left: 1px solid var(--border-main);
+  }
+}
+
+.eval-run-metric-sections__metric-value {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.eval-run-metric-sections__metric-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.eval-run-metric-sections__gate-result {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+@include tablet {
+  .eval-run-metric-sections__grid {
+    flex-direction: column;
+  }
+
+  .eval-run-metric-sections__cell:not(:first-child) {
+    border-left: none;
+    border-top: 1px solid var(--border-main);
+  }
+}
+
+// ── Overview scorecard row (RunOverviewCard) ────────────────────────────
+// Shared by the run overview detail tab and the "View results" dialog.
+.eval-run-overview__scorecard-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+}
+
+.eval-run-overview__scorecard-field {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+  min-width: 0;
+  flex: 1 1 180px;
+  padding: 16px 24px;
+
+  &--divider {
+    border-left: 1px solid var(--border-main);
+  }
+}
+
+.eval-run-overview__scorecard-value {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.eval-run-overview__scorecard-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+@include tablet {
+  .eval-run-overview__scorecard-row {
+    flex-direction: column;
+  }
+
+  .eval-run-overview__scorecard-field--divider {
+    border-left: none;
+    border-top: 1px solid var(--border-main);
+  }
+}

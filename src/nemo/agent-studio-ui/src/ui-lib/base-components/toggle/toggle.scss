@@ -1,0 +1,118 @@
+@use '../../../styles/mixins.scss';
+
+// -- Base
+
+.toggle {
+  display: inline-flex;
+  align-items: center;
+  position: relative;
+  box-sizing: border-box;
+  width: 35px;
+  height: 12px;
+  border-radius: 6px;
+  border: none;
+  cursor: pointer;
+  overflow: visible;
+  background-color: var(--toggle-color-off, var(--selector-toggle-off-bg));
+  @include mixins.transition(background-color 200ms ease);
+
+  &:hover:not([data-disabled]) {
+    background-color: var(--selector-toggle-off-bg-hover);
+  }
+
+  // checked -- missing token for toggle-on track, using --blue-40 placeholder
+  &[data-checked] {
+    background-color: var(--toggle-color-on, var(--blue-40));
+
+    // missing token for toggle-on-hover track, using --blue-50 placeholder
+    &:hover:not([data-disabled]) {
+      background-color: var(--blue-60);
+    }
+  }
+
+  // disabled off
+  &[data-disabled] {
+    cursor: default;
+    background-color: var(--grey-15);
+  }
+
+  // disabled on -- missing token for toggle-on-disabled track, using --blue-40 + opacity placeholder
+  &[data-disabled][data-checked] {
+    background-color: var(--blue-40);
+    opacity: 0.4;
+  }
+
+  // focus outline
+  &:focus-visible {
+    outline: 2px solid var(--border-focus-outline);
+    outline-offset: 2px;
+  }
+}
+
+// -- State modifiers
+
+.toggle--error {
+  outline: 1px solid var(--notification-error);
+  outline-offset: 1px;
+}
+
+.toggle--warning {
+  outline: 1px solid var(--notification-warning);
+  outline-offset: 1px;
+}
+
+// -- Thumb (knob)
+
+.toggle__thumb {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background-color: var(--selector-toggle-off);
+  // missing token --border-drop-shadow-toggle, using --border-drop-shadow as fallback
+  box-shadow: -1px 0px 2px 0px var(--border-drop-shadow);
+  transform: translateX(-3px);
+  @include mixins.transition(transform 200ms ease, background-color 200ms ease);
+
+  [data-checked] > & {
+    transform: translateX(20px);
+    background-color: var(--selector-on-bg);
+    box-shadow: 1px 0px 2px 0px var(--border-drop-shadow);
+  }
+  // missing token for toggle-off-disabled knob, using --grey-25 placeholder
+  [data-disabled] > & {
+    background-color: var(--grey-25);
+  }
+
+  [data-disabled][data-checked] > & {
+    background-color: var(--selector-on-bg);
+  }
+
+  // missing token for toggle-on-hover knob, using --blue-70 placeholder
+  [data-checked]:hover:not([data-disabled]) > & {
+    background-color: var(--blue-80);
+  }
+}
+
+// -- Icon inside thumb
+
+.toggle__icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 10px;
+  height: 10px;
+  color: var(--toggle-icon-color-off, var(--selector-toggle-off-bg-hover));
+  line-height: 0;
+
+  [data-checked] & {
+    color: var(--toggle-icon-color-on, var(--selector-on-bg));
+  }
+
+  svg {
+    width: 100%;
+    height: 100%;
+  }
+}

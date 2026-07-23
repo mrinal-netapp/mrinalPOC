@@ -1,0 +1,126 @@
+@use '../../../styles/mixins.scss';
+
+// -- Base
+
+.checkbox {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  border: 1px solid var(--selector-off-border);
+  border-radius: 3px;
+  background-color: transparent;
+  cursor: pointer;
+  @include mixins.transition(background-color 150ms ease, border-color 150ms ease);
+
+  &:hover:not([data-disabled]) {
+    border-color: var(--selector-off-border-hover);
+  }
+
+  // checked / indeterminate
+  &[data-checked],
+  &[data-indeterminate] {
+    background-color: var(--selector-on-bg);
+    border-color: var(--selector-on-bg);
+
+    &:hover:not([data-disabled]) {
+      background-color: var(--selector-on-bg-hover);
+      border-color: var(--selector-on-bg-hover);
+    }
+  }
+
+  // disabled off
+  &[data-disabled] {
+    cursor: default;
+    background-color: var(--selector-off-bg-disabled);
+    border-color: var(--selector-off-border-disabled);
+  }
+
+  // disabled on
+  &[data-disabled][data-checked],
+  &[data-disabled][data-indeterminate] {
+    background-color: var(--selector-on-bg-disabled);
+    border-color: var(--selector-on-bg-disabled);
+  }
+
+  // focus outline
+  &:focus-visible {
+    outline: 2px solid var(--border-focus-outline);
+    outline-offset: 2px;
+  }
+}
+
+// -- State modifiers
+
+.checkbox--error {
+  border-color: var(--notification-error);
+
+  &[data-checked],
+  &[data-indeterminate] {
+    border-color: var(--notification-error);
+  }
+}
+
+.checkbox--warning {
+  border-color: var(--notification-warning);
+
+  &[data-checked],
+  &[data-indeterminate] {
+    border-color: var(--notification-warning);
+  }
+}
+
+// -- Variant: solid (16x16)
+
+.checkbox-variant-solid {
+  width: 16px;
+  height: 16px;
+  min-width: 16px;
+  min-height: 16px;
+}
+
+// -- Variant: table (24x24)
+
+.checkbox-variant-table {
+  width: 24px;
+  height: 24px;
+  min-width: 24px;
+  min-height: 24px;
+}
+
+// -- Indicator
+
+.checkbox__indicator {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  color: var(--icon-reversed-white);
+  opacity: 0;
+
+  &[data-checked],
+  &[data-indeterminate] {
+    opacity: 1;
+    @include mixins.transition(opacity 100ms ease);
+  }
+}
+
+// -- Icon SVG
+
+.checkbox__icon {
+  display: block;
+  width: 10px;
+  fill: none;
+
+  rect {
+    fill: currentColor;
+  }
+
+  path {
+    stroke: currentColor;
+    stroke-width: 1.5;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+}

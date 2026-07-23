@@ -1,0 +1,222 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "AgentStudio workers tier values",
+  "description": "Helm JSON schema for deployments/helm/workers. Validates umbrella-level keys at helm install/upgrade time. Permissive (additionalProperties: true) — only type-checks known high-risk keys so cloud overlays and --set flags never trip it.",
+  "type": "object",
+  "additionalProperties": true,
+
+  "properties": {
+    "createNamespace": { "type": "boolean" },
+    "deploymentName": { "type": "string" },
+    "endpoint": { "type": "string" },
+
+    "crossNsServices": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["externalName", "serviceEntry"],
+          "description": "Cross-namespace service aliasing mode. externalName (default) works without Istio DNS capture."
+        }
+      }
+    },
+
+    "global": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "storageClass": {
+          "type": "string",
+          "description": "RWX StorageClass for s3gateway PVCs. Per-cloud (anf-nfs / gcnv-nas-rwx / fsxn-nas / ontap-nas). Empty falls back to cluster default."
+        },
+        "endpoint": { "type": "string" },
+        "imageRegistry": { "type": "string" },
+        "imageRepository": { "type": "string" },
+        "imageTag": { "type": "string" },
+        "imagePullPolicy": {
+          "type": "string",
+          "enum": ["", "Always", "IfNotPresent", "Never"],
+          "description": "Global image pull policy override. EKS forces Always; empty leaves each chart default in effect."
+        },
+        "gatewayHttpsPort": {
+          "type": ["string", "integer"],
+          "description": "Public HTTPS port. 443 for cloud; 8443 for local KIND clusters that cannot bind privileged ports."
+        },
+        "gatewayHttpPort": { "type": ["string", "integer"] },
+        "s3gatewayFullname": { "type": "string" },
+        "deploymentName": { "type": "string" },
+        "observability": {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "otlpEndpoint": {
+              "type": "string",
+              "description": "OTLP HTTP collector endpoint. Set to empty string to suppress OTLP env vars."
+            }
+          }
+        }
+      }
+    },
+
+    "defaultBucketPvc": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "create": { "type": "boolean" },
+        "accessMode": {
+          "type": "string",
+          "enum": ["ReadWriteOnce", "ReadWriteMany", "ReadOnlyMany"]
+        },
+        "size": {
+          "type": "string",
+          "pattern": "^[0-9]+(Ki|Mi|Gi|Ti|Pi|Ei|K|M|G|T|P|E)?$"
+        },
+        "storageClass": { "type": "string" },
+        "volumeName": { "type": "string" }
+      }
+    },
+
+    "s3gateway": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "replicaCount": { "type": "integer", "minimum": 0 },
+        "region": { "type": "string" },
+        "storage": {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "accessMode": {
+              "type": "string",
+              "enum": ["ReadWriteOnce", "ReadWriteMany", "ReadOnlyMany"]
+            },
+            "size": {
+              "type": "string",
+              "pattern": "^[0-9]+(Ki|Mi|Gi|Ti|Pi|Ei|K|M|G|T|P|E)?$"
+            },
+            "storageClass": { "type": "string" }
+          }
+        },
+        "metadata": {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "storageClass": { "type": "string" },
+            "size": {
+              "type": "string",
+              "description": "Empty in base; cloud overlays set production sizes (e.g. AKS 50Gi).",
+              "pattern": "^([0-9]+(Ki|Mi|Gi|Ti|Pi|Ei|K|M|G|T|P|E)?)?$"
+            }
+          }
+        },
+        "defaultBucket": {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "name": { "type": "string" },
+            "storageClass": { "type": "string" },
+            "size": {
+              "type": "string",
+              "description": "Empty in base; cloud overlays set production sizes (e.g. AKS 1Ti).",
+              "pattern": "^([0-9]+(Ki|Mi|Gi|Ti|Pi|Ei|K|M|G|T|P|E)?)?$"
+            }
+          }
+        },
+        "workloadIdentity": {
+          "type": "object",
+          "properties": { "enabled": { "type": "boolean" } }
+        }
+      }
+    },
+
+    "dataset-worker": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "workloadIdentity": {
+          "type": "object",
+          "properties": { "enabled": { "type": "boolean" } }
+        }
+      }
+    },
+
+    "kb-worker": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "workloadIdentity": {
+          "type": "object",
+          "properties": { "enabled": { "type": "boolean" } }
+        }
+      }
+    },
+
+    "connector-worker": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "redisStandalone": { "type": "boolean" },
+        "workloadIdentity": {
+          "type": "object",
+          "properties": { "enabled": { "type": "boolean" } }
+        }
+      }
+    },
+
+    "eval-worker": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "workloadIdentity": {
+          "type": "object",
+          "properties": { "enabled": { "type": "boolean" } }
+        }
+      }
+    },
+
+    "storage-manager": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "workloadIdentity": {
+          "type": "object",
+          "properties": { "enabled": { "type": "boolean" } }
+        }
+      }
+    },
+
+    "defaultSetup": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "registerDefaultBucket": { "type": "boolean" },
+        "s3gatewayBootstrapEnabled": { "type": "boolean" }
+      }
+    },
+
+    "keycloak": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "setup": {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "keycloakNamespace": { "type": "string" },
+            "realmName": { "type": "string" }
+          }
+        }
+      }
+    }
+  }
+}

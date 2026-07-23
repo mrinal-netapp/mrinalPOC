@@ -1,0 +1,41 @@
+@use '@/styles/mixins' as *;
+
+.tab-detail-card__content {
+  display: flex;
+  flex-direction: column;
+}
+
+/*
+ * Horizontal padding for the tab strip alone — `.tab-detail-card__tabs` lands
+ * on `Tabs.Root`, which wraps BOTH the tab list and the panels, so applying
+ * padding there would indent panels twice (once here, once via
+ * `.tab-detail-card__tab-body`). Target the inner `.tab-group__list` (the
+ * actual tab strip) so only the strip gets the 40px gutter.
+ *
+ * The gutter shrinks at the tablet/mobile breakpoints so tab labels stop
+ * being pushed against the card edge on narrower screens.
+ */
+.tab-detail-card__tabs .tab-group__list {
+  padding: 0 40px;
+
+  @include tablet {
+    padding: 0 24px;
+  }
+
+  @include mobile {
+    padding: 0 16px;
+  }
+}
+
+// Shared tab panel body padding for add-entity details cards.
+.tab-detail-card__tab-body {
+  padding: 0 40px 24px;
+
+  @include tablet {
+    padding: 0 24px 24px;
+  }
+
+  @include mobile {
+    padding: 0 16px 16px;
+  }
+}

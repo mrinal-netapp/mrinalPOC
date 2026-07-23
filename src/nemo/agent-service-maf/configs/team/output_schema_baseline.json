@@ -1,0 +1,58 @@
+{
+  "_schema_version": "2.0.0",
+  "project_id": "550e8400-e29b-41d4-a716-446655440000",
+  "_team_id": "output_schema_baseline",
+  "_team_name": "Output Schema — baseline (no knobs)",
+  "_description": "Output-schema test — neither response_format nor output_schema is set. parsedOutput must always be null even when the LLM emits JSON.",
+  "agent": {
+    "framework": "maf",
+    "model": "azure/gpt-5.4",
+    "temperature": 0.0,
+    "max_tokens": 256,
+    "timeout_seconds": 30
+  },
+  "semantic_kernel": {
+    "agents": [
+      {
+        "name": "assistant",
+        "instructions": "Respond to the user request. No JSON constraint.",
+        "description": "Baseline agent with no JSON / schema knobs set.",
+        "model": "azure/gpt-5.4",
+        "temperature": 0.0,
+        "max_tokens": 256,
+        "tools": [],
+        "mcp_servers": [],
+        "function_choice_behavior": "auto"
+      }
+    ],
+    "orchestration": {
+      "type": "single"
+    },
+    "default_function_choice_behavior": "auto",
+    "chat_history_max_messages": 100,
+    "enable_telemetry": false,
+    "session_ttl_seconds": 3600
+  },
+  "gateway": {
+    "url": "http://host.docker.internal:4001/v1",
+    "api_key": "",
+    "default_model": "azure/gpt-5.4",
+    "request_timeout_seconds": 60,
+    "retry_on_timeout": true,
+    "max_retries": 2
+  },
+  "guardrails": {
+    "enabled": false
+  },
+  "mcp": {
+    "lazy_connect": true
+  },
+  "mcp_servers": [],
+  "memory": {
+    "enabled": false
+  },
+  "logging": {
+    "level": "INFO",
+    "format": "json"
+  }
+}

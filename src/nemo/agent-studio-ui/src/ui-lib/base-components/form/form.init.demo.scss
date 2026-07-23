@@ -1,0 +1,56 @@
+.init-demo {
+  padding: 32px;
+  font-family: var(--font-family);
+  color: var(--text-primary);
+  background-color: var(--background-main);
+  min-height: 100vh;
+}
+
+.init-demo__title {
+  margin: 0 0 4px;
+}
+
+.init-demo__subtitle {
+  margin: 0 0 28px;
+}
+
+// -- Grid
+
+.init-demo__grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 24px;
+}
+
+.init-demo__card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 20px;
+  border: 1px solid var(--border-main);
+  border-radius: 8px;
+  background-color: var(--background-content);
+}
+
+.init-demo__form {
+  max-width: 100%;
+}
+
+.init-demo__loading {
+  padding: 8px 0;
+  font-style: italic;
+}
+
+.init-demo__pre {
+  margin: 8px 0 0;
+  padding: 16px;
+  background-color: var(--background-main);
+  border: 1px solid var(--border-main);
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+  overflow: auto;
+  max-height: 200px;
+}

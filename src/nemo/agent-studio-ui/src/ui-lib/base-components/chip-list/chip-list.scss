@@ -1,0 +1,93 @@
+// chip-list--row and chip-list--column share the same layout base;
+// only flex-direction and align-items differ.
+.chip-list {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  gap: 4px; // must stay in sync with CHIP_GAP_PX in chip-list.tsx
+  overflow: hidden;
+
+  &--row {
+    flex-direction: row;
+    align-items: center;
+  }
+
+  &--column {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+
+  &--size-regular {
+    height: 28px;
+    padding-left: 16px;
+    padding-right: 8px;
+    max-width: 240px;
+    border-radius: 16px;
+  }
+
+  &--color-tag1 {
+    background-color: var(--tag-1-bg);
+  }
+
+  // no remove button: symmetric padding so label is centered
+  &--no-remove {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+
+  // overflow badge: no remove button so padding is symmetric
+  &--overflow {
+    padding: 0 16px;
+    gap: 0;
+  }
+
+  &__label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+    min-width: 0;
+  }
+
+  &__remove {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 24px;
+    height: 24px;
+    color: var(--tag-1-text);
+    border-radius: 50%;
+    cursor: pointer;
+    user-select: none;
+    line-height: 0;
+    transition: background-color 100ms ease;
+
+    &:hover {
+      background-color: transparent;
+    }
+
+    &--disabled {
+      color: var(--text-disabled);
+      cursor: default;
+
+      &:hover {
+        background-color: transparent;
+      }
+    }
+  }
+
+  &__remove-icon {
+    width: 14px;
+    height: 14px;
+    pointer-events: none;
+  }
+}

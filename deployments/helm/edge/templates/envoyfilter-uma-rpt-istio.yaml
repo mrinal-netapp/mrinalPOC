@@ -1,0 +1,254 @@
+{{- /*
+UMA-ticket → RPT swap on the gateway pod, per §4.1 of
+docs/design/agent-studio-security-stack.md.
+
+A second Lua filter on the gateway's HTTP_FILTER chain. Fires only on
+`/api/v1/projects/:projectId/*` requests. For each match the filter:
+
+  1. extracts `:projectId` from the URL,
+  2. POSTs to Keycloak's `/realms/<realm>/protocol/openid-connect/token`
+     with the user's bearer token (already validated by jwt_authn at
+     this point) and:
+
+         grant_type=urn:ietf:params:oauth:grant-type:uma-ticket
+         audience=<resource-server-client>
+         permission=project:<projectId>#admin,member,viewer
+         response_mode=token
+
+  3. on Keycloak 200, replaces the request `Authorization` header with
+     the returned RPT (a Keycloak-signed JWT carrying an additional
+     top-level `authorization.permissions[]` claim — same `iss` / `aud`
+     / signature shape so downstream RequestAuthentication still
+     validates it),
+  4. on Keycloak 401 / 403, short-circuits with the same status — no
+     upstream hop, no leaked partial state,
+  5. on any other Keycloak failure, short-circuits with 502 — failing
+     closed is the only safe default for an authorization-bearing token
+     swap.
+
+Non-project requests (everything outside `projectPathPrefix`) are
+passed through unchanged so the original access token reaches the
+upstream.
+
+INSERT_AFTER `envoy.filters.http.jwt_authn` matches the existing
+parity-headers Lua filter — both filters need the validated JWT to
+be present on the request, and they don't depend on each other (the
+parity-headers filter reads claims from jwt_authn dynamic metadata,
+not from the Authorization header that this filter rewrites).
+
+Self-managed Istio places no restriction on EnvoyFilter types or
+operations; same filter renders identically on AKS / GKE / EKS / KIND.
+
+No RPT cache is implemented in this iteration: every project-scoped
+request triggers a synchronous round-trip to Keycloak. The 5-minute
+`(userId, projectId)` cache from the design doc lands in a follow-up.
+*/ -}}
+{{- if and .Values.gateway.enabled (eq (.Values.gateway.provider | default "nginx") "istio") -}}
+{{- if .Values.gateway.istio.umaRpt.enabled -}}
+{{- $uma := .Values.gateway.istio.umaRpt -}}
+{{- $kcSvc := $uma.keycloakService | default "keycloak" -}}
+{{- $kcNs  := $uma.keycloakNamespace | default (include "nemo.identityNamespace" .) -}}
+{{- $kcPort := $uma.keycloakPort | default 8080 -}}
+{{- $kcFqdn := printf "%s.%s.svc.cluster.local" $kcSvc $kcNs -}}
+{{- /*
+Istio auto-provisions an `outbound|<port>||<fqdn>` cluster on every
+mesh-side Envoy for every in-mesh Service. The gateway sidecar is part
+of the mesh, so the Keycloak Service in agentstudio-identity is reachable
+under that exact cluster name without a manual `Cluster` definition.
+*/ -}}
+{{- $kcCluster := printf "outbound|%d||%s" (int $kcPort) $kcFqdn -}}
+{{- $tokenPath := printf "/realms/%s/protocol/openid-connect/token" ($uma.realm | default "nemo") -}}
+{{- $audience := $uma.audience | default "agent-studio-api" -}}
+{{- /*
+projectPathPrefixes is the canonical list-shaped knob. Fall back to the
+old single-string projectPathPrefix for overlays that haven't migrated
+yet, and finally to a sensible default.
+*/ -}}
+{{- $projectPrefixes := $uma.projectPathPrefixes -}}
+{{- if not $projectPrefixes -}}
+  {{- if $uma.projectPathPrefix -}}
+    {{- $projectPrefixes = list $uma.projectPathPrefix -}}
+  {{- else -}}
+    {{- $projectPrefixes = list "/api/v1/projects/" -}}
+  {{- end -}}
+{{- end -}}
+{{- $timeoutMs := $uma.timeoutMs | default 5000 -}}
+{{- /*
+EnvoyFilter is alpha at networking.istio.io/v1alpha3 — there is no
+stable v1. Mirrors envoyfilter-parity-headers-istio.yaml; check the
+live CRD before bumping:
+  kubectl get crd envoyfilters.networking.istio.io \
+      -o jsonpath='{.spec.versions[*].name}'
+*/ -}}
+apiVersion: networking.istio.io/v1alpha3
+kind: EnvoyFilter
+metadata:
+  name: uma-rpt-swap
+  namespace: {{ include "nemo.namespace" . }}
+  labels:
+    {{- include "edge.labels" . | nindent 4 }}
+spec:
+  workloadSelector:
+    labels:
+      {{- include "nemo.istioGatewaySelector" . | nindent 6 }}
+  configPatches:
+    - applyTo: HTTP_FILTER
+      match:
+        context: GATEWAY
+        listener:
+          filterChain:
+            filter:
+              name: envoy.filters.network.http_connection_manager
+              subFilter:
+                name: envoy.filters.http.jwt_authn
+      patch:
+        operation: INSERT_AFTER
+        value:
+          name: envoy.filters.http.lua.uma_rpt
+          typed_config:
+            "@type": type.googleapis.com/envoy.extensions.filters.http.lua.v3.Lua
+            default_source_code:
+              inline_string: |
+                -- Build-time-injected configuration. Keep these as locals
+                -- (not module-level globals) so the filter is reentrant if
+                -- Envoy ever evaluates it on multiple workers.
+                local KC_CLUSTER  = {{ $kcCluster | quote }}
+                local KC_AUTHORITY = {{ printf "%s:%d" $kcFqdn (int $kcPort) | quote }}
+                local KC_PATH     = {{ $tokenPath | quote }}
+                local AUDIENCE    = {{ $audience | quote }}
+                -- Ordered list of path prefixes that trigger UMA. First
+                -- match wins; everything outside any of these prefixes
+                -- forwards the original access token unchanged.
+                local PROJECT_PREFIXES = {
+                  {{- range $i, $p := $projectPrefixes }}
+                  {{ $p | quote }},
+                  {{- end }}
+                }
+                local TIMEOUT_MS  = {{ $timeoutMs | int }}
+
+                -- Percent-encode every byte that isn't an unreserved
+                -- character per RFC 3986 (alpha / digit / `-_.~`). Safe
+                -- on ASCII identifiers and UUIDs, and on the literal
+                -- grant_type / audience / permission strings; anything
+                -- else gets the `%XX` treatment.
+                local function url_encode(s)
+                  if s == nil then return "" end
+                  return (s:gsub("[^%w%-_%.~]", function(c)
+                    return string.format("%%%02X", string.byte(c))
+                  end))
+                end
+
+                -- Try each configured prefix in order. For the first
+                -- one that matches, extract `{id}` (the path segment
+                -- immediately after the prefix, terminated by `/` or
+                -- `?`). The terminator requirement means a bare
+                -- /api/v1/projects (no trailing slash, no id) or the
+                -- collection-with-query /api/v1/projects?foo=bar form
+                -- do NOT match — only /api/v1/projects/<id>/<rest>.
+                local function extract_project_id(path)
+                  if not path then return nil end
+                  for _, prefix in ipairs(PROJECT_PREFIXES) do
+                    if path:sub(1, #prefix) == prefix then
+                      local rest = path:sub(#prefix + 1)
+                      local id = rest:match("^([^/%?]+)")
+                      if id and id ~= "" then return id end
+                    end
+                  end
+                  return nil
+                end
+
+                -- Tiny JSON-string extractor for the `access_token` field.
+                -- Keycloak's RPT response is always a flat JSON object
+                -- whose `access_token` is a JWT (URL-safe-base64, no
+                -- backslash, no quote), so a non-greedy `"([^"]+)"` is
+                -- safe. Avoids pulling in cjson.
+                local function parse_access_token(body)
+                  if not body then return nil end
+                  return body:match('"access_token"%s*:%s*"([^"]+)"')
+                end
+
+                -- Short-circuit helpers. The gateway never returns a body
+                -- on a swap failure — the status code is the contract.
+                local function deny(handle, status, reason)
+                  handle:logWarn(string.format(
+                    "uma_rpt: short-circuit %s (%s)", status, reason or "unknown"))
+                  handle:respond({[":status"] = status}, "")
+                end
+
+                function envoy_on_request(handle)
+                  local headers = handle:headers()
+                  local path = headers:get(":path")
+                  local project_id = extract_project_id(path)
+                  if not project_id then
+                    -- Non-project request: forward the access token unchanged.
+                    return
+                  end
+
+                  local auth = headers:get("authorization")
+                  if not auth or not auth:lower():match("^bearer ") then
+                    -- jwt_authn already enforced presence on `/api/v1/*`;
+                    -- defensive fall-through if the upstream config ever
+                    -- changes shape.
+                    return deny(handle, "401", "missing bearer token")
+                  end
+
+                  -- NOTE: do NOT send `response_mode=token` here. That value
+                  -- is only valid on the OIDC `/authorize` endpoint; on the
+                  -- UMA-grant token endpoint Keycloak accepts `decision` or
+                  -- `permissions` and 400s on anything else (including
+                  -- `token`). Omitting `response_mode` gives us the default
+                  -- behaviour: an OAuth-style response whose `access_token`
+                  -- IS the RPT — which is exactly what we want here.
+                  local body = "grant_type=" .. url_encode("urn:ietf:params:oauth:grant-type:uma-ticket")
+                            .. "&audience=" .. url_encode(AUDIENCE)
+                            .. "&permission=" .. url_encode(string.format(
+                                  "project:%s#admin,member,viewer", project_id))
+
+                  local req_headers = {
+                    [":method"]      = "POST",
+                    [":path"]        = KC_PATH,
+                    [":authority"]   = KC_AUTHORITY,
+                    ["authorization"] = auth,
+                    ["content-type"] = "application/x-www-form-urlencoded",
+                    ["accept"]       = "application/json",
+                  }
+
+                  local ok, resp_headers, resp_body = pcall(function()
+                    return handle:httpCall(KC_CLUSTER, req_headers, body, TIMEOUT_MS)
+                  end)
+                  if not ok then
+                    return deny(handle, "502", "httpCall failed: " .. tostring(resp_headers))
+                  end
+
+                  local status = resp_headers and resp_headers[":status"] or "0"
+                  if status == "200" then
+                    local rpt = parse_access_token(resp_body)
+                    if not rpt then
+                      return deny(handle, "502", "keycloak 200 without access_token")
+                    end
+                    -- IMPORTANT: re-fetch headers via handle:headers() rather
+                    -- than reusing the `headers` local captured before the
+                    -- httpCall above. Envoy's Lua filter invalidates the
+                    -- cached HeaderMap reference across async yields like
+                    -- httpCall; calling :replace() on the stale handle errors
+                    -- with "object used outside of proper scope" and the
+                    -- Authorization header silently retains the user token
+                    -- instead of the RPT — defeating the whole swap.
+                    handle:headers():replace("authorization", "Bearer " .. rpt)
+                    return
+                  end
+
+                  if status == "401" then
+                    return deny(handle, "401", "keycloak rejected user token")
+                  end
+                  if status == "403" then
+                    -- access_denied: user holds nothing on this project.
+                    return deny(handle, "403", "no scopes on project " .. project_id)
+                  end
+                  -- Fail closed on every other Keycloak response (4xx, 5xx,
+                  -- network error). Authorization-bearing token swaps must
+                  -- never silently fall back to the original token.
+                  return deny(handle, "502", "keycloak status " .. status)
+                end
+{{- end }}
+{{- end }}

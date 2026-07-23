@@ -1,0 +1,9 @@
+.eval-property-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.eval-property-status__icon {
+  flex-shrink: 0;
+}

@@ -1,0 +1,39 @@
+.folder-browser-dialog {
+  max-width: 1064px;
+  width: 100%;
+}
+
+// -- Breadcrumbs --
+
+.folder-browser-dialog__breadcrumbs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding-bottom: 12px;
+}
+
+.folder-browser-dialog__breadcrumb-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.folder-browser-dialog__breadcrumb-separator {
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+.folder-browser-dialog__breadcrumb-segment {
+  all: unset;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 4px;
+
+  &:hover:not(:disabled) {
+    background-color: var(--background-hover);
+  }
+
+  &:disabled {
+    cursor: default;
+  }
+}

@@ -1,0 +1,458 @@
+{{- /*
+HTTPRoute(s) for app.<endpoint> — per the inventory in §5.3 of the
+design doc. Rendered only on the Istio branch (gateway.provider == "istio").
+
+We render one HTTPRoute *per backend* (rather than one giant
+multi-rule HTTPRoute) so:
+  - Independent per-route status visibility (Accepted / ResolvedRefs).
+  - Independent rollout / rollback per backend.
+  - Per-route URLRewrite filters stay readable.
+
+Each route reuses the same hostname (app.<endpoint>); Istio merges them
+into the same listener at runtime.
+*/ -}}
+{{- if and .Values.gateway.enabled (eq (.Values.gateway.provider | default "nginx") "istio") -}}
+{{- $gatewayName := include "nemo.gatewayName" . }}
+{{- $namespace := include "nemo.namespace" . }}
+{{- $consoleHost := include "nemo.consoleHost" . }}
+{{- $servicesNs := include "nemo.servicesNamespace" . }}
+{{- $consoleNs := include "nemo.consoleNamespace" . }}
+{{- $platformNs := include "nemo.platformNamespace" . }}
+{{- $monitoringNs := include "nemo.monitoringNamespace" . }}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: agentstudio-app-api
+  namespace: {{ $namespace }}
+  labels:
+    {{- include "edge.labels" . | nindent 4 }}
+spec:
+  parentRefs:
+    - name: {{ $gatewayName }}
+  hostnames:
+    - {{ $consoleHost | quote }}
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /api/v1
+      backendRefs:
+        - name: config-service
+          namespace: {{ $servicesNs }}
+          port: 3000
+---
+# Backward-compat shim for the existing GUI image, which emits API calls
+# under `/config/api/v1/...` (legacy apigateway-service's `setupServiceProxy(r,
+# "/config", ...)` mount). The Istio target shape per design doc §5.3 is the
+# GUI calling `/api/v1/...` directly (no `/config/` prefix); when the GUI is
+# rebuilt with that contract, this whole HTTPRoute can be deleted and the
+# matching `/config/*` line in `edge-require-jwt` AuthorizationPolicy with it.
+#
+# The /config prefix is stripped before forwarding (URLRewrite/ReplacePrefixMatch
+# -> /), exactly like the legacy `buildPathStrippingProxy` did. config-service
+# therefore continues to receive `/api/v1/...` requests unchanged.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: agentstudio-app-config
+  namespace: {{ $namespace }}
+  labels:
+    {{- include "edge.labels" . | nindent 4 }}
+spec:
+  parentRefs:
+    - name: {{ $gatewayName }}
+  hostnames:
+    - {{ $consoleHost | quote }}
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /config
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplacePrefixMatch
+              replacePrefixMatch: /
+      backendRefs:
+        - name: config-service
+          namespace: {{ $servicesNs }}
+          port: 3000
+---
+# Console catch-all + landing page. Sits last (relative to the
+# more-specific app.* prefixes above) so /api/v1, /kb, /agents,
+# /analytics, /workflow, /internal/*, /prometheus, /s3, /api-docs,
+# /config still win — Gateway API resolves cross-HTTPRoute conflicts
+# by longest-PathPrefix-wins, so this `/` rule only catches whatever
+# the per-prefix routes haven't claimed.
+#
+# Two rules in this HTTPRoute:
+#   1. /console PathPrefix  — strips /console before forwarding (URLRewrite/
+#      ReplacePrefixMatch -> /), exactly like the legacy apigateway-service
+#      `buildPathStrippingProxy` did. The GUI pod therefore serves at its
+#      root (/, /assets/*, /auth/callback) and needs no /console-aware
+#      nginx rules.
+#   2. / PathPrefix  — catch-all routing every unmatched app.* path to the
+#      GUI Service. Covers the apex landing page (`/`), bare `/console`
+#      (without trailing slash, which `/console/*` glob doesn't match), and
+#      every static-asset path the GUI emits at root (`/favicon.ico`,
+#      `/robots.txt`, `/manifest.json`, `/assets/*`, etc.). Without this,
+#      static-asset requests would 404 even though the GUI knows how to
+#      serve them at their natural root paths.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: agentstudio-app-console
+  namespace: {{ $namespace }}
+  labels:
+    {{- include "edge.labels" . | nindent 4 }}
+spec:
+  parentRefs:
+    - name: {{ $gatewayName }}
+  hostnames:
+    - {{ $consoleHost | quote }}
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /console
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplacePrefixMatch
+              replacePrefixMatch: /
+      backendRefs:
+        - name: gui
+          namespace: {{ $consoleNs }}
+          port: 9000
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: gui
+          namespace: {{ $consoleNs }}
+          port: 9000
+---
+# /studio -> agent-studio-ui (the new UI). Same pattern as /console: strip the
+# /studio prefix before forwarding. The agent-studio-ui bundle is built with
+# VITE_BASE_PATH=/studio so the browser requests /studio/assets/* (which keeps
+# those requests on this route rather than the `/` catch-all), but Vite's base
+# only rewrites HTML URLs -- the assets are physically served by nginx at root
+# (/usr/share/nginx/html/assets/*, with `try_files ... /index.html`). Without
+# the URLRewrite, /studio/assets/*.js resolves to the missing
+# /studio/assets path and falls back to index.html (text/html), so the JS
+# module fails and the page is blank. Stripping /studio -> / maps the requests
+# onto nginx's real root. Longest-PathPrefix-wins means this rule beats the `/`
+# catch-all above and stops landing on gui.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: agentstudio-app-studio
+  namespace: {{ $namespace }}
+  labels:
+    {{- include "edge.labels" . | nindent 4 }}
+spec:
+  parentRefs:
+    - name: {{ $gatewayName }}
+  hostnames:
+    - {{ $consoleHost | quote }}
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /studio
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplacePrefixMatch
+              replacePrefixMatch: /
+      backendRefs:
+        - name: agent-studio-ui
+          namespace: {{ $consoleNs }}
+          port: 9000
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: agentstudio-app-kb
+  namespace: {{ $namespace }}
+  labels:
+    {{- include "edge.labels" . | nindent 4 }}
+spec:
+  parentRefs:
+    - name: {{ $gatewayName }}
+  hostnames:
+    - {{ $consoleHost | quote }}
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /kb
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplacePrefixMatch
+              replacePrefixMatch: /
+      backendRefs:
+        - name: kb-retrieval-service
+          namespace: {{ $servicesNs }}
+          port: 5000
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: agentstudio-app-agents
+  namespace: {{ $namespace }}
+  labels:
+    {{- include "edge.labels" . | nindent 4 }}
+spec:
+  parentRefs:
+    - name: {{ $gatewayName }}
+  hostnames:
+    - {{ $consoleHost | quote }}
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /agents
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplacePrefixMatch
+              replacePrefixMatch: /
+      backendRefs:
+        - name: agent-service
+          namespace: {{ $servicesNs }}
+          port: 8000
+---
+# Sibling of the legacy /agents route above: forwards the new SPA's
+# agent-service-maf calls. Strip /agents-maf -> /api/v1 because maf's
+# routers (agent_framework.interface_layer.routes) mount under
+# /api/v1/projects/...; legacy /agents above strips to / for the legacy
+# agent-service contract. The UI base is therefore just /agents-maf (no
+# /api/v1) -- the gateway owns the version mapping.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: agentstudio-app-agents-maf
+  namespace: {{ $namespace }}
+  labels:
+    {{- include "edge.labels" . | nindent 4 }}
+spec:
+  parentRefs:
+    - name: {{ $gatewayName }}
+  hostnames:
+    - {{ $consoleHost | quote }}
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /agents-maf
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplacePrefixMatch
+              replacePrefixMatch: /api/v1
+      backendRefs:
+        - name: agent-service-maf
+          namespace: {{ $servicesNs }}
+          port: 8000
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: agentstudio-app-analytics
+  namespace: {{ $namespace }}
+  labels:
+    {{- include "edge.labels" . | nindent 4 }}
+spec:
+  parentRefs:
+    - name: {{ $gatewayName }}
+  hostnames:
+    - {{ $consoleHost | quote }}
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /analytics
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplacePrefixMatch
+              replacePrefixMatch: /
+      backendRefs:
+        - name: analytics-engine
+          namespace: {{ $servicesNs }}
+          port: 8080
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: agentstudio-app-workflow
+  namespace: {{ $namespace }}
+  labels:
+    {{- include "edge.labels" . | nindent 4 }}
+spec:
+  parentRefs:
+    - name: {{ $gatewayName }}
+  hostnames:
+    - {{ $consoleHost | quote }}
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /workflow
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplacePrefixMatch
+              replacePrefixMatch: /
+      backendRefs:
+        - name: workflow-engine
+          namespace: {{ $servicesNs }}
+          port: 8080
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: agentstudio-app-internal-lakekeeper
+  namespace: {{ $namespace }}
+  labels:
+    {{- include "edge.labels" . | nindent 4 }}
+spec:
+  parentRefs:
+    - name: {{ $gatewayName }}
+  hostnames:
+    - {{ $consoleHost | quote }}
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /internal/lakekeeper
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplacePrefixMatch
+              replacePrefixMatch: /
+      backendRefs:
+        - name: lakekeeper
+          namespace: {{ $platformNs }}
+          port: 8181
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: agentstudio-app-internal-temporal
+  namespace: {{ $namespace }}
+  labels:
+    {{- include "edge.labels" . | nindent 4 }}
+spec:
+  parentRefs:
+    - name: {{ $gatewayName }}
+  hostnames:
+    - {{ $consoleHost | quote }}
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /internal/temporal
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplacePrefixMatch
+              replacePrefixMatch: /
+      backendRefs:
+        - name: temporal-ui
+          namespace: {{ $platformNs }}
+          port: 8080
+{{- if (.Values.observability).enabled }}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: agentstudio-app-prometheus
+  namespace: {{ $namespace }}
+  labels:
+    {{- include "edge.labels" . | nindent 4 }}
+spec:
+  parentRefs:
+    - name: {{ $gatewayName }}
+  hostnames:
+    - {{ $consoleHost | quote }}
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /prometheus
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplacePrefixMatch
+              replacePrefixMatch: /
+      backendRefs:
+        - name: prometheus-prometheus
+          namespace: {{ $monitoringNs }}
+          port: 9090
+{{- end }}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: agentstudio-app-s3
+  namespace: {{ $namespace }}
+  labels:
+    {{- include "edge.labels" . | nindent 4 }}
+spec:
+  parentRefs:
+    - name: {{ $gatewayName }}
+  hostnames:
+    - {{ $consoleHost | quote }}
+  rules:
+    # /s3/* still passes through `apigateway-service` for SigV4 re-signing
+    # (cannot be expressed declaratively). Path is preserved (no rewrite)
+    # because the chi router inside `apigateway-service` mounts at /s3.
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /s3
+      backendRefs:
+        - name: apigateway-service
+          namespace: {{ $servicesNs }}
+          port: 8080
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: agentstudio-app-api-docs
+  namespace: {{ $namespace }}
+  labels:
+    {{- include "edge.labels" . | nindent 4 }}
+spec:
+  parentRefs:
+    - name: {{ $gatewayName }}
+  hostnames:
+    - {{ $consoleHost | quote }}
+  rules:
+    # /api-docs/* serves Swagger UI from `apigateway-service` (kept until
+    # PR-D extracts it to a static-serve Deployment).
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /api-docs
+      backendRefs:
+        - name: apigateway-service
+          namespace: {{ $servicesNs }}
+          port: 8080
+{{- end }}

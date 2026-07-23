@@ -1,0 +1,27 @@
+# .values-parity-allow.yaml — console tier
+#
+# Allow-list for lint-values-parity.py.
+# Each entry suppresses an INTENTIONAL cross-hyperscaler (aks/gke/eks)
+# difference or an ORPHAN key not declared in base values.yaml.
+# values-local.yaml is NOT parity-checked (it strips down the cloud-shaped
+# base by design).
+#
+# Note: console has no values-gke.yaml; GKE uses base defaults.
+
+allow:
+  # ── Storage class ─────────────────────────────────────────────────────────────
+  - global.storageClass
+
+  # ── Endpoint / hostname ───────────────────────────────────────────────────────
+  # AKS overlay bakes endpoint; GKE/EKS receive it via --set.
+  - global.endpoint
+  - endpoint
+
+  # ── Workload Identity (AKS + local) ──────────────────────────────────────────
+  # WI for gui / agent-studio-ui is AKS-only. GKE/EKS WI is a follow-up.
+  - "gui.serviceAccount.create"
+  - "gui.serviceAccount.azureClientId"
+  - "gui.workloadIdentity.enabled"
+  - "agent-studio-ui.serviceAccount.create"
+  - "agent-studio-ui.serviceAccount.azureClientId"
+  - "agent-studio-ui.workloadIdentity.enabled"

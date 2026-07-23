@@ -1,0 +1,48 @@
+{{- if and .Values.enabled .Values.defaultBucket.enabled .Values.defaultBucket.name }}
+{{- $shareList := .Values.defaultBucket.shareToNamespaces | default list -}}
+{{- /* Trident expects a comma-separated string (or "*"); join the list so
+       operators can express intent as a YAML list while the annotation
+       value stays in the wire format Trident parses. */}}
+{{- $shareAnnotation := "" -}}
+{{- if gt (len $shareList) 0 -}}
+  {{- $shareAnnotation = join "," $shareList -}}
+{{- end -}}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "s3gateway.fullname" . }}-default-bucket
+  labels:
+    {{- include "s3gateway.labels" . | nindent 4 }}
+    agentstudio.io/bucket-name: {{ .Values.defaultBucket.name | quote }}
+    agentstudio.io/project-id: "system"
+    agentstudio.io/managed-by: "helm"
+  annotations:
+    agentstudio.io/bucket-name: {{ .Values.defaultBucket.name | quote }}
+    agentstudio.io/project-id: "system"
+    agentstudio.io/managed-by: "helm"
+    agentstudio.io/storage-class: {{ .Values.defaultBucket.storageClass | default "default" | quote }}
+    {{- if $shareAnnotation }}
+    # Authorizes consumer PVCs in the listed namespace(s) to bind to this
+    # ONTAP volume via Trident's shareFromPVC mechanism. The consumer side
+    # must also create a TridentVolumeReference CR.
+    trident.netapp.io/shareToNamespace: {{ $shareAnnotation | quote }}
+    {{- end }}
+spec:
+  # ReadWriteMany by default. Operator can flip every shared PVC at once
+  # via `--set global.accessMode=ReadWriteMany` (or to ReadWriteOnce for
+  # restricted environments); chart-local storage.accessMode applies when
+  # the global isn't set.
+  accessModes:
+    - {{ .Values.global.accessMode | default .Values.storage.accessMode | default "ReadWriteMany" }}
+  resources:
+    requests:
+      storage: {{ .Values.defaultBucket.size | default "10Gi" | quote }}
+  {{- if .Values.defaultBucket.storageClass }}
+  storageClassName: {{ .Values.defaultBucket.storageClass | quote }}
+  {{- else if .Values.global.storageClass }}
+  storageClassName: {{ .Values.global.storageClass | quote }}
+  {{- end }}
+  {{- if .Values.defaultBucket.volumeName }}
+  volumeName: {{ .Values.defaultBucket.volumeName | quote }}
+  {{- end }}
+{{- end }}

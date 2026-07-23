@@ -1,0 +1,114 @@
+{{- if .Values.admissionPolicies.enabled }}
+
+{{- if .Values.admissionPolicies.denyDefaultServiceAccount }}
+---
+# Rejects Deployments that rely on the default ServiceAccount.
+# Activated for namespaces labelled {{ .Values.admissionPolicies.productionLabel.key }}={{ .Values.admissionPolicies.productionLabel.value }}.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: deny-default-serviceaccount
+  labels:
+    {{- include "istio-mesh-policies.labels" . | nindent 4 }}
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["apps"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["deployments"]
+  validations:
+    - expression: >
+        has(object.spec.template.spec.serviceAccountName) &&
+        object.spec.template.spec.serviceAccountName != 'default'
+      message: "Production workloads must set an explicit non-default serviceAccountName."
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: deny-default-serviceaccount-binding
+  labels:
+    {{- include "istio-mesh-policies.labels" . | nindent 4 }}
+spec:
+  policyName: deny-default-serviceaccount
+  validationActions: ["Deny"]
+  matchResources:
+    namespaceSelector:
+      matchLabels:
+        {{ .Values.admissionPolicies.productionLabel.key }}: {{ .Values.admissionPolicies.productionLabel.value }}
+{{- end }}
+
+{{- if .Values.admissionPolicies.denyMtlsDisable }}
+---
+# Prevents anyone from pushing a PeerAuthentication that sets mode: DISABLE.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: deny-mtls-disable
+  labels:
+    {{- include "istio-mesh-policies.labels" . | nindent 4 }}
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["security.istio.io"]
+        apiVersions: ["v1", "v1beta1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["peerauthentications"]
+  validations:
+    - expression: "!has(object.spec.mtls) || object.spec.mtls.mode != 'DISABLE'"
+      message: "PeerAuthentication with mtls.mode DISABLE is forbidden in production."
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: deny-mtls-disable-binding
+  labels:
+    {{- include "istio-mesh-policies.labels" . | nindent 4 }}
+spec:
+  policyName: deny-mtls-disable
+  validationActions: ["Deny"]
+  matchResources:
+    namespaceSelector:
+      matchLabels:
+        {{ .Values.admissionPolicies.productionLabel.key }}: {{ .Values.admissionPolicies.productionLabel.value }}
+{{- end }}
+
+{{- if .Values.admissionPolicies.requireAuthzRules }}
+---
+# Ensures every ALLOW AuthorizationPolicy carries explicit rules (no wildcard ALLOW).
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: require-authz-rules
+  labels:
+    {{- include "istio-mesh-policies.labels" . | nindent 4 }}
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["security.istio.io"]
+        apiVersions: ["v1", "v1beta1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["authorizationpolicies"]
+  validations:
+    - expression: "object.spec.action != 'ALLOW' || has(object.spec.rules)"
+      message: "ALLOW AuthorizationPolicy must include explicit rules."
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: require-authz-rules-binding
+  labels:
+    {{- include "istio-mesh-policies.labels" . | nindent 4 }}
+spec:
+  policyName: require-authz-rules
+  validationActions: ["Deny"]
+  matchResources:
+    namespaceSelector:
+      matchLabels:
+        {{ .Values.admissionPolicies.productionLabel.key }}: {{ .Values.admissionPolicies.productionLabel.value }}
+{{- end }}
+
+{{- end }}

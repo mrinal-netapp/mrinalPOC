@@ -1,0 +1,54 @@
+# Restore (or install on cache miss) node_modules for a single Node workspace
+# under `src/nemo/<service>` or `src/common`. Callers are expected to run
+# `actions/checkout` and `actions/setup-node` once per job before invoking
+# this action — Node setup is intentionally kept outside so a single job can
+# call this action multiple times (e.g. once per workspace) without redoing
+# Node installation or clobbering the npm-cache configuration.
+#
+# Cache key is shared across all jobs/workflows in the repo so the first job
+# to populate it on a cold cache warms it for every subsequent job.
+#
+# The `workspace` input is the path (relative to repo root) to the package
+# directory containing `package.json` and `package-lock.json` — e.g.
+# `src/nemo/agent-studio-ui`, `src/nemo/config-service`, `src/common`.
+
+name: Setup workspace dependencies
+description: Restore node_modules for a Node workspace; run `npm ci` only on cache miss.
+
+inputs:
+  workspace:
+    description: 'Path (relative to repo root) of the Node workspace (e.g. src/nemo/agent-studio-ui).'
+    required: true
+
+outputs:
+  cache-hit:
+    description: 'true if node_modules was restored from cache; false if `npm ci` ran.'
+    value: ${{ steps.cache.outputs.cache-hit }}
+
+runs:
+  using: composite
+  steps:
+    - name: Compute workspace cache key slug
+      id: slug
+      shell: bash
+      run: |
+        slug="$(echo '${{ inputs.workspace }}' | tr '/' '-')"
+        echo "slug=$slug" >> "$GITHUB_OUTPUT"
+
+    - name: Restore ${{ inputs.workspace }} node_modules cache
+      id: cache
+      uses: actions/cache@v4
+      with:
+        path: ${{ inputs.workspace }}/node_modules
+        key: ${{ runner.os }}-nm-${{ steps.slug.outputs.slug }}-${{ hashFiles('.nvmrc') }}-${{ hashFiles(format('{0}/package-lock.json', inputs.workspace)) }}
+
+    # Fallback install when the cache is cold (e.g. lockfile or .nvmrc
+    # changed, or the upstream setup job hasn't populated the cache yet).
+    # Without this, downstream commands would silently rely on `npx`
+    # bootstrapping packages on demand and break for tools that need
+    # node_modules to be present (typecheck, vite build, jest, etc.).
+    - name: Install ${{ inputs.workspace }} dependencies (cache miss)
+      if: steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      working-directory: ${{ inputs.workspace }}
+      run: npm ci

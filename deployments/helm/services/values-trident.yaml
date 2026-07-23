@@ -1,0 +1,35 @@
+# Trident overlay for the services tier.
+#
+# Composed on top of values.yaml (+ values-local.yaml or values-aks.yaml).
+# Flips the services-namespace default-bucket PVC from its base storage
+# class to NetApp Trident's `ontap-nas` and asks Trident to bind it to the
+# SAME ONTAP volume that workers/s3gateway use — so kb-retrieval-service
+# and artifact-service read the live files written by the dataset / KB
+# workers, with no copy step and no cross-namespace mount tricks.
+#
+# Pair with the workers-tier Trident overlay (which authorizes the share
+# on the source PVC). Both must apply in the same install for the bind to
+# work:
+#   make helm-workers-upgrade-local  HELM_EXTRA_ARGS='-f deployments/helm/workers/values-trident.yaml'
+#   make helm-services-upgrade-local HELM_EXTRA_ARGS='-f deployments/helm/services/values-trident.yaml'
+#
+# Requirements:
+#   - Trident 24.10+ with the TridentVolumeReference CRD (sks6316 ships 26.02).
+#   - The workers source PVC must already exist and be RWX on ontap-nas.
+#   - Migration from a prior hostPath PV requires deleting the existing
+#     services-namespace PVC + the kb-retrieval-service / artifact-service
+#     pods holding its mount, so Trident can create the new bind from
+#     scratch. See default-bucket-pvc.yaml's template comment for the
+#     step-by-step.
+
+defaultBucketPvc:
+  create: true
+  accessMode: ReadWriteMany
+  size: "10Gi"
+  storageClass: "ontap-nas"
+  # Leave volumeName empty — Trident binds via the shareFromPVC annotation,
+  # not a static PV reference.
+  volumeName: ""
+  shareFromPVC:
+    namespace: agentstudio-workers
+    name: s3gateway-default-bucket

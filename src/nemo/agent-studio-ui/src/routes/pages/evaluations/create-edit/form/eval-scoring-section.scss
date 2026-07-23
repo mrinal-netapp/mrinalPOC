@@ -1,0 +1,45 @@
+@use "@/styles/mixins" as *;
+
+.eval-scoring-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-top: 8px;
+}
+
+.eval-configure-card-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+
+  &--error .eval-configure-card {
+    border-color: var(--notification-error);
+  }
+}
+
+.eval-configure-card-error {
+  margin: 0;
+}
+
+.eval-configure-card {
+  width: 100%;
+  min-width: 0;
+}
+
+.eval-scoring-test-cases {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+@include mobile {
+  .eval-configure-card {
+    .card-header {
+      align-items: flex-start;
+      gap: 12px;
+    }
+  }
+}

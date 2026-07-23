@@ -1,0 +1,176 @@
+@use "@/styles/mixins" as *;
+
+.eval-runs-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  min-width: 0;
+}
+
+// The runs table has many columns. Let it size to its own column widths and
+// scroll horizontally inside the wrapper, instead of squeezing every column to
+// fit. Each column keeps its TanStack `size` (sum ~= 1420px); min-width: 100%
+// makes the table fill the panel when there's room, so gaps stay limited.
+.eval-runs-panel .dt-table-wrapper .table {
+  width: max-content;
+  min-width: 100%;
+  // Sticky cells require a separated border model to position reliably.
+  // Row/column separators are drawn via cell box-shadows, so this is safe.
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+// Pin the Name (first) column to the left and the Results (last) column to the
+// right so they stay in view while the middle columns scroll. Sticky cells
+// need an opaque background or the scrolling content shows through.
+.eval-runs-panel .dt-table .dt-header:first-child,
+.eval-runs-panel .dt-table .table-cell:first-child {
+  position: sticky;
+  left: 0;
+  z-index: 3;
+  background: var(--background-content);
+  box-shadow:
+    inset 0 -1px 0 0 var(--border-main),
+    2px 0 4px -2px rgba(0, 0, 0, 0.1);
+}
+
+.eval-runs-panel .dt-table .dt-header:last-child,
+.eval-runs-panel .dt-table .table-cell:last-child {
+  position: sticky;
+  right: 0;
+  z-index: 3;
+  background: var(--background-content);
+  box-shadow:
+    inset 0 -1px 0 0 var(--border-main),
+    -2px 0 4px -2px rgba(0, 0, 0, 0.1);
+}
+
+// The header row uses a darker surface; keep the pinned header cells matching.
+.eval-runs-panel .dt-table .dt-header:first-child,
+.eval-runs-panel .dt-table .dt-header:last-child {
+  z-index: 4;
+  background: var(--background-table-header);
+}
+
+// Keep pinned cells opaque on row hover/selection so nothing bleeds through.
+.eval-runs-panel .dt-table .dt-row:hover .table-cell:first-child,
+.eval-runs-panel .dt-table .dt-row:hover .table-cell:last-child,
+.eval-runs-panel .dt-table .dt-row[data-state="selected"] .table-cell:first-child,
+.eval-runs-panel .dt-table .dt-row[data-state="selected"] .table-cell:last-child {
+  background: var(--background-hover);
+}
+
+.eval-runs-panel__name-link {
+  appearance: none;
+  border: none;
+  background: none;
+  padding: 0;
+  font: inherit;
+  text-align: left;
+  color: var(--text-button-primary);
+  cursor: pointer;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.eval-runs-panel__name-link:hover,
+.eval-runs-panel__name-link:focus-visible {
+  text-decoration: underline;
+}
+
+// The outline button forces a 152px min-width, which clips the compact "View"
+// action inside the Results cell. Size it to its content instead.
+.eval-runs-panel__view-btn {
+  min-width: unset;
+}
+
+.eval-runs-panel__schedule-card {
+  width: 100%;
+}
+
+// Keep the edit + chevron controls together on the right side of the header.
+.eval-runs-panel__schedule-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.eval-runs-panel__schedule-grid {
+  align-items: stretch;
+}
+
+.eval-runs-panel__schedule-cell {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 8px;
+}
+
+.eval-runs-panel__schedule-active {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.eval-runs-panel__baseline-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.eval-runs-panel__results-cell {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.eval-runs-panel__expanded-card {
+  width: 100%;
+}
+
+.eval-runs-panel__expanded-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.eval-runs-panel__expanded-grid {
+  align-items: stretch;
+}
+
+.eval-runs-panel__expanded-cell {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 8px;
+}
+
+.eval-runs-panel__metric-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+@include tablet {
+  .eval-runs-panel__schedule-grid,
+  .eval-runs-panel__expanded-grid {
+    grid-template-columns: 1fr 1fr !important;
+  }
+
+  .eval-runs-panel__schedule-cell.card-block--side-separator::after,
+  .eval-runs-panel__expanded-cell.card-block--side-separator::after {
+    display: none;
+  }
+}
+
+@include mobile {
+  .eval-runs-panel__schedule-grid,
+  .eval-runs-panel__expanded-grid {
+    grid-template-columns: 1fr !important;
+  }
+}

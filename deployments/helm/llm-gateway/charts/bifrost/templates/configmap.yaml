@@ -1,0 +1,81 @@
+{{- if .Values.enabled }}
+{{- /*
+Build the optional `framework.pricing` block only when an override is set.
+Without overrides we omit the block entirely so bifrost uses its built-in
+defaults (https://getbifrost.ai/datasheet, https://getbifrost.ai/datasheet/model-parameters),
+preserving original chart behavior for clusters with unrestricted egress.
+*/}}
+{{- $pricingOverridden := or .Values.pricing.pricingUrl .Values.pricing.modelParametersUrl }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "bifrost.fullname" . }}-config
+  labels:
+    {{- include "bifrost.labels" . | nindent 4 }}
+data:
+  config.json: |-
+    {
+      "$schema": "https://www.getbifrost.ai/schema",
+      "config_store": {
+        "enabled": true,
+        "type": "postgres",
+        "config": {
+          "host": "env.POSTGRES_HOST",
+          "port": "env.POSTGRES_PORT",
+          "user": "env.POSTGRES_USER",
+          "password": "env.POSTGRES_PASSWORD",
+          "db_name": "env.POSTGRES_DB",
+          "ssl_mode": "env.POSTGRES_SSL_MODE"
+        }
+      },
+      "logs_store": {
+        "enabled": true,
+        "type": "postgres",
+        "config": {
+          "host": "env.POSTGRES_HOST",
+          "port": "env.POSTGRES_PORT",
+          "user": "env.POSTGRES_USER",
+          "password": "env.POSTGRES_PASSWORD",
+          "db_name": "env.POSTGRES_DB",
+          "ssl_mode": "env.POSTGRES_SSL_MODE",
+          "max_idle_conns": 10,
+          "max_open_conns": 100
+        },
+        "retention_days": 90
+      }{{- if $pricingOverridden }},
+      "framework": {
+        "pricing": {
+          {{- if .Values.pricing.pricingUrl }}
+          "pricing_url": {{ .Values.pricing.pricingUrl | quote }},
+          {{- end }}
+          {{- if .Values.pricing.modelParametersUrl }}
+          "model_parameters_url": {{ .Values.pricing.modelParametersUrl | quote }},
+          {{- end }}
+          "pricing_sync_interval": {{ .Values.pricing.syncIntervalSeconds | default 86400 }}
+        }
+      }
+      {{- end }}
+    }
+{{- end }}
+{{- if and .Values.enabled (or .Values.pricing.localFiles.pricingData .Values.pricing.localFiles.modelParametersData) }}
+---
+# Local-files ConfigMap (airgapped / MITM-egress clusters).
+# Populated from values via --set-file. Mounted at /app/pricing-data in
+# the bifrost pod; reference the files from `pricing.pricingUrl` /
+# `pricing.modelParametersUrl` as `file:///app/pricing-data/<name>`.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "bifrost.fullname" . }}-pricing-data
+  labels:
+    {{- include "bifrost.labels" . | nindent 4 }}
+data:
+  {{- with .Values.pricing.localFiles.pricingData }}
+  pricing.json: |-
+{{ . | indent 4 }}
+  {{- end }}
+  {{- with .Values.pricing.localFiles.modelParametersData }}
+  model-parameters.json: |-
+{{ . | indent 4 }}
+  {{- end }}
+{{- end }}

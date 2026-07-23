@@ -1,0 +1,75 @@
+[package]
+name = "kb-retrieval-service"
+version = "0.1.0"
+edition = "2024"
+description = "High-performance knowledge base retrieval service using native LanceDB Rust SDK"
+authors = ["Nemo Platform"]
+
+[[bin]]
+name = "kb-retrieval-service"
+path = "src/main.rs"
+
+[lib]
+name = "kb_retrieval_service"
+path = "src/lib.rs"
+
+[dependencies]
+# HTTP framework
+axum = { version = "0.8", features = ["json", "macros"] }
+tokio = { version = "1", features = ["full"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors", "trace", "timeout"] }
+
+# LanceDB native Rust SDK (local filesystem only — data is read from a shared PVC mount)
+lancedb = "0.26"
+# Arrow versions must match lancedb 0.26's transitive dependency (^57.2)
+arrow-array = "57"
+arrow-schema = "57"
+futures = "0.3"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Embedding gateway client. Replaces in-process ONNX/tokenizers (see Phase 4
+# of the unified-embedding port). Queries hit Bifrost at /litellm/v1/embeddings
+# with the per-project virtual-key bearer threaded in by route handlers.
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+
+# Connection pool (LRU + TTL)
+moka = { version = "0.12", features = ["future"] }
+
+# Per-project Bifrost VK from K8s (same Secret as config-service)
+kube = { version = "0.99", features = ["runtime"] }
+k8s-openapi = { version = "0.24", features = ["latest"] }
+
+# Logging / tracing / metrics — delegated to the AgentStudio observability client
+agentstudio-observability-client-runtime = { path = "../../common-rs/observability/observability-client" }
+# OTel API re-used directly for pool gauge/counter instruments
+opentelemetry = { version = "0.32", default-features = false, features = ["metrics"] }
+tracing = "0.1"
+
+# Utilities
+chrono = { version = "0.4", features = ["serde"] }
+thiserror = "2"
+anyhow = "1"
+
+[features]
+# Test-only constructors on ProjectGatewayResolver (with_fixed_auth_for_tests /
+# disabled_for_tests). Enabled automatically for this crate's own test build via
+# the dev-dependency self-reference below, so production/release builds
+# (`cargo build --release`, which pulls no dev-dependencies) never compile these
+# K8s-bypassing helpers. Not a runtime feature — do not enable it in the binary.
+test-support = []
+
+[dev-dependencies]
+# Testing HTTP routes
+http-body-util = "0.1"
+tower = { version = "0.5", features = ["util"] }
+# Integration-test fixtures (LanceDB tables + mock embedding gateway). lancedb,
+# arrow-array, arrow-schema and serde_json are already normal [dependencies] and
+# are available to tests without re-declaration here.
+tempfile = "3"
+# Self-reference to turn on `test-support` for integration tests in tests/, which
+# (unlike unit tests) don't get cfg(test) on the library crate.
+kb-retrieval-service = { path = ".", features = ["test-support"] }

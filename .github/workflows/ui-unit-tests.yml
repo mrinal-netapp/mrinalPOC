@@ -1,0 +1,124 @@
+# PR-time UI lint / typecheck / unit-tests-with-coverage are owned by
+# `main.yml` (the sticky "UI Test Results" PR comment comes from there).
+# This workflow is used only for post-merge validation on main, the weekly
+# scheduled run, and manual dispatch (e.g. running only tagged tests via
+# the `tag_filter` input).
+
+name: UI – Lint, Typecheck & Unit Tests
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/nemo/agent-studio-ui/**'
+      - '.nvmrc'
+  schedule:
+    # Saturday at 06:00 UTC
+    - cron: '0 6 * * 6'
+  workflow_dispatch:
+    inputs:
+      test_scope:
+        description: "'all', 'changed', or a path pattern (e.g. src/components)"
+        required: false
+        default: 'all'
+      tag_filter:
+        description: "Tag name to match (e.g. smoke). Supports regex in the tag value (e.g. smoke|router). Leave empty to run all."
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+  pull-requests: write
+
+# Cancel in-progress runs on the same ref when a newer push arrives
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit-tests:
+    name: UI Unit Tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: src/nemo/agent-studio-ui
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: src/nemo/agent-studio-ui/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npx tsc -b
+
+      # push / schedule — always run the full suite with all reporters
+      - name: Run tests (full suite)
+        if: github.event_name != 'workflow_dispatch'
+        run: npm run test:ci
+
+      # workflow_dispatch — build command dynamically from inputs
+      - name: Run tests (manual dispatch)
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          TEST_SCOPE: ${{ inputs.test_scope }}
+          TAG_FILTER: ${{ inputs.tag_filter }}
+        run: |
+          if [ -n "$TAG_FILTER" ]; then
+            # Wrap the value in \[tag:(...)\] so brackets are literal
+            # but the tag value itself is treated as a regex.
+            # e.g. "smoke"         → \[tag:(smoke)\]
+            # e.g. "smoke|router"  → \[tag:(smoke|router)\]
+            TAG_ARGS=(--testNamePattern "\[tag:(${TAG_FILTER})\]")
+          else
+            TAG_ARGS=()
+          fi
+
+          REPORTER_FLAGS=(
+            --reporter default
+            --reporter verbose
+            --reporter json
+            --reporter junit
+          )
+
+          OUTPUT_FLAGS=(
+            --outputFile.json=src/utils/unit-tests/test-results/results.json
+            --outputFile.junit=src/utils/unit-tests/test-results/junit.xml
+          )
+
+          if [ "$TEST_SCOPE" = "all" ]; then
+            npx vitest run --config vitest.config.ts --coverage "${TAG_ARGS[@]}" "${REPORTER_FLAGS[@]}" "${OUTPUT_FLAGS[@]}"
+          elif [ "$TEST_SCOPE" = "changed" ]; then
+            npx vitest run --config vitest.config.ts --changed origin/main --coverage "${TAG_ARGS[@]}" "${REPORTER_FLAGS[@]}" "${OUTPUT_FLAGS[@]}"
+          else
+            npx vitest run --config vitest.config.ts "$TEST_SCOPE" --coverage "${TAG_ARGS[@]}" "${REPORTER_FLAGS[@]}" "${OUTPUT_FLAGS[@]}"
+          fi
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: src/nemo/agent-studio-ui/src/utils/unit-tests/coverage/
+          retention-days: 30
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: src/nemo/agent-studio-ui/src/utils/unit-tests/test-results/
+          retention-days: 30

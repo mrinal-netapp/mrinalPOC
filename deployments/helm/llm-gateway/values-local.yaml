@@ -1,0 +1,24 @@
+# Local Kubernetes overlay for the llm-gateway tier.
+# Works on KIND, Docker Desktop, k3d, minikube.
+#
+# Differences from values-aks.yaml:
+#   - ServiceAccount created explicitly and bound to the existing local/KIND federated UAMI
+#   - No ANF storage class
+#   - ServiceMonitor disabled (Prometheus CRDs usually absent on local)
+#
+# Usage: helm upgrade --install ... -f values.yaml -f values-local.yaml
+
+global:
+  imageRepository: "docker.repo.eng.netapp.com/user/rp29322"
+  storageClass: ""           # use cluster default
+  gatewayHttpsPort: "8443"   # KIND can't bind <1024; cloud uses 443 default.
+
+bifrost:
+  serviceAccount:
+    create: true
+    azureClientId: "9d594dfe-3c63-4c5f-874e-13a49262fd7f"
+  workloadIdentity:
+    enabled: true
+  metrics:
+    serviceMonitor:
+      enabled: false

@@ -1,0 +1,82 @@
+.select-dropdown-demo {
+  display: flex;
+  flex-direction: column;
+  gap: 2rem;
+  padding: 2rem;
+  width: 100%;
+  height: 100vh;
+  overflow-y: auto;
+}
+
+.select-dropdown-demo-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.select-dropdown-demo-title {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.select-dropdown-demo-description {
+  font-size: 0.75rem;
+  color: var(--text-disabled);
+  margin-top: -0.25rem;
+}
+
+.select-dropdown-demo-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.select-dropdown-demo-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 14rem;
+
+  & label {
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: var(--text-secondary);
+  }
+}
+
+.select-dropdown-demo-wide {
+  width: 20rem;
+}
+
+// ---- Item cell demo layout -----------------------------------------------
+
+.item-cell-demo {
+  display: flex;
+  gap: 2rem;
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.item-cell-demo__panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  width: 24rem; // 384px — matches Figma panel width
+}
+
+.item-cell-demo__panel-title {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  padding-left: 0.25rem;
+}
+
+.item-cell-demo__panel-content {
+  // Override the anchor-width / available-height CSS vars used by the popup
+  position: static !important;
+  width: 100% !important;
+  max-height: none !important;
+  box-shadow: 2px 2px 6px 0px var(--border-drop-shadow);
+}

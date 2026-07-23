@@ -1,0 +1,34 @@
+.agent-rate-limiting-config-dialog {
+  width: 100%;
+
+  // Mirrors Card{Header,Footer}'s `padding-inline: 40px` so the
+  // description, toggle, and numeric input line up with the dialog
+  // title above and the action buttons below. UA-margin reset is needed
+  // because `Typography Component="p"` renders a real <p>; default UA
+  // margins would stack on top of the flex gaps and balloon the layout.
+
+  &__content {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    padding: 24px 40px;
+
+    p {
+      margin: 0;
+    }
+  }
+
+  &__toggle-row {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  &__field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    width: 100%;
+    max-width: 520px;
+  }
+}

@@ -1,0 +1,53 @@
+{{- /*
+  RBAC for the main nemo service account.
+  This allows services using the nemo service account to read secrets
+  (needed for init containers that wait for keycloak-oidc-secrets to be populated).
+  Only rendered when serviceAccount.create=true to avoid inadvertently granting
+  the namespace default ServiceAccount access to keycloak-oidc-secrets.
+*/}}
+{{- if .Values.serviceAccount.create }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "nemo.fullname" . }}-secret-reader
+  namespace: {{ include "nemo.namespace" . }}
+  labels:
+    {{- include "nemo.labels" . | nindent 4 }}
+    app.kubernetes.io/component: rbac
+rules:
+- apiGroups: [""]
+  resources: ["secrets"]
+  resourceNames: ["keycloak-oidc-secrets"]
+  verbs: ["get"]
+# Per-project Bifrost virtual keys (Secret as-proj-{projectId}-vk) for kb-retrieval-service.
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "nemo.fullname" . }}-secret-reader
+  namespace: {{ include "nemo.namespace" . }}
+  labels:
+    {{- include "nemo.labels" . | nindent 4 }}
+    app.kubernetes.io/component: rbac
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "nemo.fullname" . }}-secret-reader
+subjects:
+- kind: ServiceAccount
+  name: {{ include "nemo.serviceAccountName" . }}
+  namespace: {{ include "nemo.namespace" . }}
+# kb-retrieval-service runs under its own ServiceAccount (not the shared
+# `services` SA) so it can carry an Azure workload-identity client-id. It must
+# read the per-project Bifrost virtual-key Secret (`as-proj-{projectId}-vk`) to
+# embed search queries; without this subject the K8s API 403s the get-secret
+# call and searches fail with a 503 ("not authorised to read the Bifrost
+# virtual-key Secret"). The `get secrets` rule above already exists for it.
+- kind: ServiceAccount
+  name: kb-retrieval-service
+  namespace: {{ include "nemo.namespace" . }}
+{{- end }}

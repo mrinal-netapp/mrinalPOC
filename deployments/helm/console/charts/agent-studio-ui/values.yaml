@@ -1,0 +1,79 @@
+enabled: true
+replicaCount: 1
+
+image:
+  repository: nemo/agent-studio-ui
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 9000
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+# Backend services proxied via the in-pod nginx (DEPLOY-TIME upstream selection).
+#
+# The UI bundle requests gateway-style /api/* paths (e.g. /api/agent,
+# /api/v1/config-service, /api/v1/utilities). nginx forwards /api/* here.
+#
+# NOTE: apigateway-service does NOT currently expose /api/* routes — its mounts
+# are /config, /agents, /workflow, /kb, /analytics, /console, /s3, /api-docs,
+# /internal/*. So pointing /api at apigateway is forward-compat only; until the
+# missing /api/* routes are added (or the frontend uses existing prefixes), the
+# UI's API calls will 404. See README.md for the integration TODO.
+apiService:
+  name: apigateway-service
+  port: 8080
+
+workflowService:
+  name: workflow-engine
+  port: 8080
+
+auth:
+  enabled: true
+  keycloakClientId: agentstudio-gui
+
+# Documents the VITE_BASE_PATH baked into the image at Docker build time.
+# scripts/docker-build.sh defaults to /studio — matches the apigateway /studio
+# mount (src/nemo/apigateway-service/main.go). Vite bakes this into the bundle
+# so index.html references /studio/assets/* which the gateway routes correctly.
+# To change the gateway prefix, rebuild the image with a matching VITE_BASE_PATH.
+basePath: "/studio"
+
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 9000
+  initialDelaySeconds: 10
+  periodSeconds: 30
+
+readinessProbe:
+  httpGet:
+    path: /health
+    port: 9000
+  initialDelaySeconds: 5
+  periodSeconds: 10
+
+# Passed from parent chart
+namespace: ""
+serviceAccountName: ""
+podSecurityContext: {}
+securityContext: {}
+nodeSelector: {}
+affinity: {}
+tolerations: {}
+
+serviceAccount:
+  create: false
+  name: ""
+  azureClientId: ""
+
+workloadIdentity:
+  enabled: false

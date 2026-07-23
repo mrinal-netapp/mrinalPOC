@@ -1,0 +1,294 @@
+# Pre-prod AWS (EKS): infra -> storage -> deploy.
+#
+# Deploy is self-contained in this workflow (does NOT call deploy-reusable.yml).
+#
+# GitHub Environment `aws` (OIDC + vars):
+#   AWS_ROLE_ARN, AWS_REGION
+#   OIDC subject: repo:<org>/<repo>:environment:aws
+#
+# Helm deploy settings come from deployments/aws/envs/preprod.yaml:
+#   application.endpoint, containerRegistry.loginServer, region, stackName
+#
+# The deploy job assumes AWS_ROLE_ARN via OIDC, runs aws eks update-kubeconfig,
+# then `make deploy CLOUD=aws ENV=preprod` (same env-file mode as Azure preprod).
+# EKS cluster name is stackName from preprod.yaml (CFN EksCluster.Name = AWS::StackName).
+# The CI role that ran infra apply is typically already cluster-admin on EKS;
+# add it to operatorAccess.principalArns in preprod.yaml for explicit AccessEntry
+# on stack updates (and for human SSO roles separately).
+#
+# Usage:
+#   gh workflow run deploy-preprod-aws.yml -f image_tag=1.0.0-rc.1
+#   gh workflow run deploy-preprod-aws.yml -f image_tag=1.0.0-rc.1 -f skip_infra_storage=false
+
+name: Deploy Pre-Prod AWS
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Container image tag to deploy (e.g. 1.0.0-rc.1)"
+        required: true
+        type: string
+      skip_infra_storage:
+        description: "Skip infra plan/apply and storage (deploy Helm tiers only)"
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: deploy-preprod-aws
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate (aws/preprod)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify env yaml exists
+        shell: bash -e {0}
+        run: |
+          python3 -c "import yaml" 2>/dev/null || python3 -m pip install --user pyyaml
+          ENV_FILE="deployments/aws/envs/preprod.yaml"
+          if [[ ! -f "$ENV_FILE" ]]; then
+            echo "::error::Missing $ENV_FILE" >&2
+            exit 1
+          fi
+          ey() { python3 deployments/_lib/env_yaml.py --file "$ENV_FILE" --path "$1"; }
+          REGION="$(ey region)"
+          if [[ -n "$REGION" ]]; then
+            echo "AWS_REGION=$REGION" >> "$GITHUB_ENV"
+          fi
+          echo "Using $ENV_FILE (image_tag=${{ inputs.image_tag }})" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "  endpoint             : $(ey application.endpoint)" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "  container image repo : $(ey containerRegistry.loginServer)" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "  stack / cluster      : $(ey stackName)" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "  region               : $(ey region)" | tee -a "$GITHUB_STEP_SUMMARY"
+
+  infra-plan:
+    name: Infra plan (aws/preprod)
+    needs: validate
+    if: ${{ !inputs.skip_infra_storage }}
+    runs-on: ubuntu-latest
+    environment: aws
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: AWS login (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region:     ${{ env.AWS_REGION || vars.AWS_REGION }}
+
+      - name: Infra plan
+        shell: bash -euo pipefail {0}
+        run: |
+          make infra CLOUD=aws ENV='preprod' ACTION=plan \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+
+  infra-apply:
+    name: Infra apply (aws/preprod)
+    needs: infra-plan
+    if: ${{ !inputs.skip_infra_storage }}
+    runs-on: ubuntu-latest
+    environment: aws
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: AWS login (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region:     ${{ env.AWS_REGION || vars.AWS_REGION }}
+
+      - name: Infra apply
+        shell: bash -euo pipefail {0}
+        run: |
+          make infra CLOUD=aws ENV='preprod' ACTION=apply \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+
+  storage:
+    name: Storage (aws/preprod)
+    needs: infra-apply
+    if: ${{ !inputs.skip_infra_storage }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: aws
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: AWS login (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region:     ${{ env.AWS_REGION || vars.AWS_REGION }}
+
+      - name: Storage (make storage)
+        shell: bash -euo pipefail {0}
+        run: |
+          python3 -c "import yaml" 2>/dev/null || python3 -m pip install --user pyyaml
+          make storage CLOUD=aws ENV='preprod' \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+
+  deploy:
+    name: Deploy (aws/preprod)
+    needs: [validate, infra-plan, infra-apply, storage]
+    if: |
+      always() &&
+      needs.validate.result == 'success' &&
+      (inputs.skip_infra_storage || needs.storage.result == 'success')
+    runs-on: [self-hosted, netapp]
+    environment: aws
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve cluster from preprod env file
+        shell: bash -euo pipefail {0}
+        run: |
+          python3 -c "import yaml" 2>/dev/null || python3 -m pip install --user pyyaml
+          ENV_FILE="deployments/aws/envs/preprod.yaml"
+          ey() { python3 deployments/_lib/env_yaml.py --file "$ENV_FILE" --path "$1"; }
+          REGION="$(ey region)"
+          CLUSTER="$(ey stackName)"
+          if [[ -z "$REGION" || -z "$CLUSTER" ]]; then
+            echo "::error::Missing region or stackName in $ENV_FILE" >&2
+            exit 1
+          fi
+          {
+            echo "AWS_REGION=$REGION"
+            echo "EKS_CLUSTER_NAME=$CLUSTER"
+          } >> "$GITHUB_ENV"
+          echo "EKS: $CLUSTER ($REGION)"
+          # CFN sets EksCluster.Name to AWS::StackName (same as stackName above).
+
+      - name: Ensure AWS CLI is installed
+        shell: bash -e {0}
+        run: |
+          if command -v aws >/dev/null 2>&1; then
+            echo "aws already installed: $(aws --version 2>&1 | head -1)"
+            exit 0
+          fi
+          echo "Installing AWS CLI..."
+          if command -v sudo >/dev/null 2>&1; then SUDO="sudo"; else SUDO=""; fi
+          if command -v apt-get >/dev/null 2>&1; then
+            $SUDO apt-get update -y
+            $SUDO apt-get install -y unzip curl
+          fi
+          tmp_dir="${RUNNER_TEMP:-/tmp}/awscli-installer"
+          rm -rf "$tmp_dir"
+          mkdir -p "$tmp_dir"
+          curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "$tmp_dir/awscliv2.zip"
+          unzip -q "$tmp_dir/awscliv2.zip" -d "$tmp_dir"
+          $SUDO "$tmp_dir/aws/install" --update
+          aws --version
+
+      - name: AWS login (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region:     ${{ env.AWS_REGION || vars.AWS_REGION }}
+
+      - name: Set EKS kubeconfig
+        shell: bash -euo pipefail {0}
+        run: |
+          export KUBECONFIG="${RUNNER_TEMP:-/tmp}/eks-kubeconfig"
+          mkdir -p "$(dirname "$KUBECONFIG")"
+          : > "$KUBECONFIG"
+          chmod 600 "$KUBECONFIG"
+          echo "KUBECONFIG=$KUBECONFIG" >> "$GITHUB_ENV"
+          aws eks update-kubeconfig \
+            --name "$EKS_CLUSTER_NAME" \
+            --region "$AWS_REGION" \
+            --kubeconfig "$KUBECONFIG"
+
+      - name: Setup Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v4.2.1
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: v1.30.0
+
+      - name: Verify cluster access
+        shell: bash -e {0}
+        run: |
+          kubectl cluster-info
+          kubectl get nodes -o wide || true
+
+      - name: Install Istio prerequisites
+        shell: bash -e {0}
+        run: |
+          python3 -c "import yaml" 2>/dev/null || python3 -m pip install --user pyyaml
+          endpoint="$(python3 deployments/_lib/env_yaml.py --file deployments/aws/envs/preprod.yaml --path application.endpoint)"
+          make istio-prereq ENDPOINT="$endpoint"
+
+      - name: Verify Istio prerequisites
+        shell: bash -e {0}
+        run: make verify-istio-gateway
+
+      - name: Verify EKS deploy scripts
+        shell: bash -euo pipefail {0}
+        run: |
+          test -f deployments/aws/scripts/eks-install-lbc.sh || { echo "::error::Missing deployments/aws/scripts/eks-install-lbc.sh — push/pull latest branch"; exit 1; }
+          test -f deployments/aws/scripts/eks-edge-helm-sets.sh || { echo "::error::Missing deployments/aws/scripts/eks-edge-helm-sets.sh"; exit 1; }
+
+      - name: Deploy (make deploy)
+        shell: bash -euo pipefail {0}
+        env:
+          IMAGE_TAG: ${{ inputs.image_tag }}
+        run: |
+          # Env-file mode: ENDPOINT, CONTAINER_IMAGE_REPO, KEYCLOAK_HOSTNAME
+          # are read from deployments/aws/envs/preprod.yaml by make deploy.
+          # Unset Entra-related env vars so AZURE_TENANT_ID / partial Entra
+          # config does not trip helm-identity-install-eks guards.
+          unset KEYCLOAK_ENTRA_APP_CLIENT_ID KEYCLOAK_TENANT_ID \
+            KEYCLOAK_ENTRA_GROUP_ADMINS_OBJECTID KEYCLOAK_ENTRA_GROUP_MEMBERS_OBJECTID \
+            KEYCLOAK_HOSTNAME || true
+          make deploy CLOUD=aws ENV=preprod \
+            IMAGE_TAG="$IMAGE_TAG" \
+            OBSERVABILITY=1
+
+      - name: Show release status
+        if: always()
+        shell: bash -e {0}
+        run: |
+          for ns in database agentstudio-identity agentstudio-platform \
+                    agentstudio-llm-gateway agentstudio-services agentstudio-console \
+                    agentstudio-workers agentstudio-edge monitoring; do
+            echo "--- Releases in $ns ---"
+            helm list -n "$ns" 2>/dev/null || true
+          done
+
+  pipeline-status:
+    name: Pipeline result
+    if: always()
+    needs: [validate, infra-plan, infra-apply, storage, deploy]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail if any stage failed
+        shell: bash -e {0}
+        run: |
+          fail() { echo "::error::$1" >&2; exit 1; }
+          [[ "${{ needs.validate.result }}" == "success" ]] || fail "Validate failed"
+          if [[ "${{ inputs.skip_infra_storage }}" != "true" ]]; then
+            [[ "${{ needs.infra-plan.result }}"  == "success" ]] || fail "Infra plan failed"
+            [[ "${{ needs.infra-apply.result }}" == "success" ]] || fail "Infra apply failed"
+            [[ "${{ needs.storage.result }}"     == "success" ]] || fail "Storage failed"
+          else
+            echo "Skipped infra + storage (skip_infra_storage=true)"
+          fi
+          [[ "${{ needs.deploy.result }}" == "success" ]] || fail "Deploy failed"
+          echo "All stages succeeded."

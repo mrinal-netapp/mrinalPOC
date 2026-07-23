@@ -1,0 +1,211 @@
+# Workers tier umbrella values
+# Namespace: agentstudio-workers (set via Helm --namespace at install time)
+#
+# Cross-namespace dependencies (all via ExternalName services):
+#   temporal        → agentstudio-platform
+#   lakekeeper      → agentstudio-platform
+#   workflow-engine → agentstudio-services
+#   config-service  → agentstudio-services
+#   keycloak        → agentstudio-identity
+#
+# Co-located in this namespace:
+#   s3gateway       (moved from agentstudio-platform)
+#   storage-manager (moved from agentstudio-services)
+#
+# Secrets created in this namespace:
+#   nemo-s3gateway-credentials (created by s3gateway sub-chart)
+# Secrets synced by CI into agentstudio-workers:
+#   keycloak-oidc-secrets (from agentstudio-identity)
+
+createNamespace: true
+namespacePodSecurity:
+  enforce: privileged
+  audit: privileged
+  warn: privileged
+
+deploymentName: "nemo"
+# Public hostname for this deployment. AKS overlay bakes it in; other clouds
+# receive it via --set endpoint=... and --set global.endpoint=... at deploy time.
+endpoint: "agentstudio.local"
+
+keycloakNamespace: "agentstudio-identity"
+platformNamespace: "agentstudio-platform"
+servicesNamespace: "agentstudio-services"
+llmGatewayNamespace: "agentstudio-llm-gateway"
+
+# Cross-namespace aliases for upstream tiers.
+# mode: externalName (CoreDNS-resolvable, default) or serviceEntry.
+# externalName is required because pre-sidecar init containers (e.g.
+# wait-for-temporal) and nginx upstream resolution perform plain DNS
+# lookups. A ServiceEntry host only resolves via Istio's DNS proxy (DNS
+# capture), which is NOT enabled in this mesh, so serviceEntry mode yields
+# NXDOMAIN and hangs init containers / crashes nginx. ExternalName still
+# works under Istio (Envoy sees the upstream; auto-mTLS falls back to
+# plaintext for non-mesh backends like Temporal).
+crossNsServices:
+  mode: externalName
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+global:
+  platformNamespace: "agentstudio-platform"
+  imageRegistry: ""
+  imageRepository: "docker.repo.eng.netapp.com/user/sekaranr"
+  imageTag: ""
+  imagePullSecrets: []
+  storageClass: ""
+  endpoint: "agentstudio.local"
+  imagePullPolicy: ""
+  deploymentName: "nemo"
+  s3gatewayFullname: "s3gateway"
+  observability:
+    # OTLP HTTP base URL for all workers. Used for traces, metrics, and logs export.
+    # Set to "" to omit OTLP env vars (e.g. when no collector is deployed).
+    otlpEndpoint: "http://observability-otel-collector.monitoring.svc.cluster.local:4318"
+
+# Standalone default-bucket PVC (legacy fallback — disabled now that s3gateway
+# runs in this namespace and creates its own PVC via the s3gateway sub-chart).
+defaultBucketPvc:
+  create: false
+  accessMode: ReadWriteMany
+  size: "10Gi"
+  storageClass: ""  # Defaults to global.storageClass when empty
+  volumeName: ""    # Set to bind to a specific pre-provisioned PersistentVolume
+
+dataset-worker:
+  enabled: true
+  serviceAccount:
+    create: false
+    name: ""
+    azureClientId: ""
+  workloadIdentity:
+    enabled: false
+
+kb-worker:
+  enabled: true
+  serviceAccount:
+    create: false
+    name: ""
+    azureClientId: ""
+  workloadIdentity:
+    enabled: false
+
+connector-worker:
+  enabled: true
+  redisStandalone: true
+  serviceAccount:
+    create: false
+    name: ""
+    azureClientId: ""
+  workloadIdentity:
+    enabled: false
+
+eval-worker:
+  enabled: true
+  serviceAccount:
+    create: false
+    name: ""
+    azureClientId: ""
+  workloadIdentity:
+    enabled: false
+
+# S3 Gateway (VersityGW) — co-located with workers for direct PVC access
+s3gateway:
+  enabled: true
+  fullnameOverride: "s3gateway"
+  replicaCount: 1
+  serviceAccountName: ""
+  image:
+    repository: versity/versitygw
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 7070
+  region: "us-east-1"
+  storage:
+    accessMode: ReadWriteOnce
+    size: 50Gi
+    storageClass: ""
+  metadata:
+    storageClass: ""
+    size: ""   # Cloud overlays set production sizes (e.g. AKS: 50Gi)
+  defaultBucket:
+    enabled: true
+    name: "default-nemo"
+    storageClass: ""
+    size: ""   # Cloud overlays set production sizes (e.g. AKS: 1Ti)
+    # Namespaces authorized to bind this bucket's volume via Trident shareFromPVC
+    # (adds trident.netapp.io/shareToNamespace). Empty = no cross-namespace share.
+    # GKE/EKS set ["agentstudio-services"] so kb-retrieval-service / artifact-service
+    # read the KB indexes kb-worker publishes here. (AKS shares via a pre-provisioned
+    # static PV / volumeName instead — see values-aks.yaml.)
+    shareToNamespaces: []
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 2Gi
+    requests:
+      cpu: 250m
+      memory: 512Mi
+  serviceAccount:
+    create: false
+    name: ""
+    azureClientId: ""
+  workloadIdentity:
+    enabled: false
+
+# Storage Manager — co-located with workers for direct PVC creation
+storage-manager:
+  enabled: true
+  fullnameOverride: "storage-manager"
+  replicaCount: 1
+  serviceAccountName: ""
+  image:
+    repository: nemo/storage-manager
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 8080
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 2Gi
+    requests:
+      cpu: 500m
+      memory: 1Gi
+  serviceAccount:
+    create: false
+    name: ""
+    azureClientId: ""
+  workloadIdentity:
+    enabled: false
+
+# ── Bootstrap setup hooks ─────────────────────────────────────────────────────
+# s3-bucket-init and lakekeeper-bootstrap run as post-install hooks in workers,
+# after s3gateway is ready. s3gateway and lakekeeper are both accessible locally
+# (s3gateway is co-located; lakekeeper is via ExternalName cross-ns service).
+defaultSetup:
+  enabled: true
+  registerDefaultBucket: true
+  s3gatewayBootstrapEnabled: true
+  warehouseName: "nemo"
+  lakekeeperUrl: "http://lakekeeper:8181"
+  s3GatewayUrl: "http://s3gateway.agentstudio-workers.svc.cluster.local:7070"
+  llmGatewayUrl: "http://bifrost-proxy.agentstudio-llm-gateway.svc.cluster.local:8080"
+  llmGatewayApiKey: ""
+  configServiceUrl: "http://config-service.agentstudio-services.svc.cluster.local:3000"
+
+keycloak:
+  setup:
+    enabled: false      # keycloak-setup job lives in agentstudio-identity
+    keycloakNamespace: "agentstudio-identity"
+    realmName: "nemo"
+    image:
+      repository: ""
+      tag: ""
+      pullPolicy: IfNotPresent

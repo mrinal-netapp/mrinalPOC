@@ -1,0 +1,17 @@
+# Standalone scrape config when nemo is not re-deployed with values-enable-observability.yaml.
+# Apply after: make deploy-observability
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: bifrost
+  namespace: agentstudio
+  labels:
+    release: observability
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: bifrost
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 30s

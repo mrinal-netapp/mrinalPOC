@@ -1,0 +1,27 @@
+{{- /*
+ReferenceGrant in agentstudio-services that allows HTTPRoutes in
+agentstudio-edge to reference any Service in agentstudio-services
+(config-service, kb-retrieval-service, agent-service, analytics-engine,
+workflow-engine, apigateway-service).
+
+Required because the edge tier is no longer colocated with backend
+Services post-migration. Templated centrally in the edge chart so a
+single helm release owns every grant the gateway needs.
+*/ -}}
+{{- if and .Values.gateway.enabled (eq (.Values.gateway.provider | default "nginx") "istio") -}}
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: ReferenceGrant
+metadata:
+  name: edge-to-services
+  namespace: {{ include "nemo.servicesNamespace" . }}
+  labels:
+    {{- include "edge.labels" . | nindent 4 }}
+spec:
+  from:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      namespace: {{ include "nemo.namespace" . }}
+  to:
+    - group: ""
+      kind: Service
+{{- end }}

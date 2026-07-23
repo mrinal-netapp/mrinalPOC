@@ -1,0 +1,33 @@
+# EKS overlay for the edge tier.
+#
+# Self-managed Istio 1.30 over an internet-facing NLB provisioned by the AWS
+# Load Balancer Controller (must be installed in kube-system — see
+# deployments/aws/scripts/eks-install-lbc.sh / make eks-ensure-load-balancer-controller).
+#
+# Dev defaults below match the legacy EKS dev cluster. Env-file deploys
+# (make deploy CLOUD=aws ENV=preprod) override EIP allocations + issuer via
+# deployments/aws/scripts/eks-edge-helm-sets.sh (reads CFN GatewayEip{1,2}AllocationId outputs).
+#
+# TLS Secret nemo-gateway-tls is expected in $(HELM_NS_EDGE) before deploy
+# (prepare-nemo-gateway.sh self-signed fallback runs from istio-prereq).
+
+gateway:
+  provider: "istio"
+  istio:
+    infrastructure:
+      annotations:
+        service.beta.kubernetes.io/aws-load-balancer-scheme: "internet-facing"
+        service.beta.kubernetes.io/aws-load-balancer-type: "external"
+        service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: "ip"
+        # Dev legacy EIPs — preprod overrides via eks-edge-helm-sets.sh + CFN stack.
+        service.beta.kubernetes.io/aws-load-balancer-eip-allocations: "eipalloc-0b239e36a66c7acaa,eipalloc-0aa94444f6caac8b2"
+        service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
+    requestAuthentication:
+      issuer: "https://auth.agentstudio-aws.dev.openeng.netapp.com/realms/nemo"
+      jwksUri: "http://keycloak.agentstudio-identity.svc.cluster.local:8080/realms/nemo/protocol/openid-connect/certs"
+      audiences:
+        - agent-studio-api
+      forwardOriginalToken: true
+
+certManager:
+  enabled: false

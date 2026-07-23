@@ -1,0 +1,124 @@
+{
+  "_schema_version": "2.1.0",
+  "project_id": "550e8400-e29b-41d4-a716-446655440000",
+  "_description": "RFC Search Relevance Scorer: single agent that calls a REST kb-retrieve endpoint exposed as the `knowledgeBase` function binding, returns the response array unchanged, and annotates each chunk with a relevance_score field. Existing fields (chunkId, content, score, metadata) are preserved exactly.",
+  "agent": {
+    "framework": "maf",
+    "model": "azure/gpt-4.1-mini",
+    "temperature": 0.1,
+    "max_tokens": 8192,
+    "timeout_seconds": 180,
+    "metadata": {
+      "project": "agent-studio",
+      "version": "1.0.0",
+      "environment": "development"
+    }
+  },
+  "tool_bindings": [
+    {
+      "name": "knowledgeBase",
+      "type": "function",
+      "function_ref": "kb_retrieve",
+      "description": "Search the IETF RFC knowledge base. Returns up to top_k chunks with chunkId, content, score, metadata.",
+      "tags": ["retrieval", "rfc"],
+      "params": {
+        "kbId": "e3c3b018-3294-4069-be8d-0e8efbed4733",
+        "projectId": "550e8400-e29b-41d4-a716-446655440000",
+        "topK": 5,
+        "similarityThreshold": 0.5,
+        "headers": {
+          "x-agent-studio-context": "eyJwcm9qZWN0X2lkIjoiNTUwZTg0MDAtZTI5Yi00MWQ0LWE3MTYtNDQ2NjU1NDQwMDAwIiwidXNlcl9pZCI6InVzZXJAdGVzdC5jb20ifQ=="
+        }
+      }
+    }
+  ],
+  "semantic_kernel": {
+    "agents": [
+      {
+        "name": "rfc_search_scorer",
+        "instructions": "You are an RFC Search + Relevance Scorer. Your ONLY responsibilities:\n\n1. CALL THE TOOL. Invoke `knowledgeBase-kb_retrieve` exactly once. The only argument you supply is `query` (the user's query verbatim). If the user specifies a top_k, forward it as `top_k`; otherwise let the server default apply. Do NOT supply `kbId` or `projectId` — configuration pins those values.\n\n2. PARSE THE TOOL RESPONSE. The tool returns a JSON array of chunk objects. Each chunk has this shape:\n\n```\n{\n  \"chunkId\": \"<uuid>\",\n  \"content\": \"<the actual text chunk>\",\n  \"score\": <float — the source's own score, already present>,\n  \"metadata\": { \"fileName\": \"...\", \"chunkIndex\": <int>, ... }\n}\n```\n\n3. SCORE EACH CHUNK. For each chunk, compute a `relevance_score` (float in [0.0, 1.0]) vs. the user's query, where 1.0 = highly relevant and 0.0 = not relevant. Base the score on semantic similarity between the chunk's `content` field and the query.\n\n4. OUTPUT FORMAT. Return the response array EXACTLY as received, with one addition: each chunk object gains a new `relevance_score` field. Every other field (`chunkId`, `content`, `score`, `metadata`) is a byte-for-byte passthrough. Return the array directly — no wrapping object, no markdown fences, no prose before or after.\n\nExpected output shape:\n\n```\n[\n  {\n    \"chunkId\": \"<unchanged>\",\n    \"content\": \"<unchanged verbatim text>\",\n    \"score\": <unchanged source score>,\n    \"metadata\": { <unchanged> },\n    \"relevance_score\": 0.87\n  }\n]\n```\n\nHARD RULES:\n- Preserve the response array's length and order. Do NOT drop, reorder, merge, or re-rank items.\n- Preserve every existing field on every chunk EXACTLY (chunkId, content, score, metadata and all its keys). Do NOT rename, reformat, trim, or omit any field.\n- Do NOT modify `content` — not even to fix typos, expand abbreviations, or normalize whitespace.\n- Do NOT modify the existing `score` field. Your score goes in a NEW field called `relevance_score` — both fields must coexist on each chunk.\n- If the tool returns an empty array, output `[]`.\n- If the tool's response is wrapped (e.g., `{\"chunks\":[...]}` or `{\"data\":[...]}`), unwrap to the inner array before scoring.\n- Never invent a chunk, RFC number, or quote. Every item in your output corresponds to exactly one item the tool returned.\n- Output ONLY the JSON array. No surrounding object, no `query` echo, no `top_k`, no `raw_tool_output`, no markdown fences, no prose.\n- Do NOT call any other tool. Do NOT call `knowledgeBase-kb_retrieve` more than once.",
+        "description": "Single agent that invokes the knowledgeBase function binding (REST kb-retrieve), returns top_k results unchanged, and annotates each chunk with a relevance score",
+        "model": "azure/gpt-4.1-mini",
+        "temperature": 0.1,
+        "max_tokens": 8192,
+        "top_p": 1.0,
+        "frequency_penalty": 0.0,
+        "presence_penalty": 0.0,
+        "stop_sequences": [],
+        "tools": [],
+        "tool_bindings": ["knowledgeBase"],
+        "function_choice_behavior": "auto",
+        "response_format": null,
+        "prompt_template": null
+      }
+    ],
+    "orchestration": {
+      "type": "single"
+    },
+    "default_function_choice_behavior": "auto",
+    "chat_history_max_messages": 20,
+    "enable_telemetry": false,
+    "session_ttl_seconds": 3600
+  },
+  "gateway": {
+    "url": "http://host.docker.internal:4001/v1",
+    "api_key": "",
+    "default_model": "azure/gpt-4.1-mini",
+    "request_timeout_seconds": 120,
+    "retry_on_timeout": true,
+    "max_retries": 2
+  },
+  "guardrails": {
+    "enabled": true,
+    "fail_open": false,
+    "execution_mode": "pipeline",
+    "input_guardrails": [
+      {
+        "name": "input_validator",
+        "type": "validation",
+        "enabled": true,
+        "priority": 1,
+        "action_on_trigger": "block",
+        "message": "Input does not meet validation requirements.",
+        "config": {
+          "max_length": 4000,
+          "min_length": 2
+        }
+      }
+    ],
+    "output_guardrails": [
+      {
+        "name": "output_length",
+        "type": "validation",
+        "enabled": true,
+        "priority": 1,
+        "action_on_trigger": "truncate",
+        "message": null,
+        "config": {
+          "max_chars": 120000
+        }
+      }
+    ],
+    "tool_guardrails": {
+      "default_policy": {
+        "mode": "allowlist",
+        "tools": ["knowledgeBase-kb_retrieve"],
+        "max_calls_per_request": 1
+      }
+    }
+  },
+  "memory": {
+    "enabled": false,
+    "storage_backend": "memory",
+    "buffer_type": "sliding_window",
+    "ttl_seconds": 3600,
+    "max_history_length": 10,
+    "max_tokens_per_session": 0,
+    "max_chars_per_session": 0
+  },
+  "logging": {
+    "level": "INFO",
+    "format": "json",
+    "include_timestamp": true
+  }
+}

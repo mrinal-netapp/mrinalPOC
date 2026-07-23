@@ -1,0 +1,17 @@
+export const TOOLSETS_PANEL_STRINGS = {
+  ROW_LABEL: "Toolsets",
+  RESOURCE_LABEL: "Toolsets",
+  PRIMARY_ACTION: "Add",
+  PRIMARY_ACTION_FEEDBACK: "Add toolset",
+  NAVIGATE_FEEDBACK_PREFIX: "Open toolset",
+  COL_NAME: "Name",
+  COL_TYPE: "Type",
+  COL_STATUS: "Status",
+  COL_ASSOCIATED_AGENTS: "Associated agents",
+  COL_LABELS: "Labels",
+  COL_ACTIONS: "Actions",
+  ACTION_VIEW_DETAILS: "View details",
+  ACTION_DEPRECATE: "Deprecate",
+  ACTION_EDIT: "Edit",
+  ACTION_DELETE: "Delete",
+} as const;

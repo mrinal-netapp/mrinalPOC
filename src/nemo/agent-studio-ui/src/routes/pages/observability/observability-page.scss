@@ -1,0 +1,124 @@
+.observability-page {
+  min-height: calc(100% + 48px);
+  margin: -24px -32px;
+  font-family: var(--font-family);
+  color: var(--text-primary);
+
+  &__hero {
+    display: flex;
+    align-items: flex-start;
+    padding: 64px 44px 64px 40px;
+    background-color: var(--background-main);
+  }
+
+  &__hero-content {
+    display: flex;
+    max-width: 656px;
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  &__title {
+    margin: 0 0 12px;
+    color: var(--text-primary);
+    font-size: 32px;
+    font-weight: 400;
+    line-height: 44px;
+  }
+
+  &__description {
+    margin: 0;
+    color: var(--text-primary);
+    font-size: 16px;
+    font-weight: 400;
+    line-height: 28px;
+  }
+
+  &__tiles {
+    padding: 56px 44px 56px 40px;
+    background-color: var(--background-content);
+  }
+
+  &__grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 48px 24px;
+  }
+
+  &__tile {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-start;
+    text-align: center;
+    padding: 40px 24px 32px;
+    border-radius: 8px;
+    border: 1px solid var(--border-subtle);
+    background-color: var(--background-main);
+    transition: box-shadow 150ms ease, border-color 150ms ease;
+
+    &:hover {
+      border-color: var(--border-default);
+      box-shadow: 0 2px 12px 0 rgb(0 0 0 / 8%);
+    }
+  }
+
+  &__tile-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 72px;
+    height: 72px;
+    margin-bottom: 20px;
+    border-radius: 16px;
+    background-color: var(--background-subtle);
+    color: var(--icon-primary);
+    flex-shrink: 0;
+  }
+
+  &__tile-title {
+    margin: 0 0 12px;
+    color: var(--text-primary);
+    font-size: 18px;
+    font-weight: 600;
+    line-height: 28px;
+  }
+
+  &__tile-description {
+    flex: 1;
+    max-width: 100%;
+    margin: 0 0 24px;
+    color: var(--text-secondary);
+    font-size: 14px;
+    font-weight: 400;
+    line-height: 24px;
+  }
+}
+
+@media (max-width: 1200px) {
+  .observability-page {
+    &__grid {
+      grid-template-columns: repeat(2, minmax(280px, 1fr));
+    }
+  }
+}
+
+@media (max-width: 760px) {
+  .observability-page {
+    &__hero,
+    &__tiles {
+      padding-right: 24px;
+      padding-left: 24px;
+    }
+
+    &__title {
+      font-size: 26px;
+      line-height: 36px;
+    }
+
+    &__grid {
+      grid-template-columns: 1fr;
+      gap: 24px;
+    }
+  }
+}

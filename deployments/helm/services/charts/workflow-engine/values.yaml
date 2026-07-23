@@ -1,0 +1,167 @@
+# Default values for workflow-engine sub-chart
+enabled: true
+replicaCount: 1
+
+image:
+  repository: nemo/workflow-engine
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 8080
+  metricsPort: 8000  # Dedicated Prometheus port served by the observability client lib
+
+resources:
+  limits:
+    cpu: 1000m
+    memory: 1Gi
+  requests:
+    cpu: 500m
+    memory: 512Mi
+
+# When true (e.g. redis.architecture: standalone), REDIS_SENTINEL_* entries in env are omitted.
+redisStandalone: false
+
+# CONFIG_SERVICE_URL is injected in deployment.yaml (FQDN). Override with configServiceUrl if needed.
+configServiceUrl: ""
+
+env:
+  - name: PORT
+    value: "8080"
+  - name: TEMPORAL_ADDRESS
+    value: ""  # Will be set from template
+  # CONFIG_SERVICE_URL: set by deployment template (cluster DNS)
+  - name: CONFIG_SERVICE_URL
+    value: ""
+  - name: LLM_GATEWAY_URL
+    value: ""
+  - name: LLM_GATEWAY_API_KEY
+    value: ""
+  - name: TASK_QUEUE
+    value: "pipeline-execution"
+  - name: MCP_HEALTH_SCHEDULE_AUTO_CREATE
+    value: "true"
+  - name: MCP_HEALTH_SCHEDULE_CRON
+    value: "*/5 * * * *"
+  - name: PROJECT_VK_ROTATION_SCHEDULE_AUTO_CREATE
+    value: "true"
+  - name: PROJECT_VK_ROTATION_INTERVAL
+    value: "24h"
+  - name: PROJECT_VK_ROTATION_GRACE_PERIOD
+    value: "30m"
+  # Transient workflow progress (GET/POST …/workflows/:id/progress). Default: reuse REDIS_URL on DB 4 (connector ACQ uses 3).
+  # Pick ONE of: explicit URL, SHARE_REDIS (+ REDIS_URL), or USE_SENTINEL (+ REDIS_SENTINEL_ADDRS).
+  # If SHARE_REDIS is true but REDIS_URL is empty, workflow-engine falls back to in-memory progress at startup.
+  - name: WORKFLOW_ENGINE_PROGRESS_REDIS_URL
+    value: ""
+  - name: WORKFLOW_ENGINE_PROGRESS_SHARE_REDIS
+    value: "true"
+  - name: WORKFLOW_ENGINE_PROGRESS_USE_SENTINEL
+    value: "false"
+  - name: WORKFLOW_ENGINE_PROGRESS_REDIS_DB
+    value: "4"
+  - name: WORKFLOW_ENGINE_PROGRESS_REDIS_TTL
+    value: "1h"
+  # Explorer list cache (Redis). Uses FQDN so workflow-engine (agentstudio-services)
+  # can resolve Redis (agentstudio-platform) cross-namespace.
+  - name: REDIS_URL
+    value: "redis://redis-master.{{ .Values.global.platformNamespace | default \"agentstudio-platform\" }}.svc.cluster.local:6379/2"
+  - name: REDIS_SENTINEL_ADDRS
+    value: ""  # Set from parent e.g. "redis:26379"
+  - name: REDIS_SENTINEL_MASTER
+    value: "mymaster"
+  - name: REDIS_DB
+    value: "2"
+  - name: EXPLORER_CACHE_MAX_ENTRIES
+    value: "500"
+  - name: EXPLORER_CACHE_TTL_SECONDS
+    value: "300"
+  # Acquisition pipeline tuning (workflow-side scatter sizing)
+  - name: ACQ_MAX_CONSUMERS
+    value: "8"
+  - name: ACQ_BATCH_SIZE
+    value: "64"
+  - name: ACQ_MAX_BATCHES_PER_ACTIVITY
+    value: "8"
+  - name: ACQ_UNBOUNDED_CONSUMERS
+    value: "8"
+  - name: ACQ_MAX_FAILURE_RATE
+    value: "0.05"
+  - name: ACQ_SCHEDULE_TO_START_TIMEOUT
+    value: "15m"
+  - name: ACQ_USE_PIPELINE
+    value: "true"
+  # Scatter-gather: documents below this -> single ProcessKBDocuments activity; above -> partition into multiple units
+  - name: KB_FILE_THRESHOLD
+    value: "50"
+  # Max total raw file size per scatter work unit (MiB). 0 = legacy sizing only (MIN_FILES_PER_UNIT / MAX_WORK_UNITS).
+  - name: WORK_UNIT_MAX_MB
+    value: "5"
+  # Max files per work unit (partitioning lives on kb-processor / dataset-processor; set there too for runtime).
+  - name: MAX_FILES_PER_UNIT
+    value: "100"
+
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 8080
+  initialDelaySeconds: 30
+  periodSeconds: 10
+
+readinessProbe:
+  httpGet:
+    path: /health
+    port: 8080
+  initialDelaySeconds: 5
+  periodSeconds: 5
+
+# Init container configuration (waits for Temporal and optionally keycloak-setup)
+initContainer:
+  enabled: true
+  waitForKeycloakSetup: true  # Wait for keycloak-setup job to complete before starting
+  resources:
+    limits:
+      cpu: 50m
+      memory: 32Mi
+    requests:
+      cpu: 10m
+      memory: 16Mi
+
+# Observability — RED metrics served by the observability client lib on metricsPort
+metrics:
+  path: /metrics
+  port: metrics
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+tracing:
+  otlpEndpoint: ""  # Legacy; AGENT_STUDIO_OBSERVABILITY_OTLP_TRACES_ENDPOINT is used instead
+
+# In-cluster S3-compatible API (Versity/minio gateway). Injected after env list so work-plan / deletes always target the gateway.
+s3:
+  endpoint: "http://s3gateway:7070"
+  region: "us-east-1"
+
+# These will be passed from parent chart
+namespace: ""
+serviceAccountName: ""
+podSecurityContext: {}
+securityContext: {}
+nodeSelector: {}
+affinity: {}
+tolerations: {}
+
+
+serviceAccount:
+  create: false
+  name: ""
+  azureClientId: ""
+
+workloadIdentity:
+  enabled: false
+
+# Global defaults for nil-safe sub-chart rendering; overridden by parent chart global.
+global:
+  observability:
+    otlpEndpoint: ""

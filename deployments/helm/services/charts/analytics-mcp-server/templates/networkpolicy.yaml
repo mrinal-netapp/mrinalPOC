@@ -1,0 +1,56 @@
+{{- if and .Values.enabled .Values.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "analytics-mcp-server.fullname" . }}
+  labels:
+    {{- include "analytics-mcp-server.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "analytics-mcp-server.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        # Bifrost proxy lives in agentstudio-llm-gateway (cross-namespace)
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.llmGatewayNamespace | default "agentstudio-llm-gateway" }}
+          podSelector:
+            matchLabels:
+              component: bifrost
+      ports:
+        - protocol: TCP
+          port: 8000
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              component: analytics-engine
+      ports:
+        - protocol: TCP
+          port: 5000
+    - to: []
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # Istio control plane: pilot-agent (UID 1337) needs to reach istiod for
+    # workload certificate signing (15012) and xDS (15010/15012).
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: istio-system
+      ports:
+        - port: 15012
+          protocol: TCP
+        - port: 15010
+          protocol: TCP
+        - port: 15014
+          protocol: TCP
+        - port: 15017
+          protocol: TCP
+{{- end }}

@@ -1,0 +1,58 @@
+# Deploy only infrastructure dependencies: Redis, Lakekeeper, Temporal, Bifrost, S3Gateway + hooks.
+# Used by: make deploy-platform-deps (Phase 3)
+# Full stack: make deploy-all (or individual phases: deploy-foundation, deploy-identity, deploy-platform-deps, deploy-platform)
+#
+# See docs/deployment/deployment-design.md for the full deployment architecture.
+
+# Do not create or own the namespace; it is created by helm-nemo-prepare (ensure_namespace).
+# Avoids "invalid ownership metadata" when namespace was previously created by release "nemo".
+createNamespace: false
+
+# Gateway and HTTPRoutes are created by the nemo release in Phase 4, not by nemo-deps.
+gateway:
+  enabled: false
+
+# Disable all application services; keep only infrastructure deps
+agent-service:
+  enabled: false
+gui:
+  enabled: false
+config-service:
+  enabled: false
+apigateway-service:
+  enabled: false
+workflow-engine:
+  enabled: false
+analytics-engine:
+  enabled: false
+analytics-mcp-server:
+  enabled: false
+storage-manager:
+  enabled: false
+artifact-service:
+  enabled: false
+s3gateway:
+  enabled: true
+kb-retrieval-service:
+  enabled: false
+
+processing-workers:
+  enabled: false
+
+# Keep these enabled for deps-only deploy
+# gateway: enabled in main values (Gateway/HTTPRoute required for nemo namespace)
+# lakekeeper: enabled in main values
+# temporal: enabled in main values
+# redis: shared by agent-service, workflow-engine, connector-worker (separate DBs)
+# bifrost: LLM gateway — infrastructure dependency for agent-service
+redis:
+  enabled: true
+lakekeeper:
+  enabled: true
+temporal:
+  enabled: true
+bifrost:
+  enabled: true
+
+# Keycloak is always installed separately (keycloak.enabled: false in main values)
+# keycloak.setup.enabled: true so keycloak-setup job runs and creates realm/OIDC clients for Lakekeeper

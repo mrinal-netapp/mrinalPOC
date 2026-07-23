@@ -1,0 +1,42 @@
+# Trident overlay for the workers tier.
+#
+# Composed on top of values.yaml (+ values-local.yaml or values-aks.yaml).
+# Three effects:
+#
+#   1. Flip every workers-tier PVC's storage class to ontap-nas. We pin
+#      global.storageClass AND each chart-local storageClass field because
+#      PVC.spec.storageClassName is immutable after bind — if the rendered
+#      manifest drifts from live (e.g. live=ontap-nas, rendered=standard
+#      via global.storageClass from values-local.yaml), helm upgrade fails
+#      with "spec is immutable" on every subsequent run. The chart-local
+#      pins below cover the s3gateway sub-PVCs (metadata, pvcsBase) that
+#      don't read global. Verified by listing all workers-namespace PVCs
+#      on sks6316 — every one is ontap-nas RWX.
+#
+#   2. Flip s3gateway storage modes to ReadWriteMany so the SAME ONTAP
+#      volume can be claimed from multiple namespaces simultaneously.
+#
+#   3. Annotate the s3gateway default-bucket PVC with the consumer
+#      namespace(s) that Trident should permit to bind via shareFromPVC.
+#      The reciprocal consumer-side TridentVolumeReference + PVC annotation
+#      lives in deployments/helm/services/values-trident.yaml.
+#
+# Pair with the services-tier Trident overlay (which actually creates the
+# consumer PVC). Both must apply in the same install for the bind to work.
+
+global:
+  storageClass: "ontap-nas"
+
+s3gateway:
+  storage:
+    accessMode: ReadWriteMany
+  # Match live s3gateway-metadata PVC storage class (immutable post-bind).
+  metadata:
+    storageClass: "ontap-nas"
+  # Match live binding if pvcsBase ever gets enabled; harmless when disabled.
+  pvcsBase:
+    storageClass: "ontap-nas"
+  defaultBucket:
+    storageClass: "ontap-nas"
+    shareToNamespaces:
+      - agentstudio-services

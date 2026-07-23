@@ -1,0 +1,11 @@
+id,name,department,role,salary,start_date
+1,Alice Chen,Engineering,Senior Engineer,145000,2021-03-15
+2,Bob Martinez,Engineering,Staff Engineer,175000,2019-08-01
+3,Carol White,Product,Product Manager,135000,2022-01-10
+4,David Kim,Engineering,Junior Engineer,95000,2023-06-20
+5,Eva Johansson,Design,Lead Designer,125000,2020-11-05
+6,Frank Okonkwo,Engineering,Senior Engineer,150000,2021-07-12
+7,Grace Liu,Product,Senior PM,155000,2020-02-28
+8,Hassan Ali,Design,UX Researcher,110000,2022-09-14
+9,Irene Santos,Engineering,Principal Engineer,195000,2018-04-03
+10,James Thompson,Sales,Account Executive,85000,2023-01-25

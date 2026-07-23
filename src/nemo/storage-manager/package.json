@@ -1,0 +1,67 @@
+{
+  "name": "@nemo/storage-manager",
+  "version": "1.0.0",
+  "description": "Storage Manager service for Agentstudio",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc && cp src/openapi.yaml dist/openapi.yaml",
+    "start": "NODE_OPTIONS='--require ./node_modules/@agentstudio/observability-client-runtime/dist/preload.js' node dist/index.js",
+    "start:controller": "node dist/controller-runner.js",
+    "dev": "ts-node src/index.ts",
+    "watch": "tsc --watch",
+    "clean": "rm -rf dist",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@agentstudio/common": "file:../../common",
+    "@agentstudio/observability-client-runtime": "file:../../common/src/observability/observability-client",
+    "@kubernetes/client-node": "^1.4.0",
+    "express": "^4.21.2",
+    "js-yaml": "^4.1.0",
+    "swagger-ui-express": "^5.0.0"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/jest": "^29.5.14",
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^22.10.2",
+    "@types/supertest": "^7.2.0",
+    "@types/swagger-ui-express": "^4.1.6",
+    "jest": "^29.7.0",
+    "supertest": "^7.2.2",
+    "ts-jest": "^29.2.5",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.7.2"
+  },
+  "overrides": {
+    "glob": "^10.3.10",
+    "babel-plugin-istanbul": "^8.0.2"
+  },
+  "jest": {
+    "preset": "ts-jest",
+    "testEnvironment": "node",
+    "roots": [
+      "<rootDir>/src"
+    ],
+    "testMatch": [
+      "**/test/**/*.test.ts"
+    ],
+    "collectCoverageFrom": [
+      "src/**/*.ts",
+      "!src/**/*.d.ts",
+      "!src/**/test/**"
+    ],
+    "coverageDirectory": "coverage",
+    "coverageReporters": [
+      "text",
+      "json-summary",
+      "lcov",
+      "html"
+    ]
+  }
+}

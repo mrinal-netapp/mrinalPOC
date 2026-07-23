@@ -1,0 +1,26 @@
+agno>=2.5.10
+mcp
+# Upstream ``litellm`` Python SDK, kept ONLY because Agno's
+# ``agno.models.litellm.LiteLLM`` model class uses it as a transport-layer
+# HTTP client to talk to any OpenAI-compatible endpoint. AgentStudio
+# points that transport at Bifrost's ``/litellm/v1`` OpenAI-compatible
+# shim (Bifrost's own endpoint name; not a LiteLLM proxy).
+litellm==1.83.14
+anthropic
+tiktoken
+fastapi
+uvicorn[standard]
+httpx
+redis[hiredis]
+psycopg2-binary
+psycopg[binary]
+sqlalchemy
+cachetools
+opentelemetry-sdk
+opentelemetry-api
+opentelemetry-exporter-otlp-proto-http
+openinference-instrumentation-agno
+openinference-semantic-conventions
+pydantic>=2.0
+# prometheus-fastapi-instrumentator removed: HTTP RED metrics now via OTel span processor in client lib
+sse-starlette

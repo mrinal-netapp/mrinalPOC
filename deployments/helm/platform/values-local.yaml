@@ -1,0 +1,92 @@
+# Local Kubernetes overlay for the platform tier.
+# Works on KIND, Docker Desktop, k3d, minikube.
+#
+# Differences from values-aks.yaml:
+#   - ServiceAccounts created explicitly and bound to the existing local/KIND federated UAMIs
+#   - Uses nemo-local-shared (hostPath) StorageClass for shared default bucket
+#   - ServiceMonitors disabled (Prometheus CRDs usually absent on local)
+#   - Lakekeeper init container uses IfNotPresent so pre-loaded images are used
+#   - s3gateway is deployed in the workers tier (deployments/helm/workers)
+#   - Bootstrap hooks (s3-bucket-init, lakekeeper-bootstrap) disabled here; run in workers chart
+#
+# Usage: helm upgrade --install ... -f values.yaml -f values-local.yaml
+
+# ── Bootstrap: lakekeeper-bootstrap runs in platform (where lakekeeper lives) ─
+# s3gateway lives in workers but is reachable via FQDN from platform namespace.
+# s3-bucket-init runs in workers chart (co-located with s3gateway).
+# lakekeeper-bootstrap is triggered by helm-platform-upgrade-local after workers
+# deploys (so s3gateway is up and nemo-s3gateway-credentials secret exists).
+defaultSetup:
+  s3gatewayBootstrapEnabled: true
+
+global:
+  imageRepository: "docker.repo.eng.netapp.com/user/rp29322"
+  storageClass: "standard"
+  gatewayHttpsPort: "8443"   # KIND can't bind <1024; cloud uses 443 default.
+
+# Keycloak override URL — used by nemo.keycloakHttpBaseUrl helper for lakekeeper-bootstrap-job.
+keycloak:
+  setup:
+    keycloakUrl: "http://keycloak.agentstudio-identity.svc.cluster.local:8080"
+
+# ── Redis ──────────────────────────────────────────────────────────────────────
+redis:
+  metrics:
+    serviceMonitor:
+      enabled: false
+
+# ── Temporal ───────────────────────────────────────────────────────────────────
+temporal:
+  serviceAccountName: temporal
+  serviceAccount:
+    create: true
+    azureClientId: "9ef6e816-2964-4768-9110-4b00debd330a"
+  workloadIdentity:
+    enabled: true
+
+# ── Lakekeeper ─────────────────────────────────────────────────────────────────
+lakekeeper:
+  serviceAccount:
+    create: true
+    azureClientId: ""
+  workloadIdentity:
+    enabled: false
+  # Keycloak service URL override consumed by lakekeeper subchart.
+  keycloakUrl: "http://keycloak.agentstudio-identity.svc.cluster.local:8080"
+  auth:
+    oauth2:
+      providerUri: "http://keycloak.agentstudio-identity.svc.cluster.local:8080/realms/nemo"
+  catalog:
+    # NOTE: Do NOT add `extraEnv:` here. Helm merges lists by replacement,
+    # not concatenation, so any override of `catalog.extraEnv` blows away
+    # the 13-entry list in deployments/helm/platform/values.yaml. The base
+    # list already sets LAKEKEEPER__OPENID_PROVIDER_URI to the cluster-
+    # internal URL we want for local. LOCAL_PLATFORM_EXTRA in
+    # mk/tier-helm.mk overrides the browser-facing URLs at indices
+    # [5]/[10]/[12]; those overrides only work if the base list survives.
+    # An override at index N when the list only has M < N entries also
+    # produces kubectl errors like "associative list with keys may not
+    # have a null element" — another reason to keep the base list intact.
+    extraInitContainers:
+      - name: wait-for-keycloak-oidc
+        env:
+          - name: KEYCLOAK_K8S_NAMESPACE
+            value: "agentstudio-identity"
+        image: init-tools:latest
+        imagePullPolicy: IfNotPresent
+        command:
+          - /bin/sh
+          - -c
+          - |
+            NS="${KEYCLOAK_K8S_NAMESPACE:-agentstudio-identity}"
+            KEYCLOAK_URL="http://keycloak.${NS}.svc.cluster.local:8080/realms/nemo/.well-known/openid-configuration"
+            echo "Waiting for Keycloak OpenID discovery at ${KEYCLOAK_URL}"
+            max=40; n=0
+            until [ "$n" -ge "$max" ]; do
+              if curl -sf -o /dev/null --max-time 5 "${KEYCLOAK_URL}"; then
+                echo "Keycloak OpenID discovery is ready."; exit 0
+              fi
+              n=$((n+1))
+              echo "Attempt $n/$max: Keycloak not ready, retrying in 3s..."; sleep 3
+            done
+            echo "Timeout: Keycloak OpenID discovery did not become ready."; exit 1

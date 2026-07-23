@@ -1,0 +1,108 @@
+{{- if .Values.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "dataset-worker.fullname" . }}
+  labels:
+    {{- include "dataset-worker.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicas }}
+  {{- end }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      {{- include "dataset-worker.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "dataset-worker.selectorLabels" . | nindent 8 }}
+        {{- if .Values.workloadIdentity.enabled }}
+        azure.workload.identity/use: "true"
+        {{- end }}
+      annotations:
+        # Native Istio sidecar so the `wait-for-temporal` initContainer
+        # (`python -m shared.temporal_readiness probe`) can reach temporal
+        # in the STRICT-mTLS agentstudio-platform namespace before
+        # iptables interception would normally be set up by istio-init.
+        sidecar.istio.io/nativeSidecar: "true"
+    spec:
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds | default 120 }}
+      serviceAccountName: {{ include "dataset-worker.serviceAccountName" . }}
+      {{- with .Values.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      volumes:
+        - name: nemo-default-bucket
+          persistentVolumeClaim:
+            claimName: {{ include "nemo.defaultBucketPvcName" . }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      initContainers:
+        - name: wait-for-temporal
+          # Reuse the worker image so we can run the same Python
+          # `shared.temporal_readiness` probe used at worker startup —
+          # gates not just TCP reachability but a full
+          # `DescribeNamespace` round-trip. The bare `nc -z` probe this
+          # replaces accepted Temporal as "ready" the instant its frontend
+          # opened a TCP socket, which is ~30s before the namespace
+          # service finishes loading. Workers that started in that window
+          # ended up dead-alive (poller never came online — verified on
+          # sks6316 via `temporal task-queue describe`). The new probe
+          # closes that race deterministically.
+          image: "{{ .Values.global.imageRepository }}/{{ .Values.image.repository }}:{{ .Values.global.imageTag | default .Values.image.tag }}"
+          imagePullPolicy: {{ if .Values.global.imagePullPolicy }}{{ .Values.global.imagePullPolicy }}{{ else }}IfNotPresent{{ end }}
+          command: ['python', '-m', 'shared.temporal_readiness', 'probe']
+          env:
+            - name: TEMPORAL_ADDRESS
+              value: "{{ .Values.temporalHost | default "temporal.agentstudio-platform.svc.cluster.local" }}:7233"
+            - name: TEMPORAL_NAMESPACE
+              value: "default"
+            - name: TEMPORAL_PROBE_MAX_ATTEMPTS
+              value: "90"
+          resources:
+            limits:
+              cpu: 200m
+              memory: 256Mi
+            requests:
+              cpu: 50m
+              memory: 128Mi
+      containers:
+        - name: dataset-worker
+          image: "{{ .Values.global.imageRepository }}/{{ .Values.image.repository }}:{{ .Values.global.imageTag | default .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy | default .Values.image.pullPolicy }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: nemo-default-bucket
+              mountPath: /mnt/pvcs/default-nemo
+          env:
+            {{- toYaml .Values.env | nindent 12 }}
+            - name: KEYCLOAK_INTERNAL_ISSUER
+              value: {{ .Values.keycloakInternalIssuer | default "http://keycloak.agentstudio-identity.svc.cluster.local:8080/realms/nemo" | quote }}
+            - name: LAKEKEEPER_URL
+              value: {{ .Values.lakekeeperUrl | default "http://lakekeeper.agentstudio-platform.svc.cluster.local:8181" | quote }}
+            - name: WAREHOUSE_NAME
+              value: {{ .Values.deploymentName | default "nemo" | quote }}
+            - name: NAMESPACE
+              value: {{ .Release.Namespace | quote }}
+            - name: TEMPORAL_GRACEFUL_SHUTDOWN_TIMEOUT
+              value: {{ .Values.gracefulShutdownTimeout | default "90" | quote }}
+            - name: NEMO_DEFAULT_STORE_ROOT
+              value: "/mnt/pvcs/default-nemo"
+{{- end }}

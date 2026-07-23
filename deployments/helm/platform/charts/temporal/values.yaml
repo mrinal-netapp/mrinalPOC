@@ -1,0 +1,131 @@
+# Default values for temporal sub-chart
+enabled: true
+
+# Temporal Server configuration
+server:
+  replicaCount: 1
+  image:
+    repository: temporalio/auto-setup
+    tag: "1.22.0"
+    pullPolicy: IfNotPresent
+  resources:
+    limits:
+      cpu: 2000m
+      memory: 2Gi
+    requests:
+      cpu: 500m
+      memory: 512Mi
+  service:
+    type: ClusterIP
+    port: 7233
+    targetPort: 7233
+  livenessProbe:
+    tcpSocket:
+      port: 7233
+    initialDelaySeconds: 60
+    periodSeconds: 10
+    failureThreshold: 5
+  readinessProbe:
+    tcpSocket:
+      port: 7233
+    initialDelaySeconds: 30
+    periodSeconds: 5
+    failureThreshold: 5
+
+# Temporal UI configuration
+ui:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: temporalio/ui
+    tag: "2.21.0"
+    pullPolicy: IfNotPresent
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 200m
+      memory: 256Mi
+  service:
+    type: ClusterIP
+    port: 8080
+    targetPort: 8080
+  livenessProbe:
+    httpGet:
+      path: /
+      port: 8080
+    initialDelaySeconds: 10
+    periodSeconds: 30
+  readinessProbe:
+    httpGet:
+      path: /
+      port: 8080
+    initialDelaySeconds: 5
+    periodSeconds: 10
+
+# Database configuration
+database:
+  # Use existing PostgreSQL in database namespace
+  host: "shared-postgresql.database.svc.cluster.local"
+  port: "5432"
+  name: "temporal"
+  user: "postgres"
+  password: "agentstudio-postgres-password"  # Used only for local dev; override with existingSecret for production
+  # Set existingSecret + existingSecretKey to source the password from a Secret instead of values
+  existingSecret: ""
+  existingSecretKey: "postgres-password"
+  # Connection pool settings (total = default + visibility)
+  defaultMaxConns: 10
+  defaultMaxIdleConns: 10
+  visibilityMaxConns: 5
+  visibilityMaxIdleConns: 5
+
+# Init container configuration (waits for PostgreSQL and creates database)
+initContainer:
+  enabled: true
+  image:
+    repository: ""  # If empty, uses global.imageRepository/init-tools
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  resources:
+    limits:
+      cpu: 100m
+      memory: 64Mi
+    requests:
+      cpu: 50m
+      memory: 32Mi
+
+# Temporal configuration
+config:
+  # Namespace for workflows
+  defaultNamespace: "default"
+  # Enable metrics
+  enableMetrics: true
+  # Log level
+  logLevel: "info"
+
+# Metrics configuration
+metrics:
+  path: /metrics
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+
+# These will be passed from parent chart
+namespace: ""
+serviceAccountName: ""
+podSecurityContext: {}
+securityContext: {}
+nodeSelector: {}
+affinity: {}
+tolerations: {}
+
+
+serviceAccount:
+  create: false
+  name: ""
+  azureClientId: ""
+
+workloadIdentity:
+  enabled: false

@@ -1,0 +1,95 @@
+{{- /*
+NGINX Gateway Fabric (NGF) Gateway. Rendered when gateway.provider == "nginx".
+Lives in agentstudio-edge (same namespace as every HTTPRoute in this chart).
+
+Kept for KIND local-dev and as the AKS rollback target. Production AKS
+flips to gateway.provider=istio in values-aks.yaml; that branch lives in
+gateway-istio.yaml below.
+
+Cross-cloud LB annotations land on .Values.gateway.infrastructure.annotations
+(AKS pre-PR set these via the services chart; the values key shape is
+preserved here so the cutover is a values-file move, not a key rename).
+*/ -}}
+{{- if and .Values.gateway.enabled (eq (.Values.gateway.provider | default "nginx") "nginx") -}}
+{{- $gatewayName := include "nemo.gatewayName" . }}
+{{- $namespace := include "nemo.namespace" . }}
+{{- $gatewayClassName := .Values.gateway.className | default "nginx" }}
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: {{ $gatewayName }}
+  namespace: {{ $namespace }}
+  labels:
+    {{- include "edge.labels" . | nindent 4 }}
+  annotations:
+    debug.gateway-api.name: {{ $gatewayName | quote }}
+    debug.gateway-api.namespace: {{ $namespace | quote }}
+    debug.gateway-api.class-name: {{ $gatewayClassName | quote }}
+    {{- with .Values.gateway.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  gatewayClassName: {{ $gatewayClassName }}
+  {{- with .Values.gateway.addresses }}
+  addresses:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.gateway.infrastructure }}
+  infrastructure:
+    {{- with .annotations }}
+    annotations:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+    {{- with .labels }}
+    labels:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+  {{- end }}
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: {{ .Values.gateway.listeners.http.port | default 8080 }}
+      {{- if .Values.gateway.listeners.http.allowedRoutes }}
+      allowedRoutes:
+        {{- toYaml .Values.gateway.listeners.http.allowedRoutes | nindent 8 }}
+      {{- end }}
+    - name: https
+      protocol: HTTPS
+      port: {{ .Values.gateway.listeners.https.port | default 8443 }}
+      {{- if .Values.gateway.tls }}
+      tls:
+        mode: Terminate
+        certificateRefs:
+          {{- if .Values.gateway.tls.certificateRefs }}
+            {{- range .Values.gateway.tls.certificateRefs }}
+          - name: {{ .name }}
+            kind: {{ .kind | default "Secret" }}
+            {{- if .group }}
+            group: {{ .group }}
+            {{- end }}
+            {{- end }}
+          {{- else if .Values.gateway.tls.secretName }}
+          - name: {{ .Values.gateway.tls.secretName }}
+            kind: Secret
+          {{- end }}
+      {{- end }}
+      {{- if .Values.gateway.listeners.https.allowedRoutes }}
+      allowedRoutes:
+        {{- toYaml .Values.gateway.listeners.https.allowedRoutes | nindent 8 }}
+      {{- end }}
+    {{- range .Values.gateway.listeners.extra }}
+    - name: {{ .name }}
+      protocol: {{ .protocol }}
+      port: {{ .port }}
+      {{- if .tls }}
+      tls:
+        mode: {{ .tls.mode | default "Terminate" }}
+        certificateRefs:
+          {{- toYaml .tls.certificateRefs | nindent 10 }}
+      {{- end }}
+      {{- if .allowedRoutes }}
+      allowedRoutes:
+        {{- toYaml .allowedRoutes | nindent 8 }}
+      {{- end }}
+    {{- end }}
+{{- end }}

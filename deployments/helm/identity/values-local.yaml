@@ -1,0 +1,264 @@
+# Local Kubernetes dev overlay for the Keycloak chart.
+#
+# Installed via `make helm-keycloak-install-local` (see Makefile),
+# typically against kind / minikube / OrbStack / Docker Desktop.
+#
+# Layout convention mirrors deployments/helm/observability/values-local.yaml:
+#   - empty global.imageRegistry so local clusters pull straight from
+#     Docker Hub / quay.io instead of ACR
+#   - explicit dev passwords supplied here (NOT in values.yaml) so plain
+#     `helm install -f values-local.yaml` works one-line locally without
+#     shipping a well-known DB password in the production-default values
+#   - no local Workload Identity for Keycloak yet; the current Keycloak UAMI
+#     does not have a local/KIND federated credential
+#
+# Production / AKS: do NOT use this file. Install with the upstream
+# values.yaml + the values-aks.yaml overlay in this directory.
+
+global:
+  # Pull keycloak/keycloak directly from quay.io.
+  imageRegistry: ""
+  imageTag: ""
+
+serviceAccount:
+  create: true
+  name: ""
+  workloadIdentityEnabled: false
+  annotations: {}
+
+# Single replica on the dev laptop. Multi-replica Infinispan still works
+# but pegs CPU on a single-node cluster and adds no real availability.
+replicaCount: 1
+
+# Route auth.agentstudio.local → Keycloak via the services-gateway
+httpRoute:
+  enabled: true
+  hostnames:
+    - "auth.agentstudio.local"
+  # Strip HSTS on local so browser can add cert exception if needed.
+  removeHSTS: true
+  # Point at the agentstudio-gateway in agentstudio-edge (the new edge tier;
+  # Gateway resource standardised to agentstudio-gateway as part of the Istio
+  # migration; the runtime Deployment/Pod is named istio-gateway via the
+  # gateway.istio.io/name-override annotation set by the edge chart).
+  parentRef:
+    name: agentstudio-gateway
+    namespace: agentstudio-edge
+    sectionName: ""
+
+# Dev Postgres credentials. The shared-postgresql chart in
+# deployments/helm/database/values.yaml seeds the `postgres` superuser
+# with the literal password below, and pre-creates the `keycloak`
+# database via its initdb script -- so Keycloak can authenticate
+# straight away.
+#
+# Renders into Secret `keycloak-postgres-auth` via
+# templates/postgres-auth-secret.yaml.
+postgres:
+  auth:
+    password: "agentstudio-postgres-password"
+
+keycloak:
+  # Production mode: Keycloak runs `start` (not start-dev).
+  # TLS terminates at the istio-gateway pod (the `nemo-gateway-tls` Secret
+  # name is kept as a separate provisioning-service contract; not part of
+  # this rebrand), which forwards plain HTTP to Keycloak internally with
+  # X-Forwarded-* headers. OrbStack publishes the LB Service on localhost:8443.
+  productionMode: true
+  hostname: "https://auth.agentstudio.local:8443"
+  # KC_HOSTNAME_BACKCHANNEL_DYNAMIC=true: needed by every in-cluster OIDC
+  # consumer (Lakekeeper, services tier, etc.) so the discovery doc returns
+  # cluster-internal URLs (token_endpoint, jwks_uri, userinfo_endpoint,
+  # introspection_endpoint) to in-cluster callers — they can't reach
+  # `https://auth.agentstudio.local:8443/...` (no DNS, self-signed TLS).
+  # Token `iss` claim stays anchored to `keycloak.hostname` regardless,
+  # so browser flows keep working. Aligns local with values-aks.yaml /
+  # values-gke.yaml / values-eks.yaml — all on Istio gateway, all dynamic.
+  backchannelDynamic: true
+  # Edge proxy: gateway terminates TLS, forwards HTTP + X-Forwarded headers.
+  proxyHeaders: xforwarded
+
+  # ── OIDC client registry ──────────────────────────────────────────────────
+  # Rendered into keycloak-oidc-secrets (see templates/keycloak-oidc-secrets.yaml).
+  # Secrets use dev placeholder values that the realm-bootstrap-job patches
+  # with real Keycloak-generated secrets on first install.
+  oidcClients:
+    gui:
+      clientId: "agentstudio-gui"
+    lakekeeper:
+      clientId: "agentstudio-lakekeeper"
+      clientSecret: "dev-lakekeeper-secret"
+    lakekeeperUi:
+      clientId: "agentstudio-lakekeeper-ui"
+    workflowEngine:
+      clientId: "agentstudio-workflow-engine"
+      clientSecret: "dev-workflow-engine-secret"
+    analyticsEngine:
+      clientId: "agentstudio-analytics-engine"
+      clientSecret: "dev-analytics-engine-secret"
+    configService:
+      clientId: "agentstudio-config-service"
+      clientSecret: "dev-config-service-secret"
+    storageManager:
+      clientId: "agentstudio-storage-manager"
+      clientSecret: "dev-storage-manager-secret"
+    agentService:
+      clientId: "agentstudio-agent-service"
+      clientSecret: "dev-agent-service-secret"
+    connectorWorker:
+      clientId: "agentstudio-connector-worker"
+      clientSecret: "dev-connector-worker-secret"
+    evalWorker:
+      clientId: "agentstudio-eval-worker"
+      clientSecret: "dev-eval-worker-secret"
+    # UUID of the agent-studio-api resource-server client. Empty here because
+    # Keycloak generates it at realm-import; templates/post-realm-bootstrap-job.yaml
+    # resolves it post-bootstrap and patches the rendered Secret in place.
+    resourceServerUuid: ""
+
+  bootstrapAdmin:
+    # Must match the admin password already in the Keycloak DB.
+    # On a fresh DB this sets the initial admin; on existing DB this
+    # must equal whatever password the admin account already has.
+    password: "AgentstudioAdmin123!"
+
+# Realm bootstrap: enabled in dev so a plain `helm install` produces a
+# working agent-studio realm without an extra kcadm.sh step. The Job is
+# idempotent (create-or-update), so re-running `helm upgrade` is safe.
+#
+# Realm name pinned to `nemo`. The chart's core clients (agent-studio-*)
+# and the additional `agentstudio-*` service / browser clients all live
+# in this single realm.
+realmBootstrap:
+  enabled: true
+  realm: nemo
+  configServiceClientId: "agentstudio-config-service"
+
+  broker:
+    enabled: false
+
+  # Drop-in compat: render the same 11 clients the live `nemo` realm on
+  # AKS already serves. Same names, same flow types, same default scopes
+  # — only difference vs production is dev-only redirect URIs / web
+  # origins below (localhost) and inline dev secrets that get rotated to
+  # KV-backed values on AKS.
+  #
+  # Each entry was verified against the AKS realm dump on 2026-05-20:
+  # see git-log message for `feat/keycloak-phase-1` for the inventory.
+  additionalClients:
+    enabled: true
+    clients:
+      # ---- service clients (client_credentials only) -----------------
+      - name: agentstudio-agent-service
+        kind: confidential-svc
+        secretEnvVar: KC_ADDL_AGENTSTUDIO_AGENT_SERVICE_SECRET
+        clientSecret: "dev-agent-service-secret"
+      - name: agentstudio-analytics-engine
+        kind: confidential-svc
+        secretEnvVar: KC_ADDL_AGENTSTUDIO_ANALYTICS_ENGINE_SECRET
+        clientSecret: "dev-analytics-engine-secret"
+      - name: agentstudio-config-service
+        kind: confidential-svc
+        secretEnvVar: KC_ADDL_AGENTSTUDIO_CONFIG_SERVICE_SECRET
+        clientSecret: "dev-config-service-secret"
+        fullScopeAllowed: true
+      - name: agentstudio-connector-worker
+        kind: confidential-svc
+        secretEnvVar: KC_ADDL_AGENTSTUDIO_CONNECTOR_WORKER_SECRET
+        clientSecret: "dev-connector-worker-secret"
+      - name: agentstudio-lakekeeper
+        kind: confidential-svc
+        secretEnvVar: KC_ADDL_AGENTSTUDIO_LAKEKEEPER_SECRET
+        clientSecret: "dev-lakekeeper-secret"
+        # Attach the `lakekeeper` realm-level client-scope so tokens carry
+        # `scope=lakekeeper` AND the audience mapper on that scope emits
+        # `aud=agentstudio-lakekeeper` (required by Lakekeeper's authn).
+        extraDefaultScopes: ["lakekeeper"]
+      - name: agentstudio-storage-manager
+        kind: confidential-svc
+        secretEnvVar: KC_ADDL_AGENTSTUDIO_STORAGE_MANAGER_SECRET
+        clientSecret: "dev-storage-manager-secret"
+      - name: agentstudio-workflow-engine
+        kind: confidential-svc
+        secretEnvVar: KC_ADDL_AGENTSTUDIO_WORKFLOW_ENGINE_SECRET
+        clientSecret: "dev-workflow-engine-secret"
+
+      # ---- browser auth-code clients ---------------------------------
+      # Hostnames mirror values-aks.yaml structure (both `:8443` and
+      # port-elided forms). Localhost dev URIs are local-only and
+      # kept in addition to the agentstudio.local entries.
+      - name: agentstudio-gui
+        kind: public-spa
+        redirectUris:
+          - "http://localhost:3000"
+          - "http://localhost:3000/*"
+          - "http://localhost:5173"
+          - "http://localhost:5173/*"
+          - "https://app.agentstudio.local:8443/console/*"
+          - "https://app.agentstudio.local/console/*"
+          - "https://app.agentstudio.local:8443/auth/callback"
+          - "https://app.agentstudio.local/auth/callback"
+          - "https://app.agentstudio.local:8443//auth/callback"
+          - "https://app.agentstudio.local//auth/callback"
+        webOrigins:
+          - "http://localhost:3000"
+          - "http://localhost:5173"
+          - "https://app.agentstudio.local:8443"
+          - "https://app.agentstudio.local"
+        attributes:
+          pkce.code.challenge.method: "S256"
+          post.logout.redirect.uris: "+"
+      - name: agentstudio-lakekeeper-ui
+        kind: public-spa
+        # See `agentstudio-lakekeeper` above for rationale; UI flow tokens
+        # need `aud=agentstudio-lakekeeper-ui` (also emitted by the same
+        # `lakekeeper` scope's audience mappers).
+        extraDefaultScopes: ["lakekeeper"]
+        redirectUris:
+          - "http://localhost:8181/*"
+          - "https://catalog.agentstudio.local:8443/*"
+          - "https://catalog.agentstudio.local/*"
+        webOrigins:
+          - "http://localhost:8181"
+          - "https://catalog.agentstudio.local:8443"
+          - "https://catalog.agentstudio.local"
+        attributes:
+          pkce.code.challenge.method: "S256"
+          post.logout.redirect.uris: "+"
+      - name: agentstudio-swagger
+        kind: public-spa
+        redirectUris:
+          - "http://localhost:8080/api-docs/*"
+          - "https://app.agentstudio.local:8443/api-docs/*"
+          - "https://app.agentstudio.local/api-docs/*"
+        webOrigins:
+          - "http://localhost:8080"
+          - "https://app.agentstudio.local:8443"
+          - "https://app.agentstudio.local"
+        attributes:
+          pkce.code.challenge.method: "S256"
+          post.logout.redirect.uris: "+"
+
+      # ---- confidential auth-code (grafana proxy) --------------------
+      - name: agentstudio-grafana-proxy
+        kind: confidential-spa
+        secretEnvVar: KC_ADDL_AGENTSTUDIO_GRAFANA_PROXY_SECRET
+        clientSecret: "dev-grafana-proxy-secret"
+        redirectUris:
+          - "http://localhost:3100/oauth2/callback"
+          - "https://grafana.agentstudio.local:8443/oauth2/callback"
+          - "https://grafana.agentstudio.local/oauth2/callback"
+        webOrigins:
+          - "http://localhost:3100"
+          - "https://grafana.agentstudio.local:8443"
+          - "https://grafana.agentstudio.local"
+        attributes:
+          post.logout.redirect.uris: "+"
+          # Backchannel logout: Keycloak POSTs a logout token here when any
+          # client (e.g. Agent Studio) ends the user's SSO session, allowing
+          # the grafana-proxy to immediately revoke the affected browser session.
+          # IMPORTANT: must be the internal cluster URL — Keycloak sends this
+          # server-side (pod→pod) so the external browser hostname is not
+          # resolvable from within the Keycloak pod.
+          backchannel.logout.url: "http://grafana-proxy.monitoring.svc.cluster.local:8080/oauth2/backchannel-logout"
+

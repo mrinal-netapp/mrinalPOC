@@ -1,0 +1,85 @@
+enabled: true
+fullnameOverride: "workers-dataset"
+
+terminationGracePeriodSeconds: 120
+gracefulShutdownTimeout: "90"
+podSecurityContext: {}
+nodeSelector: {}
+tolerations: []
+deploymentName: "nemo"
+
+# Cross-namespace FQDN references (overridable)
+temporalHost: "temporal.agentstudio-platform.svc.cluster.local"
+keycloakInternalIssuer: "http://keycloak.agentstudio-identity.svc.cluster.local:8080/realms/nemo"
+lakekeeperUrl: "http://lakekeeper.agentstudio-platform.svc.cluster.local:8181"
+
+# PVC name for the default S3 bucket (created by s3gateway in platform namespace, mounted RWX)
+defaultBucketPvcName: "s3gateway-default-bucket"
+
+image:
+  repository: dataset-processor
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
+replicas: 1
+resources:
+  requests:
+    cpu: "1"
+    memory: "2Gi"
+  limits:
+    cpu: "2"
+    memory: "4Gi"
+
+env:
+  - name: TEMPORAL_ADDRESS
+    value: "temporal.agentstudio-platform.svc.cluster.local:7233"
+  - name: TEMPORAL_NAMESPACE
+    value: "default"
+  - name: TASK_QUEUE
+    value: "dataset-processing"
+  - name: MAX_CONCURRENT_ACTIVITIES
+    value: "3"
+  - name: WORKFLOW_ENGINE_URL
+    value: "http://workflow-engine.agentstudio-services.svc.cluster.local:8080"
+  - name: WORK_UNIT_MAX_MB
+    value: "5"
+  - name: MAX_FILES_PER_UNIT
+    value: "100"
+  - name: SCATTER_MAX_UNITS_CEILING
+    value: "2000"
+  - name: AGENT_STUDIO_OBSERVABILITY_LOG_FILE_PATH
+    value: "/dev/stdout"
+  - name: OTEL_SERVICE_NAME
+    value: "dataset-processor"
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 70
+  customMetric:
+    enabled: false
+    name: "temporal_queue_backlog_dataset"
+    target:
+      averageValue: "10"
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 120
+    scaleUp:
+      stabilizationWindowSeconds: 30
+      policies:
+        - type: Pods
+          value: 2
+          periodSeconds: 60
+
+serviceAccount:
+  create: false
+  name: ""
+  azureClientId: ""
+
+workloadIdentity:
+  enabled: false

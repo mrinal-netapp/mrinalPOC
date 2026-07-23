@@ -1,0 +1,31 @@
+{{- if .Values.enabled }}
+{{- $root := . }}
+{{- range .Values.models }}
+{{- if .autoscaling.enabled }}
+{{- $args := dict "root" $root "modelKey" .key }}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "tei.modelFullname" $args }}
+  namespace: {{ $root.Values.namespace | default $root.Release.Namespace }}
+  labels:
+    {{- include "tei.commonLabels" $args | nindent 4 }}
+    {{- include "tei.selectorLabels" $args | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "tei.modelFullname" $args }}
+  minReplicas: {{ .autoscaling.minReplicas }}
+  maxReplicas: {{ .autoscaling.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .autoscaling.targetCPUUtilizationPercentage }}
+{{- end }}
+{{- end }}
+{{- end }}

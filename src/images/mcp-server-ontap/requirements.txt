@@ -1,0 +1,4 @@
+mcp>=1.2.0
+requests>=2.31.0
+# observability-client-runtime is a local monorepo package — installed separately
+# in the Dockerfile via COPY obs-client + pip install (see Makefile build target).

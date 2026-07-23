@@ -1,0 +1,116 @@
+{
+  "_schema_version": "2.0.0",
+  "project_id": "550e8400-e29b-41d4-a716-446655440000",
+  "_description": "Triage pattern: a router agent picks one specialist per request based on the input content.",
+  "agent": {
+    "framework": "maf",
+    "model": "azure/gpt-4.1-mini",
+    "temperature": 0.7,
+    "max_tokens": 4096,
+    "timeout_seconds": 300,
+    "metadata": {
+      "project": "agent-studio",
+      "version": "1.0.0",
+      "environment": "development"
+    }
+  },
+  "semantic_kernel": {
+    "agents": [
+      {
+        "name": "router",
+        "instructions": "You are a request router. Analyze the user's request and determine which specialist should handle it. You MUST use the transfer tool functions to hand off to the right specialist — do NOT reply with text. For code-related requests call transfer_to_coder. For writing/content requests call transfer_to_writer. For data/analysis requests call transfer_to_analyst. Always transfer to exactly one specialist.",
+        "description": "Routes requests to the appropriate specialist",
+        "model": "azure/gpt-4.1-mini",
+        "temperature": 0.1,
+        "max_tokens": 256,
+        "tools": [],
+        "mcp_servers": [],
+        "function_choice_behavior": "auto"
+      },
+      {
+        "name": "coder",
+        "instructions": "You are a software engineer. Write clean, well-documented code. Include error handling and tests.",
+        "description": "Handles code generation, debugging, and review",
+        "model": "azure/gpt-4.1-mini",
+        "temperature": 0.3,
+        "max_tokens": 8000,
+        "tools": [],
+        "mcp_servers": [],
+        "function_choice_behavior": "auto"
+      },
+      {
+        "name": "writer",
+        "instructions": "You are a content writer. Produce clear, engaging, well-structured content tailored to the audience.",
+        "description": "Handles content creation, editing, and documentation",
+        "model": "azure/gpt-4.1-mini",
+        "temperature": 0.7,
+        "max_tokens": 8000,
+        "tools": [],
+        "mcp_servers": [],
+        "function_choice_behavior": "auto"
+      },
+      {
+        "name": "analyst",
+        "instructions": "You are a data analyst. Analyze data, identify patterns, and provide actionable insights with supporting evidence.",
+        "description": "Handles data analysis and insights",
+        "model": "azure/gpt-4.1-mini",
+        "temperature": 0.5,
+        "max_tokens": 4096,
+        "tools": [],
+        "mcp_servers": [],
+        "function_choice_behavior": "auto"
+      }
+    ],
+    "orchestration": {
+      "type": "triage",
+      "selection_strategy": {
+        "type": "auto",
+        "initial_agent": "router"
+      },
+      "termination_strategy": {
+        "type": "default",
+        "maximum_iterations": 3
+      }
+    },
+    "default_function_choice_behavior": "auto",
+    "chat_history_max_messages": 100,
+    "enable_telemetry": false,
+    "session_ttl_seconds": 3600
+  },
+  "gateway": {
+    "url": "http://host.docker.internal:4001/v1",
+    "api_key": "",
+    "default_model": "azure/gpt-4.1-mini",
+    "request_timeout_seconds": 120,
+    "retry_on_timeout": true,
+    "max_retries": 2
+  },
+  "guardrails": {
+    "enabled": false
+  },
+  "mcp": {
+    "connection_timeout_seconds": 30,
+    "lazy_connect": true,
+    "tool_call_timeout_seconds": 60,
+    "max_tool_retries": 1,
+    "retry_on_timeout": true,
+    "discovery_on_connect": true,
+    "tool_name_format": "qualified",
+    "max_concurrent_tool_calls": 5
+  },
+  "mcp_servers": [],
+  "memory": {
+    "enabled": true,
+    "storage_backend": "memory",
+    "buffer_type": "sliding_window",
+    "ttl_seconds": 3600,
+    "max_history_length": 100,
+    "max_tokens_per_session": 0,
+    "max_chars_per_session": 0
+  },
+  "logging": {
+    "level": "INFO",
+    "format": "json",
+    "include_timestamp": true
+  }
+}

@@ -1,0 +1,117 @@
+// ---- Form ------------------------------------------------------------------
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem; // 20px
+}
+
+// ---- FormField -------------------------------------------------------------
+
+.form-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem; // 6px
+}
+
+// ---- Label area ------------------------------------------------------------
+
+.form-field__label-area {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem; // 4px
+}
+
+.form-field__label {
+  cursor: pointer;
+}
+
+.form-field__label-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem; // 4px
+  margin-inline-start: auto;
+}
+
+.form-field__optional {
+  user-select: none;
+}
+
+.form-field__tooltip-icon {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  cursor: help;
+  flex-shrink: 0;
+
+  &::after {
+    content: attr(data-tooltip);
+    position: absolute;
+    bottom: calc(100% + 8px);
+    right: 0;
+    min-width: 200px;
+    max-width: 280px;
+    padding: 8px 12px;
+    background-color: var(--background-inverse, #161616);
+    color: var(--text-on-color, #ffffff);
+    font-size: 13px;
+    line-height: 1.4;
+    border-radius: 4px;
+    white-space: normal;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.15s ease-in-out, visibility 0.15s ease-in-out;
+    z-index: 10000;
+    pointer-events: none;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  }
+
+  &:hover::after {
+    opacity: 1;
+    visibility: visible;
+  }
+}
+
+// ---- Message (error / warning / description) -------------------------------
+
+.form-field__message {
+  min-height: 1.25rem; // 20px
+
+  > div {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem; // 4px
+    font-size: 0.8125rem; // 13px
+    line-height: 1.25rem; // 20px
+    color: var(--text-primary);
+  }
+}
+
+.form-field__message--error .form-field__message-icon {
+  color: var(--notification-error);
+  flex-shrink: 0;
+}
+
+.form-field__message--warning .form-field__message-icon {
+  color: var(--notification-warning);
+  flex-shrink: 0;
+}
+
+.form-field__message--description {
+  color: var(--text-secondary) !important;
+}
+
+.form-field__message--description .form-field__message-text {
+  color: var(--text-secondary);
+}
+
+.form-field__message-label {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.form-field__message-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

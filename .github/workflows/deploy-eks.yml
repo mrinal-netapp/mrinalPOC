@@ -1,0 +1,129 @@
+# EKS dev deployment caller.
+#
+# Thin caller for the cloud-agnostic .github/workflows/deploy-reusable.yml;
+# this file pins the EKS-specific inputs (cloud=eks, cloud_environment=dev-eks)
+# and delegates the actual auth + helm flow to the reusable workflow.
+#
+# All cluster + namespace configuration is read from the `dev-eks` GitHub
+# Environment by the reusable workflow; this file only forwards the
+# image_tag input.
+#
+# Images are expected in Amazon ECR (vars.ECR_REGISTRY). EKS nodes pull
+# via node IAM (ECR read); no imagePullSecrets are created here.
+#
+# Cluster access uses GitHub OIDC -- GitHub mints an id-token, AWS IAM
+# trusts it via a federated credential on a deploy role, and
+# aws-actions/configure-aws-credentials + aws eks update-kubeconfig yield
+# kubectl access (~1h).
+#
+# Keycloak identity values follow the same pattern as deploy-gke.yml:
+# four public Entra IDs as GitHub variables; broker client secret in an
+# externally-managed K8s Secret `keycloak-entra-broker` (one-time
+# `make eks-keycloak-broker-secret` — not passed through CD).
+#
+# ─── One-time setup (AWS admin) ───────────────────────────────────────────
+# AWS:
+#   1. Create a GitHub OIDC provider in IAM (token.actions.githubusercontent.com)
+#      if one does not already exist for this account.
+#   2. Create a deploy role (e.g. arn:aws:iam::<acct>:role/gha-agentstudio-deploy)
+#      with a trust policy that allows the GitHub OIDC provider for subject
+#      `repo:NetApp-Nemo/AgentStudio:environment:dev-eks` and audience
+#      `sts.amazonaws.com`.
+#   3. Grant the role:
+#        - eks:DescribeCluster on the target cluster
+#        - An EKS access entry (or aws-auth ConfigMap binding) mapping the
+#          role principal to a Kubernetes ClusterRole with helm-deploy
+#          permissions on the tier namespaces.
+#        - ECR:GetAuthorizationToken / BatchGetImage if the runner needs
+#          to pull images for cluster-side prep (kubelet on the nodes
+#          handles the runtime image pulls via node-IAM AcrPull-equivalent).
+#   4. Provision the EKS cluster + Trident FSx + AWS Load Balancer Controller
+#      per docs/deployment/aws-agentstudio-complete-runbook.md (Steps 1-7).
+#
+# ─── One-time setup (repo admin) ──────────────────────────────────────────
+# 1. GitHub -> Settings -> Environments -> New environment -> name: `dev-eks`
+#    (add required reviewers / deployment protection rules as needed).
+# 2. Under the `dev-eks` environment, add the following variables:
+#      AWS_REGION                e.g. us-east-2
+#      AWS_ROLE_ARN              IAM role ARN federated to GitHub OIDC for the
+#                                `dev-eks` environment subject (see above).
+#      EKS_CLUSTER_NAME          EKS cluster name (e.g. agentstudio-eks)
+#      ECR_REGISTRY              ECR hostname; passed as CONTAINER_IMAGE_REPO
+#                                to the Makefile
+#                                (e.g. 123456789012.dkr.ecr.us-east-2.amazonaws.com/agentstudio)
+#                                (You may also use vars.CONTAINER_IMAGE_REPO instead.)
+#      AGENTSTUDIO_ENDPOINT      Public DNS for the Gateway (drives TLS SAN
+#                                + auth/s3/catalog/workflows/ws subdomains)
+#                                (e.g. dev-eks.agentstudio.example.com)
+#      AZURE_TENANT_ID           Entra tenant ID (maps to KEYCLOAK_TENANT_ID
+#                                for the EKS broker)
+#      KEYCLOAK_ENTRA_APP_CLIENT_ID,
+#      KEYCLOAK_ENTRA_GROUP_ADMINS_OBJECTID,
+#      KEYCLOAK_ENTRA_GROUP_MEMBERS_OBJECTID
+#                              EKS Keycloak Entra broker (separate Entra app
+#                              from AKS/GKE; same tenant/groups).
+#    One-time cluster setup (NOT in GitHub — operator runs once against EKS):
+#      K8s Secret `keycloak-entra-broker` (key `clientSecret`) in the identity
+#      namespace, created via:
+#        KEYCLOAK_ENTRA_CLIENT_SECRET='<secret>' make eks-keycloak-broker-secret
+#      CD verifies presence only; it never creates or overwrites this Secret.
+#    Optional variables (sane defaults; see deploy-reusable.yml):
+#      OBSERVABILITY=1, CERT_MANAGER_GATEWAY_TLS, CERT_MANAGER_ISSUER_NAME,
+#      GATEWAY_LB_IP, GATEWAY_MATCH_ALL_HOSTS, DEPLOYMENT_NAME,
+#      HELM_NS_*, HELM_EXTRA_ARGS,
+#      KEYCLOAK_HOSTNAME (auto-derived to https://auth.<endpoint>:8443 by
+#                         deploy-eks if unset)
+# 3. The `dev-eks` environment does NOT require any GitHub secrets for v1. ECR
+#    pull is handled by the EKS node IAM (with ECR read permissions). The Entra
+#    broker client secret is NOT a GitHub secret — it lives in the pre-created
+#    `keycloak-entra-broker` K8s Secret (see above).
+#
+# Prerequisites:
+#   - The EKS cluster has been provisioned (cluster + Trident FSx + AWS LBC).
+#     Use docs/deployment/aws-agentstudio-complete-runbook.md for the
+#     one-time setup.
+#   - The reusable workflow's `make deploy CLOUD=eks` invocation handles
+#     `eks-bootstrap-fresh` (gateway TLS + DB + identity) idempotently.
+#
+# Usage:
+#   Manual:    gh workflow run deploy-eks.yml -f image_tag=1.0.0-dev.1
+#              Actions -> "Deploy to EKS Dev" -> Run workflow -> enter image tag
+#   Automatic: invoked by build-common.yml after build-and-publish succeeds
+#              when inputs.deploy_to_eks=true.
+
+name: Deploy to EKS Dev
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: >
+          Image tag to deploy across every AgentStudio subchart
+          (e.g. 1.0.0, 1.0.0-dev.1). Must already exist in the registry
+          referenced by CONTAINER_IMAGE_REPO (vars.ECR_REGISTRY).
+        required: true
+        type: string
+  workflow_call:
+    inputs:
+      image_tag:
+        description: >
+          Image tag to deploy across every AgentStudio subchart. Must
+          already be present in the registry referenced by
+          CONTAINER_IMAGE_REPO (vars.ECR_REGISTRY).
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write   # required so the reusable workflow can mint OIDC tokens
+
+jobs:
+  deploy:
+    uses: ./.github/workflows/deploy-reusable.yml
+    permissions:
+      contents: read
+      id-token: write
+    with:
+      cloud: eks
+      cloud_environment: dev-eks
+      image_tag: ${{ inputs.image_tag }}

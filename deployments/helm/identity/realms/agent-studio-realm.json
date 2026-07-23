@@ -1,0 +1,756 @@
+{
+  "realm": {{ .Values.realmBootstrap.realm | quote }},
+  "enabled": true,
+
+  "accessTokenLifespan": {{ .Values.realmBootstrap.tokens.accessTokenLifespanSeconds }},
+  "ssoSessionIdleTimeout": {{ .Values.realmBootstrap.tokens.ssoSessionIdleTimeoutSeconds }},
+  "ssoSessionMaxLifespan": {{ .Values.realmBootstrap.tokens.ssoSessionMaxLifespanSeconds }},
+  "offlineSessionIdleTimeout": {{ .Values.realmBootstrap.tokens.ssoSessionIdleTimeoutSeconds }},
+  "accessTokenLifespanForImplicitFlow": {{ .Values.realmBootstrap.tokens.accessTokenLifespanSeconds }},
+  "accessCodeLifespan": 60,
+  "accessCodeLifespanUserAction": 300,
+  "accessCodeLifespanLogin": 1800,
+  "actionTokenGeneratedByAdminLifespan": 43200,
+  "actionTokenGeneratedByUserLifespan": 300,
+
+  "bruteForceProtected": {{ .Values.realmBootstrap.bruteForce.enabled }},
+  "permanentLockout": {{ .Values.realmBootstrap.bruteForce.permanentLockout }},
+  "failureFactor": {{ .Values.realmBootstrap.bruteForce.failureFactor }},
+  "waitIncrementSeconds": {{ .Values.realmBootstrap.bruteForce.waitIncrementSeconds }},
+  "minimumQuickLoginWaitSeconds": 60,
+  "maxFailureWaitSeconds": 900,
+  "maxDeltaTimeSeconds": 43200,
+  "quickLoginCheckMilliSeconds": 1000,
+
+  "passwordPolicy": {{ .Values.realmBootstrap.passwordPolicy | quote }},
+
+  "defaultRole": {
+    "name": "platform-member",
+    "composite": false,
+    "clientRole": false
+  },
+
+  "registrationAllowed": false,
+  "registrationEmailAsUsername": false,
+  "rememberMe": false,
+  "verifyEmail": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": false,
+  "editUsernameAllowed": false,
+  "internationalizationEnabled": false,
+
+  "identityProviders": [
+{{- if .Values.realmBootstrap.broker.enabled }}
+    {
+      "alias": "azure-entra",
+      "displayName": "Microsoft Entra ID",
+      "providerId": "oidc",
+      "enabled": true,
+      "trustEmail": true,
+      "storeToken": false,
+      "addReadTokenRoleOnCreate": false,
+      "linkOnly": false,
+      "firstBrokerLoginFlowAlias": "first broker login",
+      "config": {
+        "clientId": "${KC_ENTRA_CLIENT_ID}",
+        "clientSecret": "${KC_ENTRA_CLIENT_SECRET}",
+        "clientAuthMethod": "client_secret_post",
+        "pkceEnabled": "true",
+        "pkceMethod": "S256",
+        "syncMode": "FORCE",
+        "defaultScope": "openid profile email",
+        "useJwksUrl": "true",
+        "validateSignature": "true",
+        "issuer": "https://login.microsoftonline.com/${KC_ENTRA_TENANT_ID}/v2.0",
+        "authorizationUrl": "https://login.microsoftonline.com/${KC_ENTRA_TENANT_ID}/oauth2/v2.0/authorize",
+        "tokenUrl": "https://login.microsoftonline.com/${KC_ENTRA_TENANT_ID}/oauth2/v2.0/token",
+        "userInfoUrl": "https://graph.microsoft.com/oidc/userinfo",
+        "jwksUrl": "https://login.microsoftonline.com/${KC_ENTRA_TENANT_ID}/discovery/v2.0/keys",
+        "logoutUrl": "https://login.microsoftonline.com/${KC_ENTRA_TENANT_ID}/oauth2/v2.0/logout",
+        "backchannelSupported": "false"
+      }
+    }
+{{- end }}
+  ],
+  "identityProviderMappers": [
+{{- if .Values.realmBootstrap.broker.enabled }}
+    {
+      "name": "groups-to-platform-admin",
+      "identityProviderAlias": "azure-entra",
+      "identityProviderMapper": "oidc-role-idp-mapper",
+      "config": {
+        "syncMode": "INHERIT",
+        "claim": "groups",
+        "claim.value": "${KC_ENTRA_GROUP_ADMINS_OBJECTID}",
+        "role": "platform-admin"
+      }
+    },
+{{- /*
+platform-member is UNIVERSAL: every brokered user gets it via realm.defaultRole
+(at user creation) and the always-assign hardcoded mapper below (at first login).
+The previous `groups-to-platform-member` (oidc-role-idp-mapper) was intentionally
+removed: under the IdP's FORCE sync mode it STRIPPED platform-member from any user
+not in the Entra AgentStudio-PlatformMembers group on their next login, locking out
+legitimate users whose role had been granted by always-assign/defaultRole. Only the
+platform-ADMIN elevation stays group-gated (groups-to-platform-admin above).
+*/ -}}
+    {
+      "name": "always-assign-platform-member",
+      "identityProviderAlias": "azure-entra",
+      "identityProviderMapper": "oidc-hardcoded-role-idp-mapper",
+      "config": {
+        "syncMode": "INHERIT",
+        "role": "platform-member"
+      }
+    }
+{{- end }}
+  ],
+  "roles": {
+    "realm": [
+      {
+        "name": "uma_authorization",
+        "description": "${role_uma_authorization}",
+        "composite": false,
+        "clientRole": false
+      },
+      {
+        "name": "platform-admin",
+        "description": "Platform admin. Entra group AgentStudio-PlatformAdmins. Composite of realm role platform-member + agent-studio-api client roles [platform-admin, platform-member].",
+        "composite": true,
+        "composites": {
+          "realm": ["platform-member"],
+          "client": {
+            "agent-studio-api": ["platform-admin", "platform-member"]
+          }
+        },
+        "clientRole": false
+      },
+      {
+        "name": "platform-member",
+        "description": "Default platform member. Entra group AgentStudio-PlatformMembers or realm.defaultRole fallback. Composite of uma_authorization + agent-studio-api:platform-member.",
+        "composite": true,
+        "composites": {
+          "client": {
+            "agent-studio-api": ["platform-member"]
+          }
+        },
+        "clientRole": false
+      }
+    ],
+    "client": {
+      "agent-studio-api": [
+        {
+          "name": "platform-admin",
+          "description": "agent-studio-api client role for platform admins. Granted via composite expansion of the platform-admin realm role (T-104). Backend @Roles('platform-admin') guards (phase 2) read this off resource_access['agent-studio-api'].roles.",
+          "composite": false,
+          "clientRole": true
+        },
+        {
+          "name": "platform-member",
+          "description": "agent-studio-api client role for platform members. Granted via composite expansion of either realm role (admins inherit). Backend @Roles guards read it from resource_access.",
+          "composite": false,
+          "clientRole": true
+        }
+      ]
+    }
+  },
+  "clients": [
+    {
+      "clientId": "agent-studio-api",
+      "name": "agent-studio-api",
+      "description": "Resource-server client for agent-studio backend. Bearer-only \u2014 never obtains tokens, only appears as `aud`. Authorization Services hosts the `project` resource type and admin/member/viewer scopes for UMA in phase 2.",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "bearerOnly": true,
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "authorizationServicesEnabled": true,
+      "fullScopeAllowed": false,
+      "attributes": {
+        "use.refresh.tokens": "false"
+      },
+      "authorizationSettings": {
+        "allowRemoteResourceManagement": true,
+        "policyEnforcementMode": "ENFORCING",
+        "decisionStrategy": "AFFIRMATIVE",
+        "resources": [
+          {
+            "name": "project",
+            "type": "urn:agent-studio:resource-types:project",
+            "ownerManagedAccess": false,
+            "displayName": "Project",
+            "uris": ["/projects/{projectId}"],
+            "scopes": [
+              { "name": "admin" },
+              { "name": "member" },
+              { "name": "viewer" }
+            ]
+          }
+        ],
+        "scopes": [
+          { "name": "admin" },
+          { "name": "member" },
+          { "name": "viewer" }
+        ],
+        "policies": []
+      }
+    },
+    {
+      "clientId": "agent-studio-ui",
+      "name": "agent-studio-ui",
+      "description": "Public SPA client for the agent-studio web UI. Authorization Code + PKCE (S256) flow. Receives a Keycloak-signed JWT after Entra ID brokering and forwards it as Authorization: Bearer to the backend.",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "bearerOnly": false,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "fullScopeAllowed": false,
+      "redirectUris": {{ .Values.realmBootstrap.uiRedirectUris | toJson }},
+      "webOrigins": {{ .Values.realmBootstrap.uiWebOrigins | toJson }},
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "+",
+        "use.refresh.tokens": "true"
+      },
+      "defaultClientScopes": [
+        "basic",
+        "web-origins",
+        "acr",
+        "profile",
+        "roles",
+        "email",
+        "agent-studio-api-audience"
+      ]
+    }
+{{- /*
+Phase-2 design-intent svc-* clients (`agent-studio-svc-api-gateway`,
+`agent-studio-svc-config`) are no longer rendered. They were paper-only
+artifacts: the Istio gateway uses Keycloak's direct permission grant
+(no client_credentials needed) for UMA exchange, and config-service
+authenticates as `agentstudio-config-service` via additionalClients
+below. The `realmBootstrap.authzAdminClients` reconciliation step in
+templates/realm-bootstrap-job.yaml grants the service-account on
+`agentstudio-config-service` (and any other listed client) the
+`manage-authorization` + `uma_protection` roles + `fullScopeAllowed=true`
+that `agent-studio-svc-config` was originally meant to hold.
+*/ -}}
+{{- /*
+Additional clients — one entry per service that uses the realm.
+Rendered from realmBootstrap.additionalClients.clients[].
+
+Each entry is one of three shapes (entry.kind):
+  - confidential-svc:  clientCredentials only (service-to-service)
+  - public-spa:        public auth-code + PKCE (browser SPA)
+  - confidential-spa:  confidential auth-code (server-side web app)
+
+Secret placeholders use entry.secretEnvVar so the Job's substitution
+loop can read the matching env var (e.g. KC_ADDL_AGENTSTUDIO_LAKEKEEPER_SECRET).
+Public clients omit `secret` entirely; Keycloak rejects a populated
+`secret` on `publicClient: true`.
+*/ -}}
+{{- /*
+Per-client redirectUris / webOrigins are merged from THREE sources:
+  1. $c.redirectUris / $c.webOrigins      (the per-client list in values-aks.yaml)
+  2. additionalRedirectUris[$c.name]      (overlay map keyed by clientId)
+  3. additionalWebOrigins[$c.name]        (overlay map keyed by clientId)
+The overlay maps are empty by default (in values.yaml) and populated
+only in environment-specific overlays where extra hostnames need to be
+added without redeclaring the entire clients[] list. Helm has
+replace-semantics for list values during overlay, so without this merge
+a `--set additionalClients...` on top of a values file would clobber
+the AKS hostnames.
+
+Implementation: build a unified list per client by `concat`-ing the
+two sources, then `uniq`-ing to drop duplicates.
+*/ -}}
+{{- /*
+Endpoint substitution for SPA client URIs.
+
+The values-local.yaml file lists hardcoded `agentstudio.local` URIs (the
+default dev hostname). On any other deployment (e.g. a real cluster with
+ENDPOINT=foo.example.com), the literal `agentstudio.local` doesn't match
+the browser's actual hostname, so Keycloak rejects the OIDC redirect
+with "Invalid parameter: redirect_uri".
+
+Fix: when global.endpoint is set and differs from agentstudio.local, walk
+every URI in the merged redirect/origin list and substitute the literal
+substring `agentstudio.local` with the configured endpoint. This keeps
+the per-client subdomain prefix intact (`app.`, `catalog.`, etc.) while
+swapping the apex.
+
+Operators who want totally different URIs can still override via the
+`additionalRedirectUris` / `additionalWebOrigins` overlay maps — those
+are appended after the substitution.
+*/ -}}
+{{- $deployEndpoint := "" }}
+{{- with .Values.global }}{{- with .endpoint }}{{- $deployEndpoint = . }}{{- end }}{{- end }}
+{{- $shouldSwap := and $deployEndpoint (ne $deployEndpoint "agentstudio.local") }}
+{{- if .Values.realmBootstrap.additionalClients.enabled }}
+{{- $addlRedirects := .Values.realmBootstrap.additionalClients.additionalRedirectUris | default dict }}
+{{- $addlWebOrigins := .Values.realmBootstrap.additionalClients.additionalWebOrigins | default dict }}
+{{- range $i, $c := .Values.realmBootstrap.additionalClients.clients }}
+{{- $extraRedirects := index $addlRedirects $c.name | default list }}
+{{- $extraOrigins := index $addlWebOrigins $c.name | default list }}
+{{- $rawRedirects := concat ($c.redirectUris | default list) $extraRedirects | uniq }}
+{{- $rawOrigins := concat ($c.webOrigins | default list) $extraOrigins | uniq }}
+{{- $effectiveRedirects := list }}
+{{- $effectiveOrigins := list }}
+{{- if $shouldSwap }}
+  {{- range $u := $rawRedirects }}
+    {{- $effectiveRedirects = append $effectiveRedirects (replace "agentstudio.local" $deployEndpoint $u) }}
+  {{- end }}
+  {{- range $u := $rawOrigins }}
+    {{- $effectiveOrigins = append $effectiveOrigins (replace "agentstudio.local" $deployEndpoint $u) }}
+  {{- end }}
+  {{- $effectiveRedirects = $effectiveRedirects | uniq }}
+  {{- $effectiveOrigins = $effectiveOrigins | uniq }}
+{{- else }}
+  {{- $effectiveRedirects = $rawRedirects }}
+  {{- $effectiveOrigins = $rawOrigins }}
+{{- end }}
+{{- /*
+Per-client `extraDefaultScopes` (list, optional) lets a client opt in to
+additional realm-level client-scopes WITHOUT redeclaring the baseline.
+Used by the lakekeeper clients to attach the `lakekeeper` scope (which
+carries the audience mapper Lakekeeper validates against). Without this
+thread-through, the kcadm post-fix-up in realm-bootstrap-job.yaml silently
+no-ops (HTTP 404 on `update clients/<u>/default-client-scopes/<s>`), and
+Lakekeeper's `aud == OPENID_CLIENT_ID` check rejects every token.
+*/ -}}
+{{- $extraDefaultScopes := $c.extraDefaultScopes | default list }}
+{{- /* svc clients need aud=agent-studio-api for the keycloak-jwt-mesh check. */}}
+{{- $confidentialSvcScopes := concat (list "web-origins" "acr" "profile" "roles" "basic" "email" "agent-studio-api-audience") $extraDefaultScopes | uniq }}
+{{- $spaScopes := concat (list "web-origins" "acr" "profile" "roles" "basic" "email" "agent-studio-api-audience") $extraDefaultScopes | uniq }}
+    ,
+    {
+      "clientId": {{ $c.name | quote }},
+      "name": {{ $c.name | quote }},
+      "description": {{ $c.description | default (printf "Service client for %s." $c.name) | quote }},
+      "enabled": true,
+      "protocol": "openid-connect",
+      "fullScopeAllowed": {{ $c.fullScopeAllowed | default false }},
+{{- if eq $c.kind "confidential-svc" }}
+      "publicClient": false,
+      "bearerOnly": false,
+      "clientAuthenticatorType": "client-secret",
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "attributes": {
+        "use.refresh.tokens": "false",
+        "client_credentials.use_refresh_token": "false"
+      },
+      "defaultClientScopes": {{ $confidentialSvcScopes | toJson }},
+      "optionalClientScopes": ["address", "phone", "offline_access", "organization", "microprofile-jwt"]
+{{- else if eq $c.kind "public-spa" }}
+      "publicClient": true,
+      "bearerOnly": false,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": {{ $effectiveRedirects | toJson }},
+      "webOrigins": {{ $effectiveOrigins | toJson }},
+      "attributes": {{ $c.attributes | default (dict "pkce.code.challenge.method" "S256") | toJson }},
+      "defaultClientScopes": {{ $spaScopes | toJson }},
+      "optionalClientScopes": ["address", "phone", "offline_access", "organization", "microprofile-jwt"]
+{{- else if eq $c.kind "confidential-spa" }}
+      "publicClient": false,
+      "bearerOnly": false,
+      "clientAuthenticatorType": "client-secret",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": {{ $effectiveRedirects | toJson }},
+      "webOrigins": {{ $effectiveOrigins | toJson }},
+      "attributes": {{ $c.attributes | default dict | toJson }},
+      "defaultClientScopes": {{ $spaScopes | toJson }},
+      "optionalClientScopes": ["address", "phone", "offline_access", "organization", "microprofile-jwt"]
+{{- else }}
+{{- fail (printf "realmBootstrap.additionalClients.clients[%d].kind must be one of confidential-svc | public-spa | confidential-spa (got %q on client %s)" $i $c.kind $c.name) }}
+{{- end }}
+    }
+{{- end }}
+{{- end }}
+  ],
+  "clientScopes": [
+    {
+      "name": "basic",
+      "description": "OpenID Connect built-in scope: basic. Carries the sub claim (stable Keycloak user UUID) and auth_time. Required by every token-issuing client \u2014 the gateway, audit log, and DB foreign keys all key off sub.",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "false",
+        "display.on.consent.screen": "false"
+      },
+      "protocolMappers": [
+        {
+          "name": "sub",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-sub-mapper",
+          "consentRequired": false,
+          "config": {
+            "introspection.token.claim": "true",
+            "access.token.claim": "true"
+          }
+        },
+        {
+          "name": "auth_time",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usersessionmodel-note-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.session.note": "AUTH_TIME",
+            "introspection.token.claim": "true",
+            "userinfo.token.claim": "true",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "auth_time",
+            "jsonType.label": "long"
+          }
+        }
+      ]
+    },
+    {
+      "name": "agent-studio-api-audience",
+      "description": "Injects aud=agent-studio-api into access tokens. Default scope on agent-studio-ui and svc-* clients. Phase 2 gateway validates aud before forwarding to backend.",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "false",
+        "display.on.consent.screen": "false"
+      },
+      "protocolMappers": [
+        {
+          "name": "agent-studio-api-audience-mapper",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "agent-studio-api",
+            "id.token.claim": "false",
+            "access.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "name": "profile",
+      "description": "OpenID Connect built-in scope: profile",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "true",
+        "consent.screen.text": "${profileScopeConsentText}",
+        "display.on.consent.screen": "true"
+      },
+      "protocolMappers": [
+        {
+          "name": "full name",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-full-name-mapper",
+          "consentRequired": false,
+          "config": {
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "introspection.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        },
+        {
+          "name": "username",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "consentRequired": false,
+          "config": {
+            "introspection.token.claim": "true",
+            "userinfo.token.claim": "true",
+            "user.attribute": "username",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "preferred_username",
+            "jsonType.label": "String"
+          }
+        },
+        {
+          "name": "given name",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "consentRequired": false,
+          "config": {
+            "introspection.token.claim": "true",
+            "userinfo.token.claim": "true",
+            "user.attribute": "firstName",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "given_name",
+            "jsonType.label": "String"
+          }
+        },
+        {
+          "name": "family name",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "consentRequired": false,
+          "config": {
+            "introspection.token.claim": "true",
+            "userinfo.token.claim": "true",
+            "user.attribute": "lastName",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "family_name",
+            "jsonType.label": "String"
+          }
+        }
+      ]
+    },
+    {
+      "name": "email",
+      "description": "OpenID Connect built-in scope: email",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "true",
+        "consent.screen.text": "${emailScopeConsentText}",
+        "display.on.consent.screen": "true"
+      },
+      "protocolMappers": [
+        {
+          "name": "email",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "consentRequired": false,
+          "config": {
+            "introspection.token.claim": "true",
+            "userinfo.token.claim": "true",
+            "user.attribute": "email",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "email",
+            "jsonType.label": "String"
+          }
+        },
+        {
+          "name": "email verified",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-property-mapper",
+          "consentRequired": false,
+          "config": {
+            "introspection.token.claim": "true",
+            "userinfo.token.claim": "true",
+            "user.attribute": "emailVerified",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "email_verified",
+            "jsonType.label": "boolean"
+          }
+        }
+      ]
+    },
+    {
+      "name": "roles",
+      "description": "OpenID Connect scope for add user roles to the access token",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "false",
+        "consent.screen.text": "${rolesScopeConsentText}",
+        "display.on.consent.screen": "true"
+      },
+      "protocolMappers": [
+        {
+          "name": "realm roles",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-realm-role-mapper",
+          "consentRequired": false,
+          "config": {
+            "introspection.token.claim": "true",
+            "multivalued": "true",
+            "userinfo.token.claim": "false",
+            "id.token.claim": "false",
+            "access.token.claim": "true",
+            "claim.name": "realm_access.roles",
+            "jsonType.label": "String"
+          }
+        },
+        {
+          "name": "client roles",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-client-role-mapper",
+          "consentRequired": false,
+          "config": {
+            "introspection.token.claim": "true",
+            "multivalued": "true",
+            "userinfo.token.claim": "false",
+            "id.token.claim": "false",
+            "access.token.claim": "true",
+            "claim.name": "resource_access.${client_id}.roles",
+            "jsonType.label": "String"
+          }
+        },
+        {
+          "name": "audience resolve",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-resolve-mapper",
+          "consentRequired": false,
+          "config": {
+            "introspection.token.claim": "true",
+            "access.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "name": "web-origins",
+      "description": "OpenID Connect scope for add allowed web origins to the access token",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "false",
+        "consent.screen.text": "",
+        "display.on.consent.screen": "false"
+      },
+      "protocolMappers": [
+        {
+          "name": "allowed web origins",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-allowed-origins-mapper",
+          "consentRequired": false,
+          "config": {
+            "introspection.token.claim": "true",
+            "access.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "name": "acr",
+      "description": "OpenID Connect scope for add acr (authentication context class reference) to the token",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "false",
+        "display.on.consent.screen": "false"
+      },
+      "protocolMappers": [
+        {
+          "name": "acr loa level",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-acr-mapper",
+          "consentRequired": false,
+          "config": {
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "introspection.token.claim": "true",
+            "userinfo.token.claim": "false"
+          }
+        }
+      ]
+    },
+    {
+      "name": "lakekeeper",
+      "description": "Lakekeeper OIDC scope: emits aud=[agentstudio-lakekeeper, agentstudio-lakekeeper-ui] so Lakekeeper's aud == OPENID_CLIENT_ID check passes for backend (client_credentials) and UI (auth-code) flows. Attached via extraDefaultScopes.",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "true",
+        "display.on.consent.screen": "false"
+      },
+      "protocolMappers": [
+        {
+          "name": "audience-agentstudio-lakekeeper",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "agentstudio-lakekeeper",
+            "id.token.claim": "false",
+            "access.token.claim": "true",
+            "introspection.token.claim": "true",
+            "userinfo.token.claim": "false"
+          }
+        },
+        {
+          "name": "audience-agentstudio-lakekeeper-ui",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "agentstudio-lakekeeper-ui",
+            "id.token.claim": "false",
+            "access.token.claim": "true",
+            "introspection.token.claim": "true",
+            "userinfo.token.claim": "false"
+          }
+        }
+      ]
+    }
+  ],
+  "scopeMappings": [
+    {
+      "client": "agent-studio-ui",
+      "roles": ["platform-admin", "platform-member"]
+    }
+{{- /*
+Realm-level scope mappings for additional (compat) clients. Mirrors the
+default-client-scopes change above: every user-facing client (public-spa
+or confidential-spa) needs to be able to carry the platform-admin /
+platform-member realm roles in its tokens. confidential-svc clients are
+pure M2M (no end-user identity) and so don't need realm-role scoping —
+their service-account roles are granted directly post-import.
+*/ -}}
+{{- if .Values.realmBootstrap.additionalClients.enabled }}
+{{- range $i, $c := .Values.realmBootstrap.additionalClients.clients }}
+{{- if or (eq $c.kind "public-spa") (eq $c.kind "confidential-spa") }}
+    ,
+    {
+      "client": {{ $c.name | quote }},
+      "roles": ["platform-admin", "platform-member"]
+    }
+{{- end }}
+{{- end }}
+{{- end }}
+  ],
+
+  "clientScopeMappings": {
+    "agent-studio-api": [
+      {
+        "client": "agent-studio-ui",
+        "roles": ["platform-admin", "platform-member"]
+      }
+{{- /*
+Same filter as scopeMappings above — user-facing additionalClients need
+to project agent-studio-api client roles (platform-admin/platform-member)
+into resource_access on the token. confidential-svc entries are skipped.
+*/ -}}
+{{- if .Values.realmBootstrap.additionalClients.enabled }}
+{{- range $i, $c := .Values.realmBootstrap.additionalClients.clients }}
+{{- if or (eq $c.kind "public-spa") (eq $c.kind "confidential-spa") }}
+      ,
+      {
+        "client": {{ $c.name | quote }},
+        "roles": ["platform-admin", "platform-member"]
+      }
+{{- end }}
+{{- end }}
+{{- end }}
+    ]
+  },
+
+  "defaultDefaultClientScopes": [
+    "basic",
+    "web-origins",
+    "acr",
+    "profile",
+    "roles",
+    "email"
+  ],
+  "defaultOptionalClientScopes": [],
+  "groups": [],
+  "users": [],
+  "components": {},
+  "authenticationFlows": [],
+  "authenticatorConfig": [],
+  "requiredActions": []
+}

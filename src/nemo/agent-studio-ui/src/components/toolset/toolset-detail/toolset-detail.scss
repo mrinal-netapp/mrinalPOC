@@ -1,0 +1,279 @@
+@use '@/styles/mixins' as *;
+
+.toolset-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.toolset-overview {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding-top: 4px;
+}
+
+.toolset-overview__filter-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 32px;
+  padding: 4px 12px;
+  border: 1px solid var(--border-main);
+  border-radius: 4px;
+  background: var(--background-content);
+}
+
+.toolset-overview__filter-bar-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.toolset-overview__filter-icon {
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+.toolset-overview__filter-label {
+  line-height: 16px;
+}
+
+.toolset-overview__filter-chip-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.toolset-overview__filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--border-main);
+  border-radius: 16px;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--text-primary);
+  background: transparent;
+  cursor: pointer;
+  white-space: nowrap;
+
+  &:hover {
+    background: var(--background-hover);
+  }
+}
+
+// --- Associated agents section (Overview tab) ---
+
+.toolset-overview__agents {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px 24px;
+  border: 1px solid var(--border-main);
+  border-radius: 8px;
+  background: var(--background-content);
+
+  @include mobile {
+    padding: 12px 16px;
+  }
+}
+
+.toolset-overview__agents-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-primary);
+}
+
+.toolset-overview__agents-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 10px;
+  background: var(--background-hover);
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 20px;
+}
+
+.toolset-overview__agents-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.toolset-overview__agents-item {
+  display: flex;
+  align-items: center;
+}
+
+.toolset-detail__status {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.toolset-detail__status--healthy {
+  color: var(--notification-success);
+}
+
+.toolset-detail__status--unhealthy {
+  color: var(--notification-error);
+}
+
+.toolset-detail__status--warning {
+  color: var(--notification-warning);
+}
+
+.toolset-detail__status--deploying {
+  color: var(--notification-information);
+}
+
+.toolset-detail__agent-link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--link-primary, var(--blue-50, #0860ed));
+  cursor: pointer;
+  font-size: 14px;
+  text-align: left;
+
+  &:hover {
+    text-decoration: underline;
+  }
+}
+
+// --- MCP server details section (Testing tab) ---
+
+.toolset-detail__mcp-section {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border-main);
+  border-radius: 8px;
+  background: var(--background-content);
+}
+
+.toolset-detail__mcp-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 24px;
+  border-bottom: 1px solid var(--border-main);
+
+  @include mobile {
+    padding: 12px 16px;
+  }
+}
+
+.toolset-detail__mcp-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-primary);
+}
+
+.toolset-detail__mcp-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+.toolset-detail__mcp-test-link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--icon-primary);
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+
+  &:hover {
+    text-decoration: underline;
+  }
+}
+
+.toolset-detail__mcp-dots,
+.toolset-detail__mcp-collapse {
+  background: none;
+  border: none;
+  padding: 4px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  color: var(--text-secondary);
+
+  &:hover {
+    background: var(--background-hover);
+    color: var(--text-primary);
+  }
+}
+
+.toolset-detail__mcp-details {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.toolset-detail__mcp-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  border-bottom: 1px solid var(--border-main);
+
+  @include tablet {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  @include mobile {
+    grid-template-columns: 1fr;
+  }
+
+  .toolset-detail__mcp-field {
+    padding: 16px 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+
+    @include mobile {
+      padding: 12px 16px;
+    }
+  }
+}
+
+.toolset-detail__mcp-status-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.toolset-detail__mcp-status-icon--success {
+  color: var(--notification-success);
+}
+
+.toolset-detail__mcp-status-icon--error {
+  color: var(--notification-error);
+}
+
+.toolset-detail__mcp-status-icon--warning {
+  color: var(--notification-warning);
+}
+
+.toolset-detail__mcp-footer {
+  padding: 16px 24px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}

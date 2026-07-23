@@ -1,0 +1,84 @@
+# ---------------------------------------------------------------------------
+# EKS overlay for the observability stack.
+# Applied automatically by: make helm-observability-upgrade-eks
+# (or manually: make deploy-observability HELM_EXTRA_ARGS="-f deployments/helm/observability/values-eks.yaml")
+#
+# Key differences from the base values.yaml (mirrors values-aks.yaml / values-gke.yaml intent):
+#   - Phoenix uses PostgreSQL (shared-postgresql in the database namespace) instead
+#     of SQLite on a PVC. PostgreSQL is a durable backend better suited to EKS;
+#     it also avoids ReadWriteOnce PVC contention during rolling updates.
+#   - database.create: true adds an init container that creates the 'phoenix'
+#     database in PostgreSQL if it does not already exist.
+#   - Prometheus, Loki, and Tempo use the cluster default RWO storage class
+#     (typically EBS gp3 via the EKS add-on). FSx Trident fsxn-nas (RWX NFS) is
+#     reserved for shared bucket/DB tiers — block RWO is a better fit here.
+#   - Loki and Tempo PVC sizes match observability-service Helm production
+#     defaults (30 Gi each).
+# ---------------------------------------------------------------------------
+
+phoenix:
+  image:
+    tag: "version-15.12.0"
+
+  database:
+    backend: postgresql
+    create: true
+    host: shared-postgresql.database.svc.cluster.local
+    port: 5432
+    name: phoenix
+    user: postgres
+    password: agentstudio-postgres-password
+
+  env:
+    - name: PHOENIX_SQL_DATABASE_URL
+      value: ""
+    - name: PHOENIX_WORKING_DIR
+      value: "/data"
+    - name: PHOENIX_TELEMETRY_ENABLED
+      value: "false"
+    - name: PHOENIX_DEFAULT_RETENTION_POLICY_DAYS
+      value: "30"
+
+  persistence:
+    enabled: true
+    size: 10Gi
+    storageClass: ""
+
+kube-prometheus-stack:
+  prometheus:
+    prometheusSpec:
+      storageSpec:
+        volumeClaimTemplate:
+          spec:
+            accessModes: ["ReadWriteOnce"]
+            storageClassName: ""
+            resources:
+              requests:
+                storage: 10Gi
+
+loki:
+  fullnameOverride: "loki"
+  persistence:
+    enabled: true
+    size: 30Gi
+    storageClass: ""
+
+tempo:
+  fullnameOverride: "tempo"
+  persistence:
+    enabled: true
+    size: 30Gi
+    storageClass: ""
+
+# Grafana-proxy session and internal-token secrets.
+# Pre-created by `make eks-keycloak-grafana-proxy-secrets` (random values,
+# stable across pod restarts). Secrets live in the monitoring namespace.
+grafana-proxy:
+  session:
+    existingSecret: "grafana-proxy-session-secret"
+  internalToken:
+    existingSecret: "grafana-proxy-internal-token"
+
+prometheus-proxy:
+  internalToken:
+    existingSecret: "grafana-proxy-internal-token"

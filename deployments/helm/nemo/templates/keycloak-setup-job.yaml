@@ -1,0 +1,194 @@
+{{- if .Values.keycloak.setup.enabled }}
+{{- /*
+  Post-install/post-upgrade hook to set up Keycloak realm and OIDC clients.
+  This job waits for Keycloak to be ready and creates the realm and all OIDC clients.
+  The job is idempotent - it can be run multiple times safely.
+
+  Keycloak placement: the job calls the Keycloak Admin API at KEYCLOAK_URL (see values keycloak.setup).
+  Default is http://keycloak.agent-studio-identity.svc.cluster.local:8080 (or
+  keycloak.setup.keycloakNamespace if Keycloak runs in another namespace). The in-repo Keycloak chart
+  pins fullnameOverride to `keycloak`. Helm upgrade uses --timeout; post-upgrade hooks must finish
+  within that window or the upgrade fails.
+*/}}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "nemo.fullname" . }}-keycloak-setup
+  namespace: {{ include "nemo.namespace" . }}
+  labels:
+    {{- include "nemo.labels" . | nindent 4 }}
+    app.kubernetes.io/component: keycloak-setup
+{{- with .Values.global.imagePullSecrets }}
+imagePullSecrets:
+  {{- range . }}
+  {{- if kindIs "string" . }}
+  - name: {{ . | quote }}
+  {{- else if kindIs "map" . }}
+  - {{- toYaml . | nindent 4 }}
+  {{- else }}
+  - name: {{ . | quote }}
+  {{- end }}
+  {{- end }}
+{{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "nemo.fullname" . }}-keycloak-setup
+  namespace: {{ include "nemo.namespace" . }}
+  labels:
+    {{- include "nemo.labels" . | nindent 4 }}
+    app.kubernetes.io/component: keycloak-setup
+rules:
+- apiGroups: [""]
+  resources: ["secrets"]
+  resourceNames: ["keycloak-oidc-secrets"]
+  verbs: ["get", "patch", "update", "create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "nemo.fullname" . }}-keycloak-setup
+  namespace: {{ include "nemo.namespace" . }}
+  labels:
+    {{- include "nemo.labels" . | nindent 4 }}
+    app.kubernetes.io/component: keycloak-setup
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "nemo.fullname" . }}-keycloak-setup
+subjects:
+- kind: ServiceAccount
+  name: {{ include "nemo.fullname" . }}-keycloak-setup
+  namespace: {{ include "nemo.namespace" . }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "nemo.fullname" . }}-keycloak-setup
+  namespace: {{ include "nemo.namespace" . }}
+  labels:
+    {{- include "nemo.labels" . | nindent 4 }}
+    app.kubernetes.io/component: keycloak-setup
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      name: {{ include "nemo.fullname" . }}-keycloak-setup
+      annotations:
+        # Skip Istio sidecar injection on this one-shot Job — sidecars
+        # don't exit when the main container completes and the pod
+        # would never reach Succeeded. Safe here because the Job only
+        # calls Keycloak's Admin API on port 8080, which the
+        # `keycloak-http-permissive` PeerAuthentication exposes in
+        # PERMISSIVE mode (see istio-mesh-policies chart).
+        sidecar.istio.io/inject: "false"
+    spec:
+      restartPolicy: OnFailure
+      serviceAccountName: {{ include "nemo.fullname" . }}-keycloak-setup
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- range . }}
+        {{- if kindIs "string" . }}
+        - name: {{ . | quote }}
+        {{- else if kindIs "map" . }}
+        - {{- toYaml . | nindent 10 }}
+        {{- else }}
+        - name: {{ . | quote }}
+        {{- end }}
+        {{- end }}
+      {{- end }}
+      volumes:
+      - name: script-volume
+        emptyDir: {}
+      initContainers:
+      - name: copy-script
+        image: {{ .Values.global.imageRepository }}/init-tools:latest
+        imagePullPolicy: {{ .Values.global.imagePullPolicy | default "IfNotPresent" }}
+        command: ['sh', '-c']
+        args:
+        - |
+          echo '{{ .Files.Get "files/scripts/keycloak-setup.py" | b64enc }}' | base64 -d > /shared/keycloak_setup.py
+        volumeMounts:
+        - name: script-volume
+          mountPath: /shared
+      containers:
+      - name: keycloak-setup
+        image: {{ .Values.keycloak.setup.image.repository | default (printf "%s/job-setup" .Values.global.imageRepository) }}:{{ .Values.keycloak.setup.image.tag | default .Values.global.imageTag | default "latest" }}
+        imagePullPolicy: {{ .Values.keycloak.setup.image.pullPolicy | default "IfNotPresent" }}
+        volumeMounts:
+        - name: script-volume
+          mountPath: /tmp
+        env:
+        - name: NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: SECRET_NAME
+          value: "keycloak-oidc-secrets"
+        - name: KEYCLOAK_URL
+          value: {{ .Values.keycloak.setup.keycloakUrl | default (include "nemo.keycloakHttpBaseUrl" .) | quote }}
+        - name: KEYCLOAK_ADMIN_USER
+          value: "{{ .Values.keycloak.setup.adminUser | default "admin" }}"
+        {{- /*
+          KEYCLOAK_ADMIN_PASSWORD source preference (highest first):
+            1. .Values.keycloak.setup.adminPasswordSecretRef.{name,key}
+               -- AKS path: the bootstrap admin password is randomly
+               generated in Key Vault and mirrored into this namespace
+               by `make aks-keycloak-mirror-bootstrap-admin`. The
+               keycloak chart's values-aks.yaml owns the KV->K8s mapping;
+               nemo's values-aks.yaml just points at the mirrored Secret.
+            2. .Values.keycloak.setup.adminPassword (literal value)
+               -- laptop / local-dev path: pinned to the well-known
+               literal "AgentstudioAdmin123!" that values-local.yaml
+               sets on the keycloak chart's bootstrapAdmin too.
+        */}}
+        {{- with .Values.keycloak.setup.adminPasswordSecretRef }}
+        - name: KEYCLOAK_ADMIN_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ .name | quote }}
+              key:  {{ .key  | default "password" | quote }}
+        {{- else }}
+        - name: KEYCLOAK_ADMIN_PASSWORD
+          value: "{{ .Values.keycloak.setup.adminPassword | default "AgentstudioAdmin123!" }}"
+        {{- end }}
+        - name: KEYCLOAK_REALM
+          value: "{{ .Values.keycloak.setup.realmName | default "nemo" }}"
+        - name: DOMAIN
+          value: {{ .Values.keycloak.setup.domain | default (include "nemo.endpoint" .) | quote }}
+        # CONSOLE_HOST: single-label public host for the console + API gateway.
+        # Used as the OIDC redirect target for agentstudio-gui, agentstudio-gateway,
+        # and agentstudio-swagger clients. Defaults to nemo.consoleHost
+        # (e.g. app.{endpoint}) so the apex (which may not resolve under a
+        # single-label wildcard DNS) is never used in OIDC URIs.
+        - name: CONSOLE_HOST
+          value: {{ .Values.keycloak.setup.consoleHost | default (include "nemo.consoleHost" .) | quote }}
+        # CATALOG_HOST: single-label public host for the Lakekeeper UI.
+        # Used as the OIDC redirect target for agentstudio-lakekeeper-ui.
+        - name: CATALOG_HOST
+          value: {{ .Values.keycloak.setup.catalogHost | default (include "nemo.catalogSubdomain" .) | quote }}
+        - name: PROTOCOL
+          value: "{{ .Values.keycloak.setup.protocol | default "http" }}"
+        command:
+        - /bin/sh
+        - -c
+        - |
+          set -e
+          echo "=== keycloak-setup hook $(date -u +%Y-%m-%dT%H:%M:%SZ) ==="
+          echo "NAMESPACE=${NAMESPACE} KEYCLOAK_URL=${KEYCLOAK_URL} KEYCLOAK_REALM=${KEYCLOAK_REALM}"
+          echo "Waiting for Keycloak Admin API; script will log progress..."
+          exec python3 -u /tmp/keycloak_setup.py
+        resources:
+          limits:
+            cpu: 200m
+            memory: 128Mi
+          requests:
+            cpu: 100m
+            memory: 64Mi
+{{- end }}

@@ -1,0 +1,7 @@
+apiVersion: v2
+name: gui
+description: A Helm sub-chart for AgentStudio GUI
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+

@@ -1,0 +1,110 @@
+.tab-demo {
+  padding: 32px;
+  font-family: var(--font-family);
+  color: var(--text-primary);
+  background-color: var(--background-main);
+  min-height: 100vh;
+}
+
+.tab-demo__title {
+  font-size: 18px;
+  font-weight: 600;
+  margin: 0 0 24px;
+  color: var(--text-primary);
+
+  &:not(:first-child) {
+    margin-top: 40px;
+  }
+}
+
+.tab-demo__subtitle {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0 0 12px;
+  color: var(--text-secondary);
+}
+
+.tab-demo__section {
+  margin-bottom: 32px;
+}
+
+.tab-demo__row {
+  display: flex;
+  align-items: flex-end;
+  gap: 24px;
+  margin-bottom: 16px;
+  padding: 16px;
+  background-color: var(--background-content);
+  border: 1px solid var(--border-main);
+  border-radius: 4px;
+}
+
+.tab-demo__box {
+  margin-bottom: 24px;
+  padding: 16px;
+  background-color: var(--background-content);
+  border: 1px solid var(--border-main);
+  border-radius: 4px;
+}
+
+.tab-demo__grid {
+  display: grid;
+  grid-template-columns: 120px 1fr 1fr;
+  gap: 1px;
+  background-color: var(--border-main);
+  border: 1px solid var(--border-main);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.tab-demo__cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px 12px;
+  background-color: var(--background-content);
+}
+
+.tab-demo__cell--header {
+  background-color: var(--background-table-header);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 10px 12px;
+}
+
+.tab-demo__cell--label {
+  justify-content: flex-start;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  background-color: var(--background-main);
+}
+
+.tab-demo__panel-content {
+  font-size: 14px;
+  color: var(--text-secondary);
+  padding: 8px 0;
+}
+
+// variant x fitting combo showcase
+.tab-demo__combos {
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+}
+
+.tab-demo__combo {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.tab-demo__combo-box {
+  border: 1px dashed var(--border-main);
+  border-radius: 4px;
+  padding: 16px;
+  background-color: var(--background-main);
+}

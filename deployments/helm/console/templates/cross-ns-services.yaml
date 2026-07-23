@@ -1,0 +1,69 @@
+{{/*
+Cross-namespace aliases for console tier.
+Default mode is externalName: a CoreDNS-resolvable Service alias that works for
+plain DNS clients such as the agent-studio-ui nginx upstream resolver. Set
+mode=serviceEntry only when Istio DNS capture is enabled mesh-wide (otherwise
+the ServiceEntry host is NXDOMAIN for non-mesh DNS lookups).
+*/}}
+
+{{- $servicesNs := .Values.servicesNamespace | default "agentstudio-services" }}
+{{- $platformNs := .Values.platformNamespace | default "agentstudio-platform" }}
+{{- $identityNs := .Values.keycloakNamespace | default "agentstudio-identity" }}
+{{- $llmNs := .Values.llmGatewayNamespace | default "agentstudio-llm-gateway" }}
+{{- $releaseNs := .Release.Namespace }}
+{{- $crossNs := (index .Values "crossNsServices" | default dict) }}
+{{- $mode := (index $crossNs "mode" | default "externalName") }}
+{{- $targets := dict
+    "config-service" (dict "host" (printf "config-service.%s.svc.cluster.local" $servicesNs) "port" 3000 "name" "http-api" "protocol" "HTTP")
+    "apigateway-service" (dict "host" (printf "apigateway-service.%s.svc.cluster.local" $servicesNs) "port" 8080 "name" "http-api" "protocol" "HTTP")
+    "agent-service" (dict "host" (printf "agent-service.%s.svc.cluster.local" $servicesNs) "port" 8000 "name" "http-api" "protocol" "HTTP")
+    "workflow-engine" (dict "host" (printf "workflow-engine.%s.svc.cluster.local" $servicesNs) "port" 8080 "name" "http-api" "protocol" "HTTP")
+    "storage-manager" (dict "host" (printf "storage-manager.%s.svc.cluster.local" $servicesNs) "port" 8080 "name" "http-api" "protocol" "HTTP")
+    "kb-retrieval-service" (dict "host" (printf "kb-retrieval-service.%s.svc.cluster.local" $servicesNs) "port" 5000 "name" "http-api" "protocol" "HTTP")
+    "analytics-engine" (dict "host" (printf "analytics-engine.%s.svc.cluster.local" $servicesNs) "port" 5000 "name" "http-api" "protocol" "HTTP")
+    "bifrost-proxy" (dict "host" (printf "bifrost-proxy.%s.svc.cluster.local" $llmNs) "port" 8080 "name" "http-api" "protocol" "HTTP")
+    "temporal" (dict "host" (printf "temporal.%s.svc.cluster.local" $platformNs) "port" 7233 "name" "grpc-temporal" "protocol" "GRPC")
+    "lakekeeper" (dict "host" (printf "lakekeeper.%s.svc.cluster.local" $platformNs) "port" 8181 "name" "http-api" "protocol" "HTTP")
+    "keycloak" (dict "host" (printf "keycloak.%s.svc.cluster.local" $identityNs) "port" 8080 "name" "http-api" "protocol" "HTTP")
+}}
+{{- range $name, $cfg := $targets }}
+---
+{{- if eq $mode "externalName" }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  namespace: {{ $releaseNs }}
+  labels:
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: cross-namespace-proxy
+spec:
+  type: ExternalName
+  externalName: {{ $cfg.host }}
+  ports:
+    - name: {{ $cfg.name }}
+      port: {{ $cfg.port }}
+      targetPort: {{ $cfg.port }}
+{{- else }}
+apiVersion: networking.istio.io/v1beta1
+kind: ServiceEntry
+metadata:
+  name: {{ $name }}-cross-ns
+  namespace: {{ $releaseNs }}
+  labels:
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: cross-namespace-proxy
+spec:
+  hosts:
+    - {{ $name }}
+    - {{ $name }}.{{ $releaseNs }}.svc.cluster.local
+  location: MESH_INTERNAL
+  resolution: DNS
+  endpoints:
+    - address: {{ $cfg.host }}
+  ports:
+    - number: {{ $cfg.port }}
+      name: {{ $cfg.name }}
+      protocol: {{ $cfg.protocol }}
+{{- end }}
+{{- end }}

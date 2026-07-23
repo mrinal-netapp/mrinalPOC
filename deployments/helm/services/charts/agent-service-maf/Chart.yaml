@@ -1,0 +1,6 @@
+apiVersion: v2
+name: agent-service-maf
+description: A Helm sub-chart for AgentStudio Agent Service MAF (Python/FastAPI + Microsoft Agent Framework)
+type: application
+version: 1.0.0
+appVersion: "0.1.0"

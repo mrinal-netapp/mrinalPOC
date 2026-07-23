@@ -1,0 +1,230 @@
+{{- if and .Values.defaultSetup.enabled (default true .Values.defaultSetup.lakekeeperEnabled) (or .Values.s3gateway.enabled (default false .Values.defaultSetup.s3gatewayBootstrapEnabled)) .Values.s3gateway.defaultBucket.enabled .Values.s3gateway.defaultBucket.name }}
+{{- /*
+  Post-install/post-upgrade hook: verify default bucket exists, bootstrap Lakekeeper (EULA), create default warehouse.
+  Runs after keycloak-setup (5). Lakekeeper starts after keycloak-setup via init container (no restart job). Does not create the bucket; verifies it exists.
+  Requires: keycloak-oidc-secrets (lakekeeper client), s3gateway credentials secret.
+  Note: Uses defaultSetup.lakekeeperEnabled (not lakekeeper.enabled) so operator can deploy Lakekeeper
+  separately and still run lakekeeper-bootstrap via the app chart.
+*/}}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "nemo.fullname" . }}-lakekeeper-bootstrap
+  namespace: {{ include "nemo.namespace" . }}
+  labels:
+    {{- include "nemo.labels" . | nindent 4 }}
+    app.kubernetes.io/component: lakekeeper-bootstrap
+{{- with .Values.global.imagePullSecrets }}
+imagePullSecrets:
+  {{- range . }}
+  {{- if kindIs "string" . }}
+  - name: {{ . | quote }}
+  {{- else if kindIs "map" . }}
+  - {{- toYaml . | nindent 4 }}
+  {{- else }}
+  - name: {{ . | quote }}
+  {{- end }}
+  {{- end }}
+{{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "nemo.fullname" . }}-lakekeeper-bootstrap
+  namespace: {{ include "nemo.namespace" . }}
+  labels:
+    {{- include "nemo.labels" . | nindent 4 }}
+    app.kubernetes.io/component: lakekeeper-bootstrap
+rules:
+- apiGroups: [""]
+  resources: ["secrets"]
+  resourceNames:
+    - keycloak-oidc-secrets
+    - {{ include "nemo.s3gatewayCredentialsName" . | trim }}
+  verbs: ["get"]
+{{- if .Values.keycloak.setup.enabled }}
+- apiGroups: ["batch"]
+  resources: ["jobs"]
+  resourceNames:
+    - {{ include "nemo.fullname" . }}-keycloak-setup
+  verbs: ["get", "list"]
+{{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "nemo.fullname" . }}-lakekeeper-bootstrap
+  namespace: {{ include "nemo.namespace" . }}
+  labels:
+    {{- include "nemo.labels" . | nindent 4 }}
+    app.kubernetes.io/component: lakekeeper-bootstrap
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "nemo.fullname" . }}-lakekeeper-bootstrap
+subjects:
+- kind: ServiceAccount
+  name: {{ include "nemo.fullname" . }}-lakekeeper-bootstrap
+  namespace: {{ include "nemo.namespace" . }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "nemo.fullname" . }}-lakekeeper-bootstrap
+  namespace: {{ include "nemo.namespace" . }}
+  labels:
+    {{- include "nemo.labels" . | nindent 4 }}
+    app.kubernetes.io/component: lakekeeper-bootstrap
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "10"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 10
+  template:
+    metadata:
+      name: {{ include "nemo.fullname" . }}-lakekeeper-bootstrap
+      annotations:
+        # Native sidecar (k8s 1.28+, Istio 1.20+) so istio-proxy:
+        #   - is already running when wait-for-keycloak-setup +
+        #     copy-script initContainers start (initContainers can
+        #     reach meshed services under STRICT mTLS),
+        #   - terminates when lakekeeper-bootstrap main exits, so the
+        #     Job reaches Succeeded without a sidecar-lifecycle hang.
+        sidecar.istio.io/nativeSidecar: "true"
+    spec:
+      restartPolicy: OnFailure
+      serviceAccountName: {{ include "nemo.fullname" . }}-lakekeeper-bootstrap
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- range . }}
+        {{- if kindIs "string" . }}
+        - name: {{ . | quote }}
+        {{- else if kindIs "map" . }}
+        - {{- toYaml . | nindent 10 }}
+        {{- else }}
+        - name: {{ . | quote }}
+        {{- end }}
+        {{- end }}
+      {{- end }}
+      volumes:
+      - name: script-volume
+        emptyDir: {}
+      initContainers:
+      - name: copy-script
+        image: {{ .Values.global.imageRepository }}/init-tools:latest
+        imagePullPolicy: {{ if .Values.global.imagePullPolicy }}{{ .Values.global.imagePullPolicy }}{{ else }}IfNotPresent{{ end }}
+        command: ['sh', '-c']
+        args:
+        - |
+          echo '{{ .Files.Get "files/scripts/default-setup.py" | b64enc }}' | base64 -d > /shared/default_setup.py
+        volumeMounts:
+        - name: script-volume
+          mountPath: /shared
+      {{- if .Values.keycloak.setup.enabled }}
+      - name: wait-for-keycloak-setup
+        image: {{ .Values.global.imageRepository }}/init-tools:latest
+        imagePullPolicy: {{ if .Values.global.imagePullPolicy }}{{ .Values.global.imagePullPolicy }}{{ else }}IfNotPresent{{ end }}
+        env:
+          - name: NAMESPACE
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.namespace
+          - name: KEYCLOAK_SETUP_JOB_NAME
+            value: {{ (printf "%s-keycloak-setup" (include "nemo.fullname" .)) | quote }}
+        command:
+          - /bin/sh
+          - -c
+          - |
+            JOB_NAME="${KEYCLOAK_SETUP_JOB_NAME}"
+            APISERVER="https://kubernetes.default.svc"
+            TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+            JOB_URL="${APISERVER}/apis/batch/v1/namespaces/${NAMESPACE}/jobs/${JOB_NAME}"
+
+            echo "Checking for keycloak-setup job ${JOB_NAME} in ${NAMESPACE}..."
+            RESP=$(wget --no-check-certificate --header="Authorization: Bearer ${TOKEN}" \
+              -q -O - "${JOB_URL}" 2>/dev/null)
+            if [ $? -ne 0 ]; then
+              echo "Keycloak-setup job not found (keycloak.setup.enabled may be false). Proceeding."
+              exit 0
+            fi
+
+            echo "Waiting for keycloak-setup job to complete (timeout 600s)..."
+            ELAPSED=0
+            while [ $ELAPSED -lt 600 ]; do
+              RESP=$(wget --no-check-certificate --header="Authorization: Bearer ${TOKEN}" \
+                -q -O - "${JOB_URL}" 2>/dev/null)
+              if echo "$RESP" | grep -qE '"succeeded":[[:space:]]*[1-9]'; then
+                echo "Keycloak setup job completed."
+                exit 0
+              fi
+              sleep 5
+              ELAPSED=$((ELAPSED + 5))
+            done
+            echo "Timeout waiting for keycloak-setup job. Proceeding anyway."
+      {{- end }}
+      containers:
+      - name: lakekeeper-bootstrap
+        image: {{ .Values.keycloak.setup.image.repository | default (printf "%s/job-setup" .Values.global.imageRepository) }}:{{ .Values.keycloak.setup.image.tag | default .Values.global.imageTag | default "latest" }}
+        imagePullPolicy: {{ .Values.keycloak.setup.image.pullPolicy | default "Always" }}
+        volumeMounts:
+        - name: script-volume
+          mountPath: /tmp
+        env:
+        - name: PYTHONUNBUFFERED
+          value: "1"
+        # Must match Lakekeeper's LAKEKEEPER__OPENID_PROVIDER_URI (FQDN) so tokens are accepted
+        - name: KEYCLOAK_INTERNAL_ISSUER
+          value: {{ (printf "%s/realms/%s" (include "nemo.keycloakHttpBaseUrl" .) (.Values.keycloak.setup.realmName | default "nemo")) | quote }}
+        - name: LAKEKEEPER_CLIENT_ID
+          valueFrom:
+            secretKeyRef:
+              name: keycloak-oidc-secrets
+              key: lakekeeper-client-id
+        - name: LAKEKEEPER_CLIENT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: keycloak-oidc-secrets
+              key: lakekeeper-client-secret
+        - name: S3_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "nemo.s3gatewayCredentialsName" . }}
+              key: access-key
+        - name: S3_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "nemo.s3gatewayCredentialsName" . }}
+              key: secret-key
+        - name: DEFAULT_BUCKET_NAME
+          value: {{ .Values.s3gateway.defaultBucket.name | quote }}
+        - name: DEFAULT_WAREHOUSE_NAME
+          value: {{ .Values.defaultSetup.warehouseName | default (include "nemo.deploymentName" . | trim) | quote }}
+        - name: LAKEKEEPER_URL
+          value: {{ .Values.defaultSetup.lakekeeperUrl | default "http://lakekeeper:8181" | quote }}
+        - name: S3GATEWAY_URL
+          value: {{ .Values.defaultSetup.s3GatewayUrl | default "http://s3gateway:7070" | quote }}
+        - name: S3_REGION
+          value: {{ .Values.s3gateway.region | default "us-east-1" | quote }}
+        - name: LLM_GATEWAY_URL
+          value: {{ .Values.defaultSetup.llmGatewayUrl | default "http://bifrost-proxy:8080" | quote }}
+        - name: LLM_GATEWAY_API_KEY
+          value: {{ .Values.defaultSetup.llmGatewayApiKey | default "" | quote }}
+        - name: CONFIG_SERVICE_URL
+          value: {{ .Values.defaultSetup.configServiceUrl | default "http://config-service:3000" | quote }}
+        # Sidecar lifecycle handled by `sidecar.istio.io/nativeSidecar: "true"`
+        # on the pod template — istio-proxy auto-exits when this main
+        # container completes. (No /quitquitquit trap: it would race
+        # the native sidecar's restartPolicy=Always.)
+        command:
+        - python3
+        - /tmp/default_setup.py
+        resources:
+          limits:
+            cpu: 200m
+            memory: 256Mi
+          requests:
+            cpu: 100m
+            memory: 128Mi
+{{- end }}

@@ -1,0 +1,72 @@
+[
+  {
+    "id": "greet-001",
+    "query": "Hi there!",
+    "expected_answer": "Hello! How can I help you today?",
+    "category": "happy_path",
+    "difficulty": "easy"
+  },
+  {
+    "id": "greet-002",
+    "query": "Good morning!",
+    "expected_answer": "Good morning! How may I assist you?",
+    "category": "happy_path",
+    "difficulty": "easy"
+  },
+  {
+    "id": "greet-003",
+    "query": "How are you?",
+    "expected_answer": "I'm doing well, thank you for asking. How can I help you?",
+    "category": "happy_path",
+    "difficulty": "easy"
+  },
+  {
+    "id": "greet-004",
+    "query": "Thanks for your help!",
+    "expected_answer": "You're welcome! Let me know if you need anything else.",
+    "category": "happy_path",
+    "difficulty": "easy"
+  },
+  {
+    "id": "greet-005",
+    "query": "Goodbye!",
+    "expected_answer": "Goodbye! Have a great day.",
+    "category": "happy_path",
+    "difficulty": "easy"
+  },
+  {
+    "id": "know-001",
+    "query": "What is the capital of France?",
+    "expected_answer": "Paris",
+    "category": "happy_path",
+    "difficulty": "easy"
+  },
+  {
+    "id": "know-002",
+    "query": "What is the chemical formula for water?",
+    "expected_answer": "H2O",
+    "category": "happy_path",
+    "difficulty": "easy"
+  },
+  {
+    "id": "know-003",
+    "query": "Who wrote Romeo and Juliet?",
+    "expected_answer": "William Shakespeare",
+    "category": "happy_path",
+    "difficulty": "easy"
+  },
+  {
+    "id": "know-004",
+    "query": "What is the approximate speed of light in a vacuum?",
+    "expected_answer": "About 299,792 kilometers per second (or approximately 300,000 km/s).",
+    "category": "happy_path",
+    "difficulty": "medium"
+  },
+  {
+    "id": "know-005",
+    "query": "How many continents are there on Earth?",
+    "expected_answer": "Seven",
+    "category": "happy_path",
+    "difficulty": "easy"
+  }
+]

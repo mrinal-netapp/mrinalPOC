@@ -1,0 +1,60 @@
+# AKS overlay for the platform tier.
+# azureClientId values are populated by `make wi-fill-client-ids`.
+
+global:
+  storageClass: anf-nfs
+  imageRepository: cragentstudiodeveus2001.azurecr.io
+
+s3gateway:
+  storage:
+    accessMode: ReadWriteMany
+  metadata:
+    storageClass: anf-nfs
+  defaultBucket:
+    storageClass: anf-nfs
+  image:
+    repository: versity/versitygw
+  serviceAccount:
+    create: true
+    azureClientId: "0e75adb4-c1b9-4ab8-baad-da909f67ee5d"
+  workloadIdentity:
+    enabled: true
+
+# ── Azure Workload Identity ────────────────────────────────────────────────────
+
+temporal:
+  serviceAccountName: temporal
+  serviceAccount:
+    create: true
+    azureClientId: "9ef6e816-2964-4768-9110-4b00debd330a"
+  workloadIdentity:
+    enabled: true
+
+# Keep a portable default image here; Makefile targets override
+# lakekeeper.catalog.extraInitContainers[0].image from INIT_TOOLS_IMAGE
+# (derived from CONTAINER_IMAGE_REPO) for environment-specific registries.
+lakekeeper:
+  catalog:
+    extraInitContainers:
+      - name: wait-for-keycloak-oidc
+        env:
+          - name: KEYCLOAK_K8S_NAMESPACE
+            value: "agentstudio-identity"
+        image: init-tools:latest
+        imagePullPolicy: IfNotPresent
+        command:
+          - /bin/sh
+          - -c
+          - |
+            NS="${KEYCLOAK_K8S_NAMESPACE:-agentstudio-identity}"
+            KEYCLOAK_URL="http://keycloak.${NS}.svc.cluster.local:8080/realms/nemo/.well-known/openid-configuration"
+            echo "Waiting for Keycloak OpenID discovery at ${KEYCLOAK_URL}"
+            max=40; n=0
+            until [ "$n" -ge "$max" ]; do
+              if curl -sf -o /dev/null --max-time 5 "${KEYCLOAK_URL}"; then
+                echo "Keycloak OpenID discovery is ready."; exit 0
+              fi
+              n=$((n+1))
+              echo "Attempt $n/$max: Keycloak not ready, retrying in 3s..."; sleep 3
+            done
+            echo "Timeout: Keycloak OpenID discovery did not become ready."; exit 1

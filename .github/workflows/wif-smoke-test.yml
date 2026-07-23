@@ -1,0 +1,86 @@
+# Validates GCP Workload Identity Federation for the dev-gke environment.
+# Runs before the first GAR build or GKE deploy to catch auth/config errors cheaply.
+#
+# Usage: Actions -> "WIF smoke test (GKE)" -> Run workflow
+
+name: WIF smoke test (GKE)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  wif-smoke-test:
+    name: WIF + GAR + GKE access
+    runs-on: ubuntu-latest
+    environment: dev-gke
+    env:
+      USE_GKE_GCLOUD_AUTH_PLUGIN: 'true'
+    steps:
+      - name: Validate environment configuration
+        shell: bash -e {0}
+        run: |
+          missing=()
+          [[ -n "${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}" ]] || missing+=("GCP_WORKLOAD_IDENTITY_PROVIDER")
+          [[ -n "${{ vars.GCP_SERVICE_ACCOUNT }}" ]]             || missing+=("GCP_SERVICE_ACCOUNT")
+          [[ -n "${{ vars.GCP_PROJECT_ID }}" ]]                  || missing+=("GCP_PROJECT_ID")
+          [[ -n "${{ vars.GAR_REGISTRY }}" ]]                    || missing+=("GAR_REGISTRY")
+          [[ -n "${{ vars.GKE_CLUSTER_NAME }}" ]]                || missing+=("GKE_CLUSTER_NAME")
+          [[ -n "${{ vars.GKE_CLUSTER_LOCATION }}" ]]            || missing+=("GKE_CLUSTER_LOCATION")
+          if (( ${#missing[@]} > 0 )); then
+            echo "::error::Missing dev-gke variables:"
+            printf '  - %s\n' "${missing[@]}"
+            exit 1
+          fi
+
+      - name: Google Cloud auth (OIDC / WIF)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+
+      - name: Setup gcloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          install_components: 'gke-gcloud-auth-plugin'
+
+      - name: Verify Artifact Registry access
+        run: |
+          gcloud auth list
+          gcloud config get-value account
+          gcloud artifacts repositories describe agentstudio \
+            --location=us-east1 \
+            --project="${{ vars.GCP_PROJECT_ID }}"
+
+      - name: Verify GKE access
+        shell: bash -e {0}
+        run: |
+          KUBECONFIG="${RUNNER_TEMP}/gke-kubeconfig"
+          export KUBECONFIG
+          echo "KUBECONFIG=$KUBECONFIG" >> "$GITHUB_ENV"
+          mkdir -p "$(dirname "$KUBECONFIG")"
+          : > "$KUBECONFIG"
+          chmod 600 "$KUBECONFIG"
+          gcloud container clusters get-credentials "${{ vars.GKE_CLUSTER_NAME }}" \
+            --location "${{ vars.GKE_CLUSTER_LOCATION }}" \
+            --project "${{ vars.GCP_PROJECT_ID }}"
+          chmod 600 "$KUBECONFIG"
+          kubectl cluster-info
+          kubectl get nodes --no-headers | head -3
+
+      - name: Cleanup credentials
+        if: always()
+        shell: bash
+        run: |
+          gcloud auth revoke --all 2>/dev/null || true
+          if [[ -n "${KUBECONFIG:-}" ]]; then
+            rm -f "$KUBECONFIG" 2>/dev/null || true
+          fi
+          if [[ -f "$HOME/.kube/config" ]] \
+            && grep -q "${{ vars.GKE_CLUSTER_NAME }}" "$HOME/.kube/config" 2>/dev/null; then
+            echo "WARN: removing cluster credentials from default kubeconfig"
+            rm -f "$HOME/.kube/config"
+          fi

@@ -1,0 +1,117 @@
+.api-demo-page {
+  padding: 24px 32px;
+  max-width: 1200px;
+
+  h1 {
+    font-size: 24px;
+    font-weight: 600;
+    margin-bottom: 24px;
+  }
+}
+
+.demo-section {
+  margin-bottom: 32px;
+
+  h2 {
+    font-size: 18px;
+    font-weight: 600;
+    margin-bottom: 4px;
+  }
+}
+
+.demo-hint {
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin-bottom: 12px;
+}
+
+.demo-button-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.demo-btn {
+  padding: 8px 16px;
+  border: 1px solid var(--border-main);
+  border-radius: 6px;
+  background: var(--background-content);
+  font-size: 13px;
+  font-family: monospace;
+  cursor: pointer;
+  transition: all 0.15s ease;
+
+  &:hover {
+    background: var(--background-hover);
+  }
+
+  &--active {
+    background: var(--notification-information-bg);
+    border-color: var(--field-border-selected);
+    color: var(--text-button-primary);
+  }
+
+  &--mutation {
+    background: var(--notification-warning-bg);
+    border-color: var(--notification-warning);
+
+    &:hover {
+      background: var(--background-hover);
+    }
+  }
+}
+
+.demo-result-card {
+  border: 1px solid var(--border-main);
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 12px;
+  background: var(--background-content);
+
+  h3 {
+    font-size: 14px;
+    font-weight: 600;
+    font-family: monospace;
+    margin-bottom: 12px;
+    color: var(--text-primary);
+  }
+}
+
+.demo-result-body {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.demo-result-col {
+  min-width: 0;
+
+  h4 {
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-disabled);
+    margin-bottom: 8px;
+  }
+}
+
+.demo-json {
+  background: var(--background-main);
+  border: 1px solid var(--border-main);
+  border-radius: 4px;
+  padding: 12px;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow: auto;
+  max-height: 400px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.demo-loading {
+  font-size: 13px;
+  color: var(--text-disabled);
+  font-style: italic;
+}

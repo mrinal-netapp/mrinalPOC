@@ -1,0 +1,41 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "clusterName": {
+      "value": "REPLACE_WITH_aks_cluster_name"
+    },
+    "kubernetesVersion": {
+      "value": "REPLACE_WITH_kubernetes_version"
+    },
+    "dnsPrefix": {
+      "value": "REPLACE_WITH_dns_prefix"
+    },
+    "aksSubnetResourceId": {
+      "value": "REPLACE_WITH: /subscriptions/<subscriptionId>/resourceGroups/<resourceGroup>/providers/Microsoft.Network/virtualNetworks/<vnetName>/subnets/<aksSubnetName>"
+    },
+    "nodePools": {
+      "value": [
+        {
+          "name": "nodepool1",
+          "mode": "System",
+          "vmSize": "REPLACE_WITH_vm_sku",
+          "count": 1,
+          "enableAutoScaling": true,
+          "minCount": 1,
+          "maxCount": 3,
+          "osDiskSizeGB": 0
+        }
+      ]
+    },
+    "autoUpgradeProfile": {
+      "value": {
+        "upgradeChannel": "none",
+        "nodeOSUpgradeChannel": "NodeImage"
+      }
+    },
+    "autoScalerProfile": {
+      "value": {}
+    }
+  }
+}

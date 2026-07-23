@@ -1,0 +1,75 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "description": "Azure NetApp Files account and capacity pools for AgentStudio. Creates the ANF account and one capacity pool per entry in the pools array. Volumes are provisioned dynamically by the Trident/AKS storage classes and are NOT managed by this template. Deploy networking.json first — ANF requires a subnet delegated to Microsoft.Netapp/volumes. Cost note: ANF billing is on provisioned pool size, not on volume usage."
+  },
+  "parameters": {
+    "anfAccountName": {
+      "type": "string",
+      "metadata": {
+        "description": "Name of the Azure NetApp Files account."
+      }
+    },
+    "location": {
+      "type": "string",
+      "defaultValue": "[resourceGroup().location]",
+      "metadata": {
+        "description": "Azure region; defaults to the resource group location. Verify ANF availability: az netappfiles list-available-locations."
+      }
+    },
+    "pools": {
+      "type": "array",
+      "minLength": 1,
+      "metadata": {
+        "description": "One object per capacity pool. Required keys: name, serviceLevel (Standard|Premium|Ultra), sizeTiB (>=1, billed on provisioned size), qosType (Auto|Manual), coolAccessEnabled (bool; requires Premium/Ultra). Optional key: encryptionType (Single|Double, default Single)."
+      }
+    }
+  },
+  "resources": [
+    {
+      "type": "Microsoft.NetApp/netAppAccounts",
+      "apiVersion": "2023-11-01",
+      "name": "[parameters('anfAccountName')]",
+      "location": "[parameters('location')]",
+      "properties": {}
+    },
+    {
+      "type": "Microsoft.NetApp/netAppAccounts/capacityPools",
+      "apiVersion": "2023-11-01",
+      "copy": {
+        "name": "capacityPoolLoop",
+        "count": "[length(parameters('pools'))]"
+      },
+      "name": "[concat(parameters('anfAccountName'), '/', parameters('pools')[copyIndex()].name)]",
+      "location": "[parameters('location')]",
+      "dependsOn": [
+        "[resourceId('Microsoft.NetApp/netAppAccounts', parameters('anfAccountName'))]"
+      ],
+      "properties": {
+        "serviceLevel": "[parameters('pools')[copyIndex()].serviceLevel]",
+        "size": "[mul(parameters('pools')[copyIndex()].sizeTiB, 1099511627776)]",
+        "qosType": "[parameters('pools')[copyIndex()].qosType]",
+        "coolAccess": "[parameters('pools')[copyIndex()].coolAccessEnabled]",
+        "encryptionType": "[if(contains(parameters('pools')[copyIndex()], 'encryptionType'), parameters('pools')[copyIndex()].encryptionType, 'Single')]"
+      }
+    }
+  ],
+  "outputs": {
+    "anfAccountName": {
+      "type": "string",
+      "value": "[parameters('anfAccountName')]"
+    },
+    "anfAccountResourceId": {
+      "type": "string",
+      "value": "[resourceId('Microsoft.NetApp/netAppAccounts', parameters('anfAccountName'))]"
+    },
+    "poolResourceIds": {
+      "type": "array",
+      "copy": {
+        "count": "[length(parameters('pools'))]",
+        "input": "[resourceId('Microsoft.NetApp/netAppAccounts/capacityPools', parameters('anfAccountName'), parameters('pools')[copyIndex()].name)]"
+      }
+    }
+  }
+}

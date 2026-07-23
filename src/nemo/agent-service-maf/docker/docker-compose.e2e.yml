@@ -1,0 +1,90 @@
+services:
+  agent-framework:
+    build:
+      context: ../../../..
+      dockerfile: src/nemo/agent-service-maf/deploy/Dockerfile
+    ports:
+      - '8000:8000'
+    volumes:
+      - ../tests/e2e/configs/e2e_config.json:/app/configs/agent_config.json:ro
+    environment:
+      - PYTHONPATH=/app/src
+      - AGENT_INTERFACE__AUTH__ENABLED=true
+      - AGENT_INTERFACE__AUTH__API_KEYS=test-api-key-1,test-api-key-2
+      - AGENT_GATEWAY__URL=http://mock-llm:4000
+      - AGENT_GATEWAY__API_KEY=mock-gateway-key
+      - AGENT_ENVIRONMENT=development
+      - AGENT_CONFIG_PATH=/app/configs/agent_config.json
+    depends_on:
+      mock-llm:
+        condition: service_healthy
+      mock-mcp:
+        condition: service_healthy
+    # §I2 / §5.8: Docker Compose `healthcheck` has *liveness* semantics
+    # (Compose restarts the container when it fails), so we hit
+    # /health (always 200 once the FastAPI process is up). Readiness
+    # checks (dependencies on Redis / MCP / gateway) live at /ready
+    # and should be queried by external orchestrators (k8s
+    # readinessProbe), not the Compose healthcheck -- a Redis flap
+    # would otherwise restart a healthy container loop.
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:8000/health']
+      interval: 5s
+      timeout: 3s
+      start_period: 15s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - e2e-network
+
+  mock-llm:
+    build:
+      context: mock-services
+      dockerfile: Dockerfile.mock-llm
+    ports:
+      - '4000:4000'
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'python',
+          '-c',
+          "import urllib.request; urllib.request.urlopen('http://localhost:4000/health')",
+        ]
+      interval: 5s
+      timeout: 3s
+      start_period: 5s
+      retries: 3
+    restart: unless-stopped
+    networks:
+      - e2e-network
+
+  mock-mcp:
+    build:
+      context: mock-services
+      dockerfile: Dockerfile.mock-mcp
+    ports:
+      # Host 8090 → container 8080. Host 8080 is taken by the main `bifrost`
+      # service in the repo-root docker-compose.yml. Container-internal
+      # references (DNS `mock-mcp:8080`, healthcheck `localhost:8080`) are
+      # unaffected.
+      - '8090:8080'
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'python',
+          '-c',
+          "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')",
+        ]
+      interval: 5s
+      timeout: 3s
+      start_period: 5s
+      retries: 3
+    restart: unless-stopped
+    networks:
+      - e2e-network
+
+networks:
+  e2e-network:
+    driver: bridge

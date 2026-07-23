@@ -1,0 +1,110 @@
+.knowledge-base-config-dialog {
+  width: 100%;
+
+  // -- Layout ---------------------------------------------------------------
+  //
+  // Match Card{Header,Footer}'s `padding-inline: 40px` so section titles
+  // line up with the dialog title above and the Save/Cancel buttons below.
+  // The UA-margin reset is needed because `Typography Component="h3"|"p"`
+  // renders real <h3>/<p> elements; default UA margins would stack on top
+  // of the flex gaps and balloon the layout.
+
+  &__content {
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+    padding: 24px 40px;
+
+    h1, h2, h3, h4, h5, h6,
+    p, dl, dd {
+      margin: 0;
+    }
+  }
+
+  &__section {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  &__heading {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  &__field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    width: 100%;
+    max-width: 480px;
+  }
+
+  // Indented block under a toggle (e.g. "Similarity" slider under the
+  // similarity-threshold toggle). Visually nested without being literally
+  // indented, to keep the form left-aligned with the rest of the dialog.
+  &__sub-field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    width: 100%;
+    max-width: 480px;
+  }
+
+  &__slider {
+    // Slider already renders limits flanking the track; capping width keeps
+    // the visual proportions identical to the design mockup.
+    width: 100%;
+    max-width: 480px;
+  }
+
+  // -- Status / Labels meta strip ------------------------------------------
+
+  &__meta {
+    display: grid;
+    grid-template-columns: 120px 1fr;
+    row-gap: 6px;
+    column-gap: 16px;
+    margin: 0;
+  }
+
+  &__meta-row {
+    display: contents;
+  }
+
+  &__meta-label,
+  &__meta-value {
+    margin: 0;
+  }
+
+  &__status {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+
+    &--available {
+      color: var(--notification-success);
+    }
+
+    &--indexing {
+      color: var(--notification-information);
+    }
+
+    &--unavailable {
+      color: var(--notification-error, var(--red-30));
+    }
+
+    &--unknown {
+      color: var(--text-secondary);
+    }
+  }
+
+  // -- Toggle row (toggle + adjacent label) --------------------------------
+
+  &__toggle-row {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+  }
+}

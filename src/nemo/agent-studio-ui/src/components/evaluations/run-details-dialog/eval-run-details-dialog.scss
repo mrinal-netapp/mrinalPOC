@@ -1,0 +1,87 @@
+@use "@/styles/mixins" as *;
+
+// Widen the popup beyond the default lg (720px) to fit 5-column metric grids.
+.eval-run-details-dialog__popup {
+  width: min(1040px, calc(100% - 2rem)) !important;
+  max-width: min(1040px, calc(100% - 2rem)) !important;
+
+  // The base popup has no padding; pad the header/footer slots so the title and
+  // actions are not flush against the edge (mirrors the configure dialogs).
+  > [data-slot='dialog-header'] {
+    padding: 20px 32px 16px;
+  }
+
+  > [data-slot='dialog-footer'] {
+    padding: 16px 32px 20px;
+  }
+}
+
+.eval-run-details-dialog__body {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  // Header supplies the top padding; keep horizontal 32px consistent.
+  padding: 4px 32px 24px;
+  max-height: 65vh;
+  overflow-y: auto;
+  min-width: 0;
+}
+
+.eval-run-details-dialog__empty {
+  padding: 24px;
+  background-color: var(--surface-secondary);
+  border-radius: 6px;
+  text-align: center;
+
+  > p {
+    margin: 0;
+  }
+}
+
+.eval-run-details-dialog__gates {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.eval-run-details-dialog__gates-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border: 1px solid var(--border-default);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.eval-run-details-dialog__gate-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border-default);
+
+  &:last-child {
+    border-bottom: none;
+  }
+
+  > :first-child {
+    flex: 1;
+    min-width: 0;
+  }
+}
+
+@include mobile {
+  .eval-run-details-dialog__popup {
+    > [data-slot='dialog-header'] {
+      padding: 16px 20px 12px;
+    }
+
+    > [data-slot='dialog-footer'] {
+      padding: 12px 20px 16px;
+    }
+  }
+
+  .eval-run-details-dialog__body {
+    padding: 4px 20px 20px;
+  }
+}

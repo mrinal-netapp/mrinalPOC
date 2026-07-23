@@ -1,0 +1,247 @@
+enabled: true
+# Namespace for TEI Deployments. Leave empty to use .Release.Namespace
+# (recommended — matches the services umbrella's namespace). Override only
+# when TEI must live in a different namespace than the rest of the services
+# tier (e.g., dedicated GPU node pool with namespace-scoped node selectors).
+namespace: ""
+
+image:
+  repository: ghcr.io/huggingface/text-embeddings-inference
+  # cpu-1.5 ships hf-hub 0.3.2, which can't parse HuggingFace Hub's current
+  # redirect shape and dies on model download with "relative URL without a
+  # base" (deterministic; not egress/mesh-related — both verified healthy).
+  # cpu-1.7 bundles a fixed downloader and loads all-MiniLM-L6-v2 cleanly.
+  tag: "cpu-1.7"
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 80
+
+# One TEI Deployment + Service per built-in (`tei-<key>`). Keys must match
+# `teiServiceName` suffixes in config-service `BuiltinModels.ts`.
+models:
+  - key: minilm
+    hfModelId: sentence-transformers/all-MiniLM-L6-v2
+    dimensions: 384
+    autoTruncate: true
+    maxBatchTokens: 16384
+    replicaCount: 1
+    resources:
+      requests:
+        cpu: 500m
+        memory: 1Gi
+      limits:
+        cpu: 2000m
+        memory: 2Gi
+    autoscaling:
+      enabled: true
+      minReplicas: 1
+      maxReplicas: 4
+      targetCPUUtilizationPercentage: 70
+
+  - key: bge-small-en-v1-5
+    hfModelId: BAAI/bge-small-en-v1.5
+    dimensions: 384
+    autoTruncate: true
+    maxBatchTokens: 16384
+    replicaCount: 1
+    resources:
+      requests:
+        cpu: 500m
+        memory: 1Gi
+      limits:
+        cpu: 2000m
+        memory: 2Gi
+    autoscaling:
+      enabled: true
+      minReplicas: 1
+      maxReplicas: 2
+      targetCPUUtilizationPercentage: 70
+
+  - key: all-minilm-l12-v2
+    hfModelId: sentence-transformers/all-MiniLM-L12-v2
+    dimensions: 384
+    autoTruncate: true
+    maxBatchTokens: 16384
+    replicaCount: 1
+    resources:
+      requests:
+        cpu: 500m
+        memory: 1Gi
+      limits:
+        cpu: 2000m
+        memory: 2Gi
+    autoscaling:
+      enabled: true
+      minReplicas: 1
+      maxReplicas: 2
+      targetCPUUtilizationPercentage: 70
+
+  - key: bge-base-en-v1-5
+    hfModelId: BAAI/bge-base-en-v1.5
+    dimensions: 768
+    autoTruncate: true
+    maxBatchTokens: 16384
+    replicaCount: 1
+    resources:
+      requests:
+        cpu: 500m
+        memory: 1536Mi
+      limits:
+        cpu: 2000m
+        memory: 3Gi
+    autoscaling:
+      enabled: true
+      minReplicas: 1
+      maxReplicas: 2
+      targetCPUUtilizationPercentage: 70
+
+  - key: all-mpnet-base-v2
+    hfModelId: sentence-transformers/all-mpnet-base-v2
+    dimensions: 768
+    autoTruncate: true
+    maxBatchTokens: 16384
+    replicaCount: 1
+    resources:
+      requests:
+        cpu: 500m
+        memory: 1536Mi
+      limits:
+        cpu: 2000m
+        memory: 3Gi
+    autoscaling:
+      enabled: true
+      minReplicas: 1
+      maxReplicas: 2
+      targetCPUUtilizationPercentage: 70
+
+  - key: bge-large-en-v1-5
+    hfModelId: BAAI/bge-large-en-v1.5
+    dimensions: 1024
+    autoTruncate: true
+    maxBatchTokens: 8192
+    replicaCount: 1
+    resources:
+      requests:
+        cpu: 500m
+        memory: 2Gi
+      limits:
+        cpu: 2000m
+        memory: 4Gi
+    autoscaling:
+      enabled: true
+      minReplicas: 1
+      maxReplicas: 2
+      targetCPUUtilizationPercentage: 70
+
+  - key: paraphrase-minilm-l3-v2
+    hfModelId: sentence-transformers/paraphrase-MiniLM-L3-v2
+    dimensions: 384
+    autoTruncate: true
+    maxBatchTokens: 16384
+    replicaCount: 1
+    resources:
+      requests:
+        cpu: 250m
+        memory: 512Mi
+      limits:
+        cpu: 1000m
+        memory: 1536Mi
+    autoscaling:
+      enabled: true
+      minReplicas: 1
+      maxReplicas: 2
+      targetCPUUtilizationPercentage: 70
+
+  - key: paraphrase-multilingual-minilm-l12-v2
+    hfModelId: sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
+    dimensions: 384
+    autoTruncate: true
+    maxBatchTokens: 16384
+    replicaCount: 1
+    resources:
+      requests:
+        cpu: 500m
+        memory: 1Gi
+      limits:
+        cpu: 2000m
+        memory: 2Gi
+    autoscaling:
+      enabled: true
+      minReplicas: 1
+      maxReplicas: 2
+      targetCPUUtilizationPercentage: 70
+
+  - key: paraphrase-multilingual-mpnet-base-v2
+    hfModelId: sentence-transformers/paraphrase-multilingual-mpnet-base-v2
+    dimensions: 768
+    autoTruncate: true
+    maxBatchTokens: 16384
+    replicaCount: 1
+    resources:
+      requests:
+        cpu: 500m
+        memory: 1536Mi
+      limits:
+        cpu: 2000m
+        memory: 3Gi
+    autoscaling:
+      enabled: true
+      minReplicas: 1
+      maxReplicas: 2
+      targetCPUUtilizationPercentage: 70
+
+  - key: multi-qa-minilm-l6-cos-v1
+    hfModelId: sentence-transformers/multi-qa-MiniLM-L6-cos-v1
+    dimensions: 384
+    autoTruncate: true
+    maxBatchTokens: 16384
+    replicaCount: 1
+    resources:
+      requests:
+        cpu: 500m
+        memory: 1Gi
+      limits:
+        cpu: 2000m
+        memory: 2Gi
+    autoscaling:
+      enabled: true
+      minReplicas: 1
+      maxReplicas: 2
+      targetCPUUtilizationPercentage: 70
+
+cache:
+  type: emptyDir
+
+livenessProbe:
+  httpGet:
+    path: /health
+    port: http
+  initialDelaySeconds: 60
+  periodSeconds: 30
+  timeoutSeconds: 10
+  failureThreshold: 6
+
+readinessProbe:
+  httpGet:
+    path: /health
+    port: http
+  initialDelaySeconds: 30
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 6
+
+networkPolicy:
+  enabled: true
+  allowedNamespace: "agentstudio-llm-gateway"
+  allowFromPodLabel:
+    component: bifrost
+
+podSecurityContext: {}
+securityContext: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+serviceAccountName: ""

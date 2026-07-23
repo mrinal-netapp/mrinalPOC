@@ -1,0 +1,72 @@
+# Use a local path under the repo for LanceDB (simulates a shared RWX mount).
+lancedb:
+  data_dir: ./data/lance
+
+pgvector:
+  host: localhost
+  port: 5432
+  database: vectorbench
+  user: benchuser
+  password: benchpass
+
+embedding:
+  model_name: all-MiniLM-L6-v2
+  default_dimension: 384
+
+datasets:
+  cache_dir: ./data
+
+scenarios:
+  scale:
+    # Increase to [10000, 100000, 500000, 1000000] for full study
+    sizes: [10000, 100000]
+    dimension: 384
+    metric: cosine
+    top_k: 10
+
+  dimension:
+    count: 20000
+    dimensions: [128, 384, 768]
+    metric: cosine
+    top_k: 10
+
+  search_mode:
+    count: 20000
+    dimension: 384
+    num_queries: 100
+    top_k: 10
+
+  filter:
+    count: 20000
+    dimension: 384
+    cardinalities: [10, 100, 1000]
+    top_k: 10
+
+  concurrent:
+    count: 20000
+    dimension: 384
+    thread_counts: [1, 4, 16]
+    queries_per_thread: 30
+    top_k: 10
+
+  multi_kb:
+    # Full run: [5, 20, 50, 100]
+    kb_counts: [2, 5]
+    vectors_per_kb: 5000
+    dimension: 384
+    cache_max_size: 50
+    top_k: 10
+
+  versioning:
+    count: 10000
+    dimension: 384
+    num_versions: [2]
+    top_k: 10
+
+  durability:
+    count: 10000
+    dimension: 384
+    top_k: 10
+
+results:
+  output_dir: ./results

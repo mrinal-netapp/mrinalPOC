@@ -1,0 +1,175 @@
+{{- if and .Values.enabled .Values.bootstrap.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "analytics-mcp-server.fullname" . }}-bootstrap
+  labels:
+    {{- include "analytics-mcp-server.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "10"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 10
+  template:
+    metadata:
+      labels:
+        app: {{ include "analytics-mcp-server.fullname" . }}-bootstrap
+      annotations:
+        # Native sidecar: istio-proxy as initContainer with
+        # restartPolicy=Always so it's already serving mTLS when the
+        # bootstrap script's first curl to ${CONFIG_SERVICE_URL}/ready
+        # fires, and so it exits when the main container completes
+        # (Job reaches Succeeded with no sidecar-lifecycle hang).
+        sidecar.istio.io/nativeSidecar: "true"
+    spec:
+      restartPolicy: OnFailure
+      serviceAccountName: {{ include "analytics-mcp-server.serviceAccountName" . }}
+      containers:
+        - name: bootstrap
+          image: {{ .Values.global.imageRepository }}/init-tools:{{ .Values.global.imageTag | default "latest" }}
+          imagePullPolicy: {{ if .Values.global.imagePullPolicy }}{{ .Values.global.imagePullPolicy }}{{ else }}IfNotPresent{{ end }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              # Sidecar lifecycle: handled by `sidecar.istio.io/nativeSidecar: "true"`
+              # on the pod template — k8s native sidecar containers exit
+              # automatically when the main container completes, so we do
+              # NOT call /quitquitquit here. Earlier versions of this Job
+              # had a `trap '… curl …/quitquitquit' EXIT` for the legacy
+              # (regular-container) sidecar mode, but that trap actively
+              # interferes with native sidecars: kubelet restarts the
+              # native sidecar whenever it exits while main is still alive
+              # (restartPolicy=Always), so the trap firing on a failed
+              # main attempt sends the sidecar into a restart loop. See
+              # the BackoffLimitExceeded incident on sks6316
+              # (analytics-mcp-server-bootstrap, 6j74w).
+              MAX_RETRIES=30
+              RETRY_DELAY=5
+              DEP_ATTEMPTS=60
+              DEP_DELAY=5
+
+              echo "Preflight: waiting for config-service readiness..."
+              CONFIG_READY=0
+              for a in $(seq 1 $DEP_ATTEMPTS); do
+                READY_CODE=$(curl -sS --max-time 5 -o /dev/null -w "%{http_code}" "${CONFIG_SERVICE_URL}/ready" || true)
+                if [ "$READY_CODE" = "200" ]; then
+                  echo "  config-service ready (attempt $a/$DEP_ATTEMPTS)"
+                  CONFIG_READY=1
+                  break
+                fi
+                echo "  config-service not ready (HTTP ${READY_CODE:-n/a}), waiting ${DEP_DELAY}s..."
+                sleep $DEP_DELAY
+              done
+              if [ "$CONFIG_READY" != "1" ]; then
+                echo "Preflight failed: config-service did not become ready after $DEP_ATTEMPTS attempts"
+                exit 1
+              fi
+
+              echo "Step 1: Obtaining OIDC token from Keycloak..."
+              TOKEN_URL="${KEYCLOAK_INTERNAL_ISSUER}/protocol/openid-connect/token"
+              TOKEN_ATTEMPTS=24
+              TOKEN=""
+              for t in $(seq 1 $TOKEN_ATTEMPTS); do
+                RESP=$(curl -sf -X POST "$TOKEN_URL" \
+                  -d "grant_type=client_credentials" \
+                  -d "client_id=${KEYCLOAK_CLIENT_ID}" \
+                  -d "client_secret=${KEYCLOAK_CLIENT_SECRET}" 2>/dev/null) && {
+                  TOKEN=$(echo "$RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])" 2>/dev/null || \
+                          echo "$RESP" | grep -o '"access_token":"[^"]*"' | cut -d'"' -f4)
+                  if [ -n "$TOKEN" ]; then
+                    echo "  Token obtained (attempt $t/$TOKEN_ATTEMPTS)"
+                    break
+                  fi
+                }
+                echo "  Token attempt $t/$TOKEN_ATTEMPTS failed, retrying in 10s..."
+                sleep 10
+              done
+              if [ -z "$TOKEN" ]; then
+                echo "Failed to obtain OIDC token after $TOKEN_ATTEMPTS attempts"
+                exit 1
+              fi
+
+              echo "Step 2: Registering analytics MCP server with config-service..."
+              for i in $(seq 1 $MAX_RETRIES); do
+                echo "Attempt $i/$MAX_RETRIES: Registering analytics MCP server..."
+                HTTP_CODE=$(curl -s -o /tmp/response.txt -w "%{http_code}" \
+                  -X POST "${CONFIG_SERVICE_URL}/api/v1/internal/platform-mcp-servers" \
+                  -H "Content-Type: application/json" \
+                  -H "Authorization: Bearer ${TOKEN}" \
+                  -d "{
+                    \"name\": \"analytics_datasets_mcp\",
+                    \"catalogId\": \"analytics_datasets_mcp\",
+                    \"description\": \"SQL analytics on project datasets (Iceberg)\",
+                    \"url\": \"${MCP_SERVER_URL}\",
+                    \"transport\": \"http\",
+                    \"authType\": \"none\",
+                    \"extraHeaders\": [\"Authorization\", \"X-Project-ID\", \"X-User-ID\", \"X-Session-ID\"]
+                  }")
+
+                if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "201" ]; then
+                  echo "Analytics MCP server registered successfully (HTTP $HTTP_CODE)"
+                  cat /tmp/response.txt
+                  exit 0
+                fi
+
+                # API can return conflict/validation-style errors when the MCP server
+                # is already present from a prior successful deploy. Treat those as
+                # idempotent success so the hook does not fail the release.
+                if [ "$HTTP_CODE" = "409" ] || [ "$HTTP_CODE" = "422" ]; then
+                  if grep -Eiq 'already exists|duplicate|conflict' /tmp/response.txt; then
+                    echo "Analytics MCP server already registered (HTTP $HTTP_CODE); treating as success."
+                    cat /tmp/response.txt
+                    exit 0
+                  fi
+                fi
+
+                # 404 = the /api/v1/internal/platform-mcp-servers route doesn't
+                # exist in the running config-service image yet (chart change
+                # ships ahead of image rebuild). Treat as tolerable: skip
+                # registration this round; the NEXT deploy after the image is
+                # rebuilt will succeed via the same Helm hook. This keeps the
+                # deploy from getting stuck in pending-upgrade for hours just
+                # because a transient version skew between chart + image.
+                if [ "$HTTP_CODE" = "404" ]; then
+                  echo "config-service does not have the internal MCP registration"
+                  echo "route yet (likely a chart-ahead-of-image version skew)."
+                  echo "Skipping registration this round; next deploy will retry."
+                  cat /tmp/response.txt 2>/dev/null || true
+                  exit 0
+                fi
+
+                echo "Registration returned HTTP $HTTP_CODE, retrying in ${RETRY_DELAY}s..."
+                cat /tmp/response.txt 2>/dev/null || true
+                sleep $RETRY_DELAY
+              done
+
+              echo "Failed to register analytics MCP server after $MAX_RETRIES attempts"
+              exit 1
+          env:
+            - name: CONFIG_SERVICE_URL
+              value: {{ .Values.bootstrap.configServiceUrl | quote }}
+            - name: MCP_SERVER_URL
+              value: "http://{{ include "analytics-mcp-server.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.service.port }}/mcp"
+            - name: KEYCLOAK_INTERNAL_ISSUER
+              value: {{ .Values.bootstrap.keycloakInternalIssuer | default (include "nemo.keycloakInternalIssuer" .) | quote }}
+            - name: KEYCLOAK_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-oidc-secrets
+                  key: config-service-client-id
+            - name: KEYCLOAK_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-oidc-secrets
+                  key: config-service-client-secret
+          resources:
+            limits:
+              cpu: 200m
+              memory: 256Mi
+            requests:
+              cpu: 100m
+              memory: 128Mi
+{{- end }}

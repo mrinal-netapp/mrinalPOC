@@ -1,0 +1,144 @@
+# Promotion workflow. Manually triggered to promote an RC build to a
+# final release. Validates the source RC tag, creates the final SemVer
+# tag pointing at the same commit, and re-runs build-common.yml in
+# final mode (pre_release=false) with security scans enabled.
+#
+# Usage (GitHub CLI):
+#   gh workflow run promote.yml -f source_rc_tag=1.0.0-rc.3
+#
+# Usage (GitHub UI):
+#   Actions -> "Promote to Final Release" -> Run workflow -> enter RC tag
+#
+# BLACKDUCK_* / WIZ_* secrets must be configured in the `dev` GitHub
+# Environment for the scan jobs to actually run; see build-common.yml
+# header for the full secret/variable list.
+
+name: Promote to Final Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_rc_tag:
+        description: "Source RC tag to promote (e.g., 1.0.0-rc.3)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  packages: write
+  id-token: write
+  security-events: write
+  actions: read
+
+jobs:
+  # ─── VALIDATE & CREATE FINAL TAG ────────────────────
+  validate-and-promote:
+    name: Validate RC and Create Final Tag
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      final_tag: ${{ steps.derive-tag.outputs.final_tag }}
+      base_sha: ${{ steps.derive-tag.outputs.base_sha }}
+    steps:
+      - name: Checkout with full history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Validate and derive final tag
+        id: derive-tag
+        shell: bash -e {0}
+        run: |
+          SOURCE_RC="${{ inputs.source_rc_tag }}"
+
+          # Validate format: X.Y.Z-rc.N
+          if [[ ! "$SOURCE_RC" =~ ^[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+$ ]]; then
+            echo "::error::Invalid RC tag format: '$SOURCE_RC'. Expected format: X.Y.Z-rc.N (e.g., 1.0.0-rc.3)"
+            exit 1
+          fi
+
+          # Validate the RC tag exists
+          if ! git tag -l "$SOURCE_RC" | grep -q "$SOURCE_RC"; then
+            echo "::error::RC tag '$SOURCE_RC' does not exist in the repository"
+            echo "Available RC tags:"
+            git tag -l "*-rc.*" --sort=-v:refname | head -10
+            exit 1
+          fi
+
+          # Derive final tag by stripping -rc.N
+          FINAL_TAG=$(echo "$SOURCE_RC" | sed 's/-rc\.[0-9]*$//')
+
+          # Verify final tag doesn't already exist
+          if git tag -l "$FINAL_TAG" | grep -q "$FINAL_TAG"; then
+            echo "::error::Final tag '$FINAL_TAG' already exists. This RC may have already been promoted."
+            exit 1
+          fi
+
+          # Get the commit SHA the RC tag points to
+          BASE_SHA=$(git rev-list -n 1 "$SOURCE_RC")
+
+          echo "Source RC tag: $SOURCE_RC"
+          echo "Final tag: $FINAL_TAG"
+          echo "Base SHA: $BASE_SHA"
+
+          echo "final_tag=$FINAL_TAG" >> "$GITHUB_OUTPUT"
+          echo "base_sha=$BASE_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Create and push final tag
+        run: |
+          FINAL_TAG="${{ steps.derive-tag.outputs.final_tag }}"
+          BASE_SHA="${{ steps.derive-tag.outputs.base_sha }}"
+
+          git tag "$FINAL_TAG" "$BASE_SHA" -m "Promote ${{ inputs.source_rc_tag }} to $FINAL_TAG"
+          git push origin "$FINAL_TAG"
+
+          echo "Created and pushed tag: $FINAL_TAG (from ${{ inputs.source_rc_tag }} at $BASE_SHA)"
+
+  # ─── CALL BUILD-COMMON (final mode) ────────────────
+  # Build/publish to ACR + GAR + ECR on runner-4, then fan out deploys
+  # to AKS, GKE, and EKS in parallel reusable workflow jobs.
+  call-build-common:
+    name: Build, Publish & Release (Final)
+    needs: validate-and-promote
+    uses: ./.github/workflows/build-common.yml
+    secrets: inherit
+    with:
+      tag: ${{ needs.validate-and-promote.outputs.final_tag }}
+      pre_release: false
+      create_release: true
+      run_bds_repo_scan: true
+      run_bds_image_scan: true
+      run_wiz_scan: true
+      package_helm_charts: true
+      deploy_to_aks: true
+      deploy_to_gke: true
+      deploy_to_eks: true
+      # dev-AKS integration gate controls the GKE/EKS fan-out (see build-common.yml).
+      # Prod post-deploy verification stays behind RUN_PROD_INTEGRATION_TESTS below.
+      run_integration_tests: true
+
+  # ─── PROD POST-DEPLOY INTEGRATION SUITE ────────────
+  # Post-deploy verification against the production environment after the
+  # GA build/deploy completes. Gated behind a repo variable so promote.yml
+  # keeps working until the `prod` GitHub Environment + cluster exist
+  # (owned by the release-management / IaC workstream).
+  integration-tests-prod:
+    name: Integration tests (prod)
+    needs: [validate-and-promote, call-build-common]
+    if: ${{ vars.RUN_PROD_INTEGRATION_TESTS == 'true' }}
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/integration-tests-container.yml
+    with:
+      cloud_environment: prod
+      allure_project: prod
+      image_tag: ${{ needs.validate-and-promote.outputs.final_tag }}
+    secrets: inherit

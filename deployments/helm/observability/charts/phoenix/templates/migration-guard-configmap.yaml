@@ -1,0 +1,11 @@
+{{- if .Values.migration.guard.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "phoenix.fullname" . }}-migration-guard
+  labels:
+    {{- include "phoenix.labels" . | nindent 4 }}
+data:
+  migration-guard.py: |
+{{ .Files.Get "files/scripts/migration-guard.py" | indent 4 }}
+{{- end }}

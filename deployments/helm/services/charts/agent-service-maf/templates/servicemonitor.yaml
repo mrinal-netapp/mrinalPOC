@@ -1,0 +1,16 @@
+{{- if and .Values.enabled (default false .Values.metrics.serviceMonitor.enabled) (.Capabilities.APIVersions.Has "monitoring.coreos.com/v1") }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: agent-service-maf
+  labels:
+    {{- include "agent-service-maf.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "agent-service-maf.selectorLabels" . | nindent 6 }}
+  endpoints:
+    - port: {{ default "http" .Values.metrics.port }}
+      path: {{ default "/metrics" .Values.metrics.path }}
+      interval: {{ default "30s" .Values.metrics.serviceMonitor.interval }}
+{{- end }}

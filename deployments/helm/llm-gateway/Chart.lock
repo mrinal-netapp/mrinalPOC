@@ -1,0 +1,6 @@
+dependencies:
+- name: bifrost
+  repository: file://./charts/bifrost
+  version: 1.0.0
+digest: sha256:ce58b3ef11f7bdb47d54563b32abe0a7505c28aa9470dbc43804dc5d32e7e4f9
+generated: "2026-06-02T13:29:11.604231+05:30"

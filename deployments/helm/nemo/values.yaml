@@ -1,0 +1,2043 @@
+# Default values for nemo
+# This is a YAML-formatted file.
+
+# Logical deployment identity. Used for data-plane names (Iceberg warehouse,
+# S3 default bucket, cross-release secret prefixes) that must stay the same
+# regardless of the Helm release name. Override at deploy time:
+#   --set deploymentName=myproject
+deploymentName: "nemo"
+
+namespace: agentstudio
+
+# Whether to create the namespace. Set to false when the namespace is managed externally.
+createNamespace: true
+
+# Namespace Pod Security Standards configuration
+# Required for OpenEBS hostpath provisioner which needs privileged containers
+# Options: privileged, baseline, restricted
+# Default: privileged (required for OpenEBS hostpath StorageClass)
+namespacePodSecurity:
+  enforce: privileged  # Enforcement policy: privileged, baseline, or restricted
+  audit: privileged    # Audit policy: privileged, baseline, or restricted
+  warn: privileged     # Warning policy: privileged, baseline, or restricted
+
+# ---------------------------------------------------------------------------
+# Observability — per-service Prometheus + OTel settings
+# Each service chart can override these individually.
+# ServiceMonitors require the Prometheus Operator CRDs to be installed.
+# Tracing is no-op when otlpEndpoint is empty.
+# ---------------------------------------------------------------------------
+observability:
+  metrics:
+    serviceMonitor:
+      enabled: false       # Requires Prometheus Operator CRDs; enable after helm-observability-upgrade
+      interval: 30s
+  tracing:
+    otlpEndpoint: ""       # e.g. "otel-collector.monitoring:4318"
+
+# Global settings
+global:
+  platformNamespace: "agentstudio-platform"
+  llmGateway:
+    bifrost:
+      # Override at helm install/upgrade time, e.g.
+      #   --set global.llmGateway.bifrost.url=https://bifrost.example.com
+      # Empty falls back to in-cluster http://bifrost-proxy.<ns>.svc.cluster.local:8080
+      url: ""
+  imageRegistry: ""  # Set to your registry if PostgreSQL image is mirrored (e.g., "docker.repo.eng.netapp.com")
+  imageRepository: "docker.repo.eng.netapp.com/user/sekaranr"  # Base container repository for all images
+  imageTag: ""  # Global image tag override for project-built images only (agent-service, gui, config-service, apigateway-service, artifact-service, storage-manager, workflow-engine, analytics-engine, kb-retrieval-service, processing-workers). Does NOT affect third-party dependencies (lakekeeper, s3gateway/versitygw, postgresql, bifrost). If empty, uses service-specific tags.
+  imagePullSecrets: []  # Add image pull secrets if needed for private registries (e.g., ghcr.io)
+  # Example: imagePullSecrets: ["gh-regcred"]
+  # For GHCR, create secret with: kubectl create secret docker-registry gh-regcred --docker-server=ghcr.io --docker-username=<user> --docker-password=$GHCR_PAT --docker-email=<email> -n nemo
+  # Then set: global.imagePullSecrets: ["gh-regcred"] or use --set global.imagePullSecrets[0]=gh-regcred
+  storageClass: ""
+  # Base domain for TLS certs and all subdomains
+  # Can be overridden via ENDPOINT environment variable during helm upgrade
+  # Default: agentstudio.local
+  # Subdomains derived from this:
+  #   - {consoleSubdomain}.{endpoint} (Console + API gateway, default: app.{endpoint})
+  #   - auth.{endpoint} (Keycloak)
+  #   - s3.{endpoint} (S3 gateway, path-style only)
+  #   - {workspaceLabelPrefix}<id>.{endpoint} (Workspace subdomains, default: ws-<id>.{endpoint})
+  #   - phoenix.{endpoint} (Arize Phoenix AI observability UI)
+  endpoint: "agentstudio.local"
+  # Single-label subdomain that hosts the console + API gateway publicly.
+  # Required when the cluster's wildcard DNS only covers single-label subdomains
+  # (i.e. the apex `{endpoint}` itself does not resolve).
+  # Example: with endpoint=agentstudio.local and consoleSubdomain=app, the console
+  # is reached at https://app.agentstudio.local:8443/console.
+  consoleSubdomain: "app"
+  # Prefix applied to workspace IDs when constructing public workspace hostnames.
+  # Workspace public hosts are {workspaceLabelPrefix}<workspaceId>.{endpoint}
+  # (single label so a {*}.{endpoint} wildcard DNS record covers them).
+  # Must be RFC-1035 hostname-safe (letters/digits/hyphen, no underscore).
+  # Default "ws-" avoids collisions with sibling subdomains (auth/s3/catalog/...).
+  workspaceLabelPrefix: "ws-"
+  # When true, all S3 clients use path-style addressing
+  # (https://s3.{endpoint}/<bucket>/<key>) instead of virtual-hosted addressing
+  # (https://<bucket>.s3.{endpoint}/<key>). Required when the cluster wildcard DNS
+  # only covers single-label subdomains, since *.s3.{endpoint} is two labels deep.
+  s3PathStyle: true
+  gatewayHttpsPort: "443"  # Public HTTPS port. Default 443 (cloud); local overrides to 8443.
+  deploymentName: "nemo"  # Logical deployment identity — passed to subcharts via global (must match root deploymentName)
+  # Prefix for s3gateway PVCs (e.g. default-bucket claim = {s3gatewayFullname}-default-bucket). Must match s3gateway.fullnameOverride below; required on global because worker subcharts cannot read the parent s3gateway: values key.
+  s3gatewayFullname: "s3gateway"
+  # Iceberg REST catalog URL for DuckDB/analytics (default: http://lakekeeper:8181/catalog — same namespace as Lakekeeper)
+  lakekeeperCatalogUrl: ""
+  observability:
+    # OTLP HTTP base URL for all services. Used for traces, metrics, and logs export.
+    # Set to "" to omit the OTLP env vars entirely (e.g. when no collector is deployed).
+    otlpEndpoint: "http://observability-otel-collector.monitoring.svc.cluster.local:4318"
+  keycloak:
+    setup:
+      # Propagate to subcharts so KEYCLOAK_INTERNAL_ISSUER resolves to the correct service.
+      keycloakUrl: "http://keycloak.agentstudio-identity.svc.cluster.local:8080"
+      adminUser: "admin"
+      adminPassword: "AgentstudioAdmin123!"
+      realmName: "nemo"
+
+# Prism endpoint domain (base domain for all subdomains)
+# Can be overridden via ENDPOINT environment variable during helm upgrade
+# Default: agentstudio.local
+# Subdomains derived from this:
+#   - {consoleSubdomain}.{endpoint} (Console + API gateway, default: app.{endpoint})
+#   - auth.{endpoint} (Keycloak)
+#   - s3.{endpoint} (S3 gateway, path-style only)
+#   - {workspaceLabelPrefix}<id>.{endpoint} (Workspace subdomains, default: ws-<id>.{endpoint})
+# Note: Also available in global.endpoint for subchart access
+endpoint: "agentstudio.local"
+
+# Single-label subdomain that hosts the console + API gateway publicly.
+# Mirror at root level so root templates resolve it without traversing global.
+# See global.consoleSubdomain for full description.
+consoleSubdomain: "app"
+
+# Prefix applied to workspace IDs when constructing public workspace hostnames.
+# Mirror at root level. See global.workspaceLabelPrefix for full description.
+workspaceLabelPrefix: "ws-"
+
+# Service Account configuration
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+# PostgreSQL configuration
+# Note: PostgreSQL is now deployed in the shared 'database' namespace
+# Set enabled to false to use the shared database
+postgresql:
+  enabled: false  # Using shared database in 'database' namespace
+  # Service name - will be <release-name>-nemo-postgresql by default
+  # Override this if using a different release name
+  serviceName: ""  # If empty, will use template default: <release-name>-nemo-postgresql
+  # Image configuration - using official PostgreSQL image
+  # You can change the registry/repository to use your internal registry
+  image:
+    registry: "docker.io"  # Change to your registry if needed (e.g., "docker.repo.eng.netapp.com")
+    repository: "postgres"  # Official PostgreSQL image
+    tag: "16-alpine"  # PostgreSQL 16 Alpine (lightweight)
+    pullPolicy: IfNotPresent
+  auth:
+    postgresPassword: "agentstudio-postgres-password"
+    database: "nemo"
+    username: "postgres"  # Default postgres superuser
+  primary:
+    persistence:
+      enabled: true  # Set to false to use ephemeral storage (emptyDir) instead of PVC
+      size: 20Gi
+      storageClass: ""
+    resources:
+      requests:
+        cpu: 500m
+        memory: 512Mi
+      limits:
+        cpu: 2000m
+        memory: 2Gi
+  metrics:
+    enabled: false
+
+# Shared Redis (Bitnami). Standalone mode (single master, no replicas/sentinels).
+# DB 0: agent-service. DB 2: workflow-engine (explorer cache). DB 3: connector-worker (acquisition streams).
+# DB 4: workflow-engine transient progress (/workflows/:id/progress), when WORKFLOW_ENGINE_PROGRESS_SHARE_REDIS is true.
+# Service name with fullnameOverride: "redis":
+#   - redis-master       (master, port 6379)
+#
+# To switch to HA (replication + Sentinel), set architecture: replication,
+# sentinel.enabled: true, and set redisStandalone: false on agent-service,
+# workflow-engine, and processing-workers.connectorWorker. Also update
+redis:
+  enabled: true
+  fullnameOverride: "redis"
+  architecture: standalone
+  auth:
+    enabled: false  # No password for in-cluster use; set true and use existingSecret for production
+  master:
+    persistence:
+      enabled: true
+      size: 8Gi
+    resources:
+      requests:
+        cpu: 250m
+        memory: 512Mi
+      limits:
+        cpu: 1000m
+        memory: 2Gi
+  replica:
+    replicaCount: 0
+  sentinel:
+    enabled: false
+  metrics:
+    enabled: true
+    serviceMonitor:
+      enabled: false
+  volumePermissions:
+    enabled: true
+
+# Agent Service configuration (Python/FastAPI — AI agent invocation runtime)
+agent-service:
+  enabled: true
+  fullnameOverride: "agent-service"
+  replicaCount: 1
+  namespace: agentstudio
+  # When redis.architecture is standalone, set true so REDIS_SENTINEL_* is not injected.
+  redisStandalone: true
+  serviceAccountName: ""
+  image:
+    repository: nemo/agent-service
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 8000
+  resources:
+    limits:
+      cpu: 2000m
+      memory: 4Gi
+    requests:
+      cpu: 500m
+      memory: 1Gi
+  env:
+    # CONFIG_SERVICE_URL: injected by chart (FQDN). Override with agent-service.configServiceUrl if needed.
+    # WARNING: Do NOT reorder entries without updating any positional --set overrides
+    # in scripts/helm-common.sh (e.g. lakekeeper.catalog.extraEnv indices).
+    # KEYCLOAK_TOKEN_URL is derived in the chart template (not index-dependent).
+    - name: REDIS_URL
+      value: "redis://redis-master.{{ .Values.global.platformNamespace | default \"agentstudio-platform\" }}.svc.cluster.local:6379/0"
+    - name: REDIS_SENTINEL_URL
+      value: ""
+    - name: REDIS_SENTINEL_MASTER
+      value: ""
+    - name: REDIS_DB
+      value: "0"
+    - name: LLM_GATEWAY_URL
+      value: ""  # Placeholder; resolved by deployment template via nemo.llmGatewayUrl helper
+    - name: KEYCLOAK_TOKEN_URL
+      # Default cluster DNS; Makefile build_helm_set_args overrides from SERVICES_NAMESPACE / KEYCLOAK_NAMESPACE
+      value: "http://keycloak.agentstudio-identity.svc.cluster.local:8080/realms/nemo/protocol/openid-connect/token"
+    - name: KB_RETRIEVAL_SERVICE_URL
+      value: "http://kb-retrieval-service:5000"
+    - name: ANALYTICS_ENGINE_URL
+      value: "http://analytics-engine:8080"
+    # Traces flow: agent-service → OTel collector → Phoenix
+    - name: PHOENIX_COLLECTOR_ENDPOINT
+      value: "{{ .Values.global.observability.otlpEndpoint }}/v1/traces"
+    - name: PHOENIX_API_URL
+      value: "http://phoenix.monitoring.svc.cluster.local:6006"
+    - name: AGENT_STUDIO_OBSERVABILITY_PROMETHEUS_METRICS_PORT
+      value: "9090"
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: 8000
+    initialDelaySeconds: 15
+    periodSeconds: 10
+  readinessProbe:
+    httpGet:
+      path: /health
+      port: 8000
+    initialDelaySeconds: 5
+    periodSeconds: 5
+  metrics:
+    serviceMonitor:
+      enabled: false
+
+# Agent Service MAF (Microsoft Agent Framework).
+# Disabled by default — the chart ships but renders zero manifests until
+# `agent-service-maf.enabled=true`. The image bundles the shared
+# observability_client_runtime (see src/nemo/agent-service-maf/deploy/Dockerfile),
+# so structured logging, OTel traces, and OTLP metrics are wired at startup.
+agent-service-maf:
+  enabled: false
+  fullnameOverride: "agent-service-maf"
+  replicaCount: 1
+  namespace: agentstudio
+  redisStandalone: true
+  serviceAccountName: ""
+  image:
+    repository: nemo/agent-service-maf
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 8000
+  resources:
+    limits:
+      cpu: 2000m
+      memory: 4Gi
+    requests:
+      cpu: 500m
+      memory: 1Gi
+  # MAF env-naming convention differs from legacy agent-service. The chart
+  # template rewrites AGENT_GATEWAY__URL via the nemo.llmGatewayUrl helper, so
+  # the placeholder empty string here is intentional. CONFIG_SERVICE_URL,
+  # KEYCLOAK_INTERNAL_ISSUER, and the Keycloak client id/secret are injected
+  # by the template (not listed here).
+  env:
+    - name: AGENT_INTERFACE__HOST
+      value: "0.0.0.0"
+    - name: AGENT_INTERFACE__PORT
+      value: "8000"
+    - name: AGENT_GATEWAY__URL
+      value: ""  # resolved by deployment template via nemo.llmGatewayUrl helper
+    - name: AGENT_GATEWAY__API_KEY
+      value: ""
+    - name: CONFIG_SOURCE
+      value: "remote"
+    - name: CONFIG_CACHE_TTL
+      value: "60"
+    - name: CONFIG_HTTP_TIMEOUT
+      value: "10.0"
+    - name: CONFIG_STALE_WHILE_ERROR
+      value: "true"
+    - name: KB_ENDPOINT_URL
+      # Path template — MAF's kb_retrieve.py substitutes {projectId}/{kbId}
+      # before the POST. Bare hostname routes to the kb-retrieval-service's
+      # root, which has no handler and returns 404.
+      value: "http://kb-retrieval-service:5000/api/v1/projects/{projectId}/knowledgebases/{kbId}/search"
+    - name: KB_TIMEOUT_SECONDS
+      value: "30"
+    # Observability — platform-standard AGENT_STUDIO_OBSERVABILITY_* / OTEL_*
+    # vars read by observability_client_runtime (shared with config-service,
+    # kb-retrieval-service, and the workers). Empty global.observability.otlpEndpoint
+    # => the client omits OTLP export and logs to stdout only.
+    - name: LOG_LEVEL
+      value: "INFO"
+    - name: OTEL_SERVICE_NAME
+      value: "agent-service-maf"
+    # Preferred trace export on AKS: app-monitoring rewrites OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+    # to the node-local Azure Monitor receiver; this var is left untouched (legacy agent-service pattern).
+    - name: PHOENIX_COLLECTOR_ENDPOINT
+      value: "{{ .Values.global.observability.otlpEndpoint }}/v1/traces"
+    - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+      value: "{{ .Values.global.observability.otlpEndpoint }}"
+    - name: AGENT_STUDIO_OBSERVABILITY_METRICS_OTLP_ENDPOINT
+      value: "{{ .Values.global.observability.otlpEndpoint }}"
+    - name: AGENT_STUDIO_OBSERVABILITY_OTLP_LOGS_ENDPOINT
+      value: "{{ .Values.global.observability.otlpEndpoint }}"
+    - name: AGENT_STUDIO_OBSERVABILITY_LOG_FILE_PATH
+      value: "/dev/stdout"
+    # Local span JSONL sink (writable tmpfs; primary export is OTLP above).
+    - name: AGENT_STUDIO_OBSERVABILITY_TRACE_FILE_PATH
+      value: "/tmp/App_Logs/trace.jsonl"
+    - name: REDIS_URL
+      value: "redis://redis-master.{{ .Values.global.platformNamespace | default \"agentstudio-platform\" }}.svc.cluster.local:6379/0"
+    - name: REDIS_SENTINEL_URL
+      value: ""
+    - name: REDIS_SENTINEL_MASTER
+      value: ""
+    # Session memory backend. MAF runs --workers 2 in the production
+    # Dockerfile; the default in-process "memory" backend keeps sessions
+    # in a process-local dict, so a session written by worker A is
+    # invisible to worker B — surfaces as intermittent 404s on GET
+    # /sessions/{id} and mid-conversation message loss when turns
+    # round-robin across workers. Pin to redis so all workers share
+    # state via the same Redis instance the task store already uses.
+    - name: AGENT_MEMORY__STORAGE_BACKEND
+      value: "redis"
+    - name: AGENT_MEMORY__REDIS_URL
+      value: "redis://redis-master.{{ .Values.global.platformNamespace | default \"agentstudio-platform\" }}.svc.cluster.local:6379/0"
+    - name: AGENT_MEMORY__REDIS_SENTINEL_URL
+      value: ""
+    - name: AGENT_MEMORY__REDIS_SENTINEL_MASTER
+      value: ""
+    - name: AGENT_MCP__STRICT_SCHEMAS
+      value: "true"
+    # Eager-connect MCP servers at team-load so the SK kernel has each plugin
+    # registered before the first LLM tool call. With lazy_connect=true the
+    # LLM is advertised tools that aren't yet attached to the kernel,
+    # surfacing as KernelPluginNotFoundError on dispatch.
+    - name: AGENT_MCP__LAZY_CONNECT
+      value: "false"
+    - name: AGENT_ENVIRONMENT
+      value: "production"
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: 8000
+    initialDelaySeconds: 15
+    periodSeconds: 10
+  readinessProbe:
+    httpGet:
+      path: /ready
+      port: 8000
+    initialDelaySeconds: 10
+    periodSeconds: 5
+  metrics:
+    serviceMonitor:
+      enabled: false
+
+# GUI configuration
+gui:
+  enabled: true
+  fullnameOverride: "gui"
+  replicaCount: 1
+  namespace: agentstudio
+  serviceAccountName: ""  # Will be computed from parent, defaults to release-name-nemo
+  image:
+    repository: nemo/gui
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 9000
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 200m
+      memory: 256Mi
+  apiService:
+    name: config-service
+    port: 3000
+  basePath: "/console"  # Base path when accessed via apigateway at /console
+  configServiceBasePath: "/config"  # Config service base path when behind apigateway
+  # Workspace URLs: GUI pod sets WORKSPACE_* env at runtime from endpoint + gateway port.
+  # Bare domain only (same as top-level endpoint / global.endpoint), e.g. agentstudio.local — not ws.{endpoint}.
+  workspaceSubdomainBase: "agentstudio.local"
+  workspaceSubdomainProtocol: "https"  # Protocol for workspace subdomains (use https for production, http for local dev)
+  # Optional override for workspace links when not using global.gatewayHttpsPort (https) / 8080 (http)
+  workspacePublicPort: ""
+  livenessProbe:
+    httpGet:
+      path: /
+      port: 9000
+    initialDelaySeconds: 10
+    periodSeconds: 30
+  readinessProbe:
+    httpGet:
+      path: /
+      port: 9000
+    initialDelaySeconds: 5
+    periodSeconds: 10
+  env:
+    # Note: KEYCLOAK_ISSUER here is for reference only - GUI uses VITE_KEYCLOAK_ISSUER
+    # which is a build-time variable set during Docker image build
+    # For local dev, rebuild GUI with: VITE_KEYCLOAK_ISSUER=https://auth.agentstudio.local/realms/nemo
+    # For production, rebuild GUI with: VITE_KEYCLOAK_ISSUER=https://auth.agentstudio.io/realms/nemo
+    - name: KEYCLOAK_ISSUER
+      value: ""  # Will be set from template (derived from endpoint)
+    - name: KEYCLOAK_CLIENT_ID
+      valueFrom:
+        secretKeyRef:
+          name: keycloak-oidc-secrets
+          key: gui-client-id
+  observability:
+    grafanaUrl: ""    # e.g. "https://grafana.agentstudio.io" or "http://localhost:3000"
+    jaegerUrl: ""     # e.g. "https://jaeger.agentstudio.io" or "http://localhost:16686"
+
+# Config Service configuration
+config-service:
+  enabled: true
+  fullnameOverride: "config-service"
+  replicaCount: 1
+  namespace: agentstudio
+  serviceAccountName: ""  # Will be computed from parent, defaults to release-name-nemo
+  image:
+    repository: nemo/config-service
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 3000
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 2Gi
+    requests:
+      cpu: 500m
+      memory: 1Gi
+  env:
+    - name: PORT
+      value: "3000"
+    - name: DEBUG
+      value: "false"
+    - name: EXPRESS_JSON_BODY_LIMIT
+      value: "64mb"
+    - name: WORKFLOW_ENGINE_URL
+      value: "http://workflow-engine:8080"
+    - name: LAKEKEEPER_URL
+      # Management API base (no /catalog). Template default: http://lakekeeper:8181 — same as Lakekeeper LAKEKEEPER__BASE_URI.
+      value: ""  # Empty = deployment template sets http://lakekeeper:8181
+    - name: KEYCLOAK_ISSUER
+      value: ""  # Will be set from template (derived from endpoint)
+    - name: LLM_GATEWAY_URL
+      value: ""  # Placeholder; resolved by deployment template via nemo.llmGatewayUrl helper
+    - name: WEB_SEARCH_MCP_ENABLED
+      value: "true"
+    - name: SEARXNG_WEB_SEARCH_MCP_ENABLED
+      value: "true"
+    - name: SEARXNG_BASE_URL
+      value: "http://searxng:8080"
+    # Used by services/PlatformMCPBootstrap.ts to register the
+    # artifact-store MCP row on startup. Must point at the in-cluster
+    # MCP endpoint of artifact-service.
+    - name: ARTIFACT_SERVICE_URL
+      value: "http://artifact-service:8080/mcp"
+    # Used by PlatformMCPBootstrap.ts for analytics_datasets_mcp registration.
+    - name: ANALYTICS_MCP_URL
+      value: "http://analytics-mcp-server:8000/mcp"
+    # Observability — client lib configuration
+    # Note: OTEL_SERVICE_NAME, AGENT_STUDIO_OBSERVABILITY_LOG_FILE_PATH, and
+    # AGENT_STUDIO_OBSERVABILITY_PROMETHEUS_METRICS_PORT are set by the deployment
+    # template directly (via service.metricsPort) to avoid duplicate env-key errors.
+    - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+      value: "{{ .Values.global.observability.otlpEndpoint }}/v1/traces"
+    - name: AGENT_STUDIO_OBSERVABILITY_PROMETHEUS_METRICS_PORT
+      value: "9090"
+  database:
+    host: "shared-postgresql.database.svc.cluster.local"
+    port: "5432"
+    name: "nemo"
+    user: "postgres"
+    password: "agentstudio-postgres-password"  # Must match database namespace secret password
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: 3000
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+  readinessProbe:
+    httpGet:
+      path: /ready
+      port: 3000
+    initialDelaySeconds: 5
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+  initContainer:
+    enabled: true
+    waitForKeycloakSetup: true  # Wait for keycloak-setup job before starting
+  metrics:
+    serviceMonitor:
+      enabled: false
+
+# API Gateway Service configuration
+apigateway-service:
+  enabled: true
+  fullnameOverride: "apigateway-service"
+  replicaCount: 1
+  namespace: agentstudio
+  serviceAccountName: ""  # Will be computed from parent, defaults to release-name-nemo
+  image:
+    repository: nemo/apigateway-service
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 8080  # Internal service port for HTTP
+    httpsPort: 8443  # Internal HTTPS service port (if using separate HTTPS service)
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 200m
+      memory: 128Mi
+  env:
+    - name: PORT
+      value: "8080"
+    - name: CONFIG_SERVICE_URL
+      value: "http://config-service:3000"
+    - name: GUI_URL
+      value: "http://gui:9000"
+    - name: LAKEKEEPER_URL
+      value: "http://lakekeeper:8181"
+    - name: TEMPORAL_UI_URL
+      value: "http://temporal-ui:8080"
+    - name: S3_REGION
+      value: "us-east-1"
+    - name: KEYCLOAK_ISSUER
+      value: ""  # Will be set from template (derived from endpoint)
+    - name: KEYCLOAK_SERVICE_URL
+      # Keycloak service URL for internal token validation and proxying
+      value: "http://keycloak.agentstudio-identity.svc.cluster.local:8080"
+    - name: KEYCLOAK_CLIENT_ID
+      valueFrom:
+        secretKeyRef:
+          name: keycloak-oidc-secrets
+          key: gateway-client-id
+    - name: KEYCLOAK_CLIENT_SECRET
+      valueFrom:
+        secretKeyRef:
+          name: keycloak-oidc-secrets
+          key: gateway-client-secret
+    - name: KB_RETRIEVAL_SERVICE_URL
+      value: "http://kb-retrieval-service:5000"
+    - name: WORKFLOW_ENGINE_URL
+      value: "http://workflow-engine:8080"
+    - name: AGENT_SERVICE_URL
+      value: "http://agent-service:8000"
+    # MAF agent runtime (parallel prefix routing — gateway mounts /agents-maf).
+    # Points at the agent-service-maf Service; gateway returns 503 on /agents-maf
+    # only when the chart is disabled (agent-service-maf.enabled=false), leaving
+    # /agents untouched.
+    - name: AGENT_SERVICE_MAF_URL
+      value: "http://agent-service-maf:8000"
+    - name: ANALYTICS_ENGINE_URL
+      value: "http://analytics-engine:5000"
+    - name: PROMETHEUS_URL
+      value: "http://prometheus-prometheus.monitoring:9090"
+    - name: PHOENIX_UI_URL
+      value: "http://phoenix.monitoring.svc.cluster.local:6006"
+    - name: AGENT_STUDIO_OBSERVABILITY_OTLP_TRACES_ENDPOINT
+      value: "{{ .Values.global.observability.otlpEndpoint }}"
+    - name: AGENT_STUDIO_OBSERVABILITY_METRICS_OTLP_ENDPOINT
+      value: "{{ .Values.global.observability.otlpEndpoint }}"
+    - name: AGENT_STUDIO_OBSERVABILITY_OTLP_LOGS_ENDPOINT
+      value: "{{ .Values.global.observability.otlpEndpoint }}"
+    - name: AGENT_STUDIO_OBSERVABILITY_LOG_FILE_PATH
+      value: "/dev/stdout"
+    - name: AGENT_STUDIO_OBSERVABILITY_TRACE_FILE_PATH
+      value: "/tmp/App_Logs/trace.jsonl"
+    - name: AGENT_STUDIO_OBSERVABILITY_TRACE_JSONL_FILTER
+      value: "all"
+    - name: AGENT_STUDIO_OBSERVABILITY_METRICS_SERVICE_NAME
+      value: "apigateway-service"
+    - name: OTEL_SERVICE_NAME
+      value: "apigateway-service"
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: 8080
+    initialDelaySeconds: 10
+    periodSeconds: 30
+  readinessProbe:
+    httpGet:
+      path: /ready
+      port: 8080
+    initialDelaySeconds: 5
+    periodSeconds: 10
+  metrics:
+    serviceMonitor:
+      enabled: false
+
+# LakeKeeper configuration (using official Helm chart from https://github.com/lakekeeper/lakekeeper-charts)
+# Note: The official chart repository will be automatically added when running 'helm dependency update'
+# If the chart structure differs, check the official chart's values.yaml for the correct structure
+lakekeeper:
+  enabled: true
+  # Override service and deployment names to remove release name prefix
+  fullnameOverride: "lakekeeper"
+  # Disable PostgreSQL subchart - we use existing database
+  postgresql:
+    enabled: false
+  # Configure external PostgreSQL database
+  # Note: These values automatically create env vars (LAKEKEEPER__PG_USER, LAKEKEEPER__PG_PASSWORD, LAKEKEEPER__PG_ENCRYPTION_KEY)
+  # via the Lakekeeper Helm chart. The encryption key is configured via externalDatabase.encryptionKeySecret
+  # Do NOT duplicate them in catalog.extraEnv
+  externalDatabase:
+    # -- the type of external database.
+    # allowed values: "postgres"
+    type: postgres
+    # -- hostname to use for read instances of the external database
+    host_read: "shared-postgresql.database.svc.cluster.local"
+    # -- hostname to use for write instances of the external database.
+    # For single read/write instances, this should be the same as `host_read`
+    host_write: "shared-postgresql.database.svc.cluster.local"
+    # port of the external database
+    port: 5432
+    # the database/scheme to use within the external database
+    database: lakekeeper
+    # the username for the external database
+    user: postgres
+    # the password for the external database (used to create secret if userSecret/passwordSecret are set)
+    password: "agentstudio-postgres-password"  # Must match database namespace secret password
+    # the name of a pre-created secret containing the external database user
+    # - if set, this overrides `externalDatabase.user`
+    userSecret: "shared-postgresql-secret"
+    # the key within `externalDatabase.userSecret` containing the user string
+    userSecretKey: "postgres"
+    # the name of a pre-created secret containing the external database password
+    # - if set, this overrides `externalDatabase.password`
+    passwordSecret: "shared-postgresql-secret"
+    # the key within `externalDatabase.passwordSecret` containing the password string
+    passwordSecretKey: "postgres-password"
+    # the name of a pre-created secret containing the encryption key
+    encryptionKeySecret: "lakekeeper-postgres-encryption"
+    # the key within the encryptionKeySecret containing the encryption key
+    encryptionKeySecretKey: "encryptionKey"
+  
+  # OIDC Authentication configuration
+  # The chart supports auth.oauth2.providerUri, but we also need to set environment variables
+  # for client ID and secret via catalog.extraEnv
+  # Use FQDN for Keycloak so DNS resolves from catalog pod (must match namespace where Keycloak runs).
+  auth:
+    oauth2:
+      # OIDC provider URI - Keycloak 26 (official image) serves at root; realm at /realms/nemo
+      # Makefile build_helm_set_args overrides from SERVICES_NAMESPACE / KEYCLOAK_NAMESPACE
+      providerUri: "http://keycloak.agentstudio-identity.svc.cluster.local:8080/realms/nemo"
+      # Expected audience claim - typically the client ID
+      # audience: "agentstudio-lakekeeper"
+      # Additional issuers (if needed for multiple issuer support)
+      # Empty by default; AKS overlays may add external issuer URLs.
+      additionalIssuers: []
+  
+  # Catalog configuration - extra environment variables for the catalog pods
+  # Note: LAKEKEEPER__PG_USER, LAKEKEEPER__PG_PASSWORD, and LAKEKEEPER__PG_ENCRYPTION_KEY
+  # are ALL automatically created by the Lakekeeper chart from externalDatabase config
+  # Do NOT define them here to avoid duplicate warnings
+  catalog:
+    # Wait for Keycloak OpenID discovery to be reachable before starting (avoids "Failed to parse openid configuration" on cold start).
+    # Uses HTTP 200 check only (no grep); times out after 2 min so the pod is not stuck forever.
+    # Then wait for keycloak-setup Job to complete so OIDC clients exist before Lakekeeper starts (no restart job needed).
+    extraInitContainers:
+      - name: wait-for-keycloak-oidc
+        env:
+          - name: KEYCLOAK_K8S_NAMESPACE
+            # Kubernetes namespace where Keycloak runs
+            value: "agentstudio-identity"
+          - name: KEYCLOAK_SVC
+            # In-cluster Service name for Keycloak (in-repo chart uses fullnameOverride: keycloak)
+            value: "keycloak"
+        image: init-tools:latest  # Overridden at deploy time by build_helm_set_args
+        imagePullPolicy: IfNotPresent
+        command:
+          - /bin/sh
+          - -c
+          - |
+            NS="${KEYCLOAK_K8S_NAMESPACE:-agentstudio-identity}"
+            SVC="${KEYCLOAK_SVC:-keycloak}"
+            KEYCLOAK_URL="http://${SVC}.${NS}.svc.cluster.local:8080/realms/nemo/.well-known/openid-configuration"
+            echo "Waiting for Keycloak OpenID discovery at ${KEYCLOAK_URL}"
+            max=40
+            n=0
+            until [ "$n" -ge "$max" ]; do
+              if curl -sf -o /dev/null --max-time 5 "${KEYCLOAK_URL}"; then
+                echo "Keycloak OpenID discovery is ready."
+                exit 0
+              fi
+              n=$((n+1))
+              echo "Attempt $n/$max: Keycloak not ready, retrying in 3s..."
+              sleep 3
+            done
+            echo "Timeout: Keycloak OpenID discovery did not become ready. Check Keycloak service name (${SVC}) and path (/realms/nemo)."
+            exit 1
+      - name: wait-for-keycloak-setup-job
+        image: init-tools:latest  # Overridden at deploy time by build_helm_set_args
+        imagePullPolicy: IfNotPresent
+        env:
+          - name: NAMESPACE
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.namespace
+          - name: KEYCLOAK_SETUP_JOB_NAME
+            value: "nemo-keycloak-setup"
+        command:
+          - /bin/sh
+          - -c
+          - |
+            JOB_NAME="${KEYCLOAK_SETUP_JOB_NAME:-nemo-keycloak-setup}"
+            APISERVER="https://kubernetes.default.svc"
+            TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+            JOB_URL="${APISERVER}/apis/batch/v1/namespaces/${NAMESPACE}/jobs/${JOB_NAME}"
+
+            echo "Checking for keycloak-setup job ${JOB_NAME} in ${NAMESPACE}..."
+            RESP=$(wget --no-check-certificate --header="Authorization: Bearer ${TOKEN}" \
+              -q -O - "${JOB_URL}" 2>/dev/null)
+            if [ $? -ne 0 ]; then
+              echo "Keycloak-setup job not found (keycloak.setup.enabled may be false). Proceeding."
+              exit 0
+            fi
+
+            echo "Waiting for keycloak-setup job to complete (timeout 600s)..."
+            ELAPSED=0
+            while [ $ELAPSED -lt 600 ]; do
+              RESP=$(wget --no-check-certificate --header="Authorization: Bearer ${TOKEN}" \
+                -q -O - "${JOB_URL}" 2>/dev/null)
+              if echo "$RESP" | grep -qE '"succeeded":[[:space:]]*[1-9]'; then
+                echo "Keycloak setup job completed."
+                exit 0
+              fi
+              if [ $((ELAPSED % 60)) -eq 0 ] && [ "$ELAPSED" -gt 0 ]; then
+                echo "Still waiting for job ${JOB_NAME} (${ELAPSED}s elapsed)..."
+              fi
+              sleep 5
+              ELAPSED=$((ELAPSED + 5))
+            done
+            echo "Timeout waiting for keycloak-setup job. Proceeding anyway."
+    # Database migrations configuration
+    dbMigrations:
+      # Delete migration job after successful completion to prevent accumulation
+      annotations:
+        "helm.sh/hook-delete-policy": "before-hook-creation,hook-succeeded"
+    extraEnv:
+      # Database configuration (connection URLs)
+      - name: LAKEKEEPER__PG_DATABASE_URL_READ
+        value: "postgres://postgres:agentstudio-postgres-password@shared-postgresql.database.svc.cluster.local:5432/lakekeeper"
+      - name: LAKEKEEPER__PG_DATABASE_URL_WRITE
+        value: "postgres://postgres:agentstudio-postgres-password@shared-postgresql.database.svc.cluster.local:5432/lakekeeper"
+      # Connection pool settings (reduce from defaults to conserve shared PG connections)
+      - name: LAKEKEEPER__PG_READ_POOL_CONNECTIONS
+        value: "5"
+      - name: LAKEKEEPER__PG_WRITE_POOL_CONNECTIONS
+        value: "3"
+      - name: LAKEKEEPER__BASE_URI
+        value: "http://lakekeeper:8181"  # Internal base URI (for service-to-service)
+      - name: LAKEKEEPER__UI__LAKEKEEPER_URL
+        # URI where the browser can reach Lakekeeper (for UI API calls)
+        # Uses catalog.{endpoint} subdomain (e.g., catalog.agentstudio.local)
+        value: "https://catalog.agentstudio.local:8443"
+      # OIDC - use FQDN so DNS resolves; Keycloak 26 realm at /realms/nemo
+      # Makefile build_helm_set_args overrides from SERVICES_NAMESPACE / KEYCLOAK_NAMESPACE (extraEnv[6])
+      - name: LAKEKEEPER__OPENID_PROVIDER_URI
+        value: "http://keycloak.agentstudio-identity.svc.cluster.local:8080/realms/nemo"
+      - name: LAKEKEEPER__OPENID_CLIENT_ID
+        valueFrom:
+          secretKeyRef:
+            name: keycloak-oidc-secrets
+            key: lakekeeper-client-id
+      - name: LAKEKEEPER__OPENID_CLIENT_SECRET
+        valueFrom:
+          secretKeyRef:
+            name: keycloak-oidc-secrets
+            key: lakekeeper-client-secret
+      # Optional OIDC settings for Lakekeeper UI
+      # The UI needs the EXTERNAL Keycloak URL (accessible from browser) for OIDC authentication
+      - name: LAKEKEEPER__UI__OPENID_CLIENT_ID
+        valueFrom:
+          secretKeyRef:
+            name: keycloak-oidc-secrets
+            key: lakekeeper-ui-client-id
+      - name: LAKEKEEPER__UI__OPENID_PROVIDER_URI
+        # IMPORTANT: This must be the external/public Keycloak URL that the browser can access.
+        # Base default targets the local-dev endpoint (auth.{endpoint}); AKS overlays
+        # override to auth.{endpoint} for those environments.
+        value: "https://auth.agentstudio.local:8443/realms/nemo"
+      - name: LAKEKEEPER__UI__OPENID_SCOPE
+        value: "openid profile email"
+      - name: LAKEKEEPER__DEBUG__LOG_REQUEST_BODIES
+        value: "true"
+      - name: LAKEKEEPER__OPENID_ADDITIONAL_ISSUERS
+        value: "https://auth.agentstudio.local:8443/realms/nemo"
+      - name: LAKEKEEPER__LOG_LEVEL
+        value: "debug"
+      - name: LAKEKEEPER__DEBUG__EXTENDED_LOGS
+        value: "true"
+      # Rust log level (env_logger/tracing) - enables debug/trace for auth and request handling
+      - name: RUST_LOG
+        value: "debug,lakekeeper=debug,lakekeeper_catalog=debug"
+
+  # Service configuration
+  service:
+    type: ClusterIP
+    port: 8181
+  # Resource limits
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 2Gi
+    requests:
+      cpu: 500m
+      memory: 1Gi
+
+# Pod Security Context
+podSecurityContext: {}
+  # fsGroup: 2000
+
+# Security Context
+securityContext: {}
+  # capabilities:
+  #   drop:
+  #   - ALL
+  # readOnlyRootFilesystem: true
+  # runAsNonRoot: true
+  # runAsUser: 1000
+
+# Node Selector
+nodeSelector: {}
+
+# Affinity
+affinity: {}
+
+# Tolerations
+tolerations: {}
+
+# DNS configuration
+# Automatically registers DNS records via Helm hooks when enabled
+# Registers:
+# - Base domain: agentstudio.local (or from dns.baseDomain)
+# - Single-label wildcard: *.agentstudio.local (covers app./auth./catalog./
+#   workflows./phoenix./s3./{workspaceLabelPrefix}<id>. — i.e. every public
+#   host the chart exposes, including per-workspace hosts ws-<id>.{baseDomain}).
+dns:
+  enabled: false  # Set to true to enable automatic DNS registration
+  baseDomain: "{{ include \"nemo.endpoint\" . }}"  # Base domain for AgentStudio deployment (derived from endpoint)
+  # DNS registration happens via ConfigMaps created by Helm hooks
+  # An external script should watch for ConfigMaps with label agentstudio.io/dns-registration=true
+  # and update dnsmasq configuration accordingly
+
+# CoreDNS configuration for DNS resolution
+# Supports two modes:
+# - "hosts": Use static entries (local development, mirrors /etc/hosts)
+# - "forward": Forward to upstream DNS server (production multi-cluster)
+# Note: In forward mode, the agentstudio.local server block automatically handles all subdomains
+# including s3.* subdomains (e.g., s3.us-west-2.agentstudio.local)
+coredns:
+  enabled: true  # Set to true to enable CoreDNS configuration
+  mode: "hosts"  # "hosts" for local dev, "forward" for production
+  domain: "{{ include \"nemo.endpoint\" . }}"  # Domain to configure (derived from endpoint)
+  
+  # Hosts mode configuration (local development)
+  # These entries will be added to CoreDNS hosts plugin
+  # Similar to /etc/hosts but available to all pods
+  hosts:
+    entries: []  # If empty, defaults will be generated from endpoint:
+      # - ip: "127.0.0.1"
+      #   hostnames:
+      #     - {endpoint} (e.g., agentstudio.local)
+      #     - auth.{endpoint} (e.g., auth.agentstudio.local)
+      #     - s3.{endpoint} (e.g., s3.agentstudio.local)
+      #     - ws.{endpoint} (e.g., ws.agentstudio.local)
+      # Add more entries as needed for your local setup
+      # All s3.* subdomains should be added here for hosts mode
+  
+  # Forward mode configuration (production)
+  # Forwards agentstudio.local and all subdomains (including s3.*) to upstream DNS server
+  forward:
+    upstreamDnsServer: "10.10.0.100"  # Upstream DNS server IP
+    maxFails: 3  # Maximum failed queries before marking upstream as down
+    healthCheck: "5s"  # Health check interval
+
+# Gateway API configuration (recommended)
+# IMPORTANT: Gateway API is the recommended approach, replacing the deprecated Ingress NGINX
+# AgentStudio creates its own Gateway and HTTPRoute in the agentstudio namespace
+gateway:
+  enabled: true  # Set to true to enable Gateway API (default: true, recommended)
+  className: nginx  # GatewayClass name (default: nginx for Gateway NGINX)
+  namespace: nginx-gateway  # Namespace where Gateway NGINX controller is deployed
+  annotations: {}  # Gateway-level annotations (if supported by implementation)
+  listeners:
+    http:
+      # HTTP listener configuration
+      port: 8080  # External HTTP port exposed by Gateway
+      allowedRoutes: {}  # Optional: restrict which HTTPRoutes can attach
+    https:
+      # HTTPS listener configuration
+      port: 8443  # External HTTPS port exposed by Gateway
+      allowedRoutes: {}  # Optional: restrict which HTTPRoutes can attach
+  tls:
+    # TLS certificate configuration for HTTPS listener
+    # Option 1: Use certificateRefs array (recommended)
+    certificateRefs:
+      - name: nemo-gateway-tls
+        kind: Secret
+        # group: ""  # Optional: empty string for core API group, omit for default
+    # Option 2: Use legacy secretName format (also supported)
+    # secretName: nemo-gateway-tls
+  # Note: Gateway API implementations may not support all NGINX-specific annotations.
+  # Some features (like rate limiting, buffer sizes) may need to be configured at
+  # the GatewayClass or Gateway controller level, not per-Gateway.
+  
+  # ClientSettingsPolicy configuration (NGINX Gateway Fabric)
+  # This is the proper way to configure client body size limits in NGINX Gateway Fabric
+  # Reference: https://docs.nginx.com/nginx-gateway-fabric/reference/api/#gateway.nginx.org%2fv1alpha1.ClientBody
+  clientSettingsPolicy:
+    enabled: true  # Set to true to create ClientSettingsPolicy (recommended for NGF)
+    name: ""  # Policy name (defaults to {gateway-name}-client-settings)
+    body:
+      # Maximum size of client request body (e.g., "200m" for 200MB)
+      # This allows S3 file uploads and large dataset files
+      maxSize: "200m"
+      # Timeout for reading client request body
+      timeout: "600s"  # Increased for large file uploads
+    keepAlive:
+      # Keep-alive time (optional)
+      # time: "60s"
+      # Keep-alive timeout (optional)
+      # timeout: "60s"
+      # Maximum number of requests per keep-alive connection (optional)
+      # requests: 1000
+
+  # NGINX Gateway controller ConfigMap configuration (legacy/deprecated for NGF)
+  # NOTE: For NGINX Gateway Fabric, use ClientSettingsPolicy above instead
+  # This ConfigMap may still be used for other controller-level settings
+  configMap:
+    enabled: false  # Set to false if using ClientSettingsPolicy (recommended for NGF)
+    name: nginx-gateway-config  # ConfigMap name in the controller namespace
+    # Body size limit for uploads (200MB) - DEPRECATED: Use ClientSettingsPolicy instead
+    clientMaxBodySize: "200m"
+    # Proxy timeouts for large file uploads
+    proxyConnectTimeout: "10s"
+    proxySendTimeout: "600s"  # Increased for large file uploads
+    proxyReadTimeout: "600s"  # Increased for large file uploads
+    # Keepalive connections for better performance
+    upstreamKeepaliveConnections: "128"
+    upstreamKeepaliveTimeout: "60s"
+    upstreamKeepaliveRequests: "1000"
+    # Buffer sizes for large uploads
+    proxyBufferSize: "32k"
+    proxyBuffersNumber: "16"
+    proxyBusyBuffersSize: "64k"
+
+# cert-manager configuration for scalable TLS issuance/rotation.
+# For private domains, prefer an enterprise/corporate CA-backed ClusterIssuer.
+# From Makefile deploy-all: CERT_MANAGER_GATEWAY_TLS=1 — nemo-deps creates ClusterIssuer only; nemo creates Certificate (see scripts/helm-common.sh).
+certManager:
+  enabled: false
+
+  # Optional issuer creation (disabled by default).
+  # Recommended production setup: pre-create a ClusterIssuer externally and set issuerRef below.
+  issuer:
+    create: false
+    kind: ClusterIssuer  # ClusterIssuer or Issuer
+    name: "nemo-private-ca"
+    type: ca             # Supported when create=true: ca, selfSigned
+    ca:
+      # Secret with CA keypair used to sign leaf certs (required for issuer.type=ca).
+      secretName: ""
+
+  # Issuer reference used by the Certificate.
+  # If omitted, falls back to certManager.issuer.name/kind.
+  issuerRef:
+    name: ""
+    kind: ""             # ClusterIssuer or Issuer
+    group: "cert-manager.io"
+
+  certificate:
+    enabled: true
+    name: "nemo-gateway-certificate"
+    # Optional override. If empty, certificate secretName derives from gateway.tls.certificateRefs[0].name
+    # (or gateway.tls.secretName / fallback nemo-gateway-tls).
+    secretName: ""
+    commonName: ""       # Optional. Leave empty to rely on SANs.
+    # Optional SAN IPs for TLS when using https://<LoadBalancer-IP> (e.g. MetalLB VIP).
+    ipAddresses: []
+    duration: "2160h"    # 90d
+    renewBefore: "360h"  # 15d
+    usages:
+      - "digital signature"
+      - "key encipherment"
+      - "server auth"
+    privateKey:
+      algorithm: RSA
+      size: 2048
+      rotationPolicy: Always
+
+# HTTPRoute configuration
+httproute:
+  # If true, omit hostnames so the route matches any Host (including the LB IP).
+  # Use for dev when browsing https://<VIP>:8443 without /etc/hosts. Treat as broad exposure.
+  matchAllHosts: false
+  hosts: []  # If empty, defaults will be generated from endpoint:
+    # - {consoleSubdomain}.{endpoint}  (e.g., app.agentstudio.local — console + API gateway)
+    # - auth.{endpoint}                (Keycloak)
+    # - catalog.{endpoint}             (Lakekeeper UI)
+    # - workflows.{endpoint}           (Temporal UI)
+    # - phoenix.{endpoint}             (Arize Phoenix UI)
+    # - s3.{endpoint}                  (S3 gateway, path-style only)
+    # - *.{endpoint}                   (covers per-workspace hosts {workspaceLabelPrefix}<id>.{endpoint})
+    #
+    # Notes:
+    #   * The apex {endpoint} itself is intentionally NOT listed because clusters
+    #     whose wildcard DNS only covers single-label subdomains cannot resolve it.
+    #     The canonical browser URL is now https://{consoleSubdomain}.{endpoint}:{port}/console.
+    #   * *.ws.{endpoint} and *.s3.{endpoint} are NOT listed because they are
+    #     two labels deep and a {*}.{endpoint} wildcard does not cover them.
+    #     Workspaces moved to {workspaceLabelPrefix}<id>.{endpoint} (single label);
+    #     S3 virtual-hosted addressing is dropped in favour of path-style.
+  paths:
+    # Path matching rules (if empty, defaults to PathPrefix "/")
+    # - type: PathPrefix  # Options: Exact, PathPrefix, RegularExpression
+    #   value: "/"
+  backend:
+    weight: 1  # Optional: backend weight for load balancing
+
+# Ingress configuration has been removed - use Gateway API instead
+# Gateway API is now the only supported ingress method for AgentStudio
+# See gateway section above for configuration
+
+# Temporal configuration
+temporal:
+  enabled: true
+  fullnameOverride: "temporal"
+  namespace: agentstudio
+  serviceAccountName: ""  # Will be computed from parent, defaults to release-name-nemo
+  server:
+    replicaCount: 1
+    image:
+      repository: temporalio/auto-setup
+      tag: "1.22.0"
+      pullPolicy: IfNotPresent
+    resources:
+      limits:
+        cpu: 2000m
+        memory: 2Gi
+      requests:
+        cpu: 500m
+        memory: 512Mi
+    service:
+      type: ClusterIP
+      port: 7233
+      targetPort: 7233
+  ui:
+    enabled: true
+    replicaCount: 1
+    image:
+      repository: temporalio/ui
+      tag: "2.21.0"
+      pullPolicy: IfNotPresent
+    resources:
+      limits:
+        cpu: 500m
+        memory: 512Mi
+      requests:
+        cpu: 200m
+        memory: 256Mi
+    service:
+      type: ClusterIP
+      port: 8080
+      targetPort: 8080
+  database:
+    host: "shared-postgresql.database.svc.cluster.local"
+    port: "5432"
+    name: "temporal"
+    user: "postgres"
+    password: "agentstudio-postgres-password"  # Must match database namespace secret password
+  config:
+    defaultNamespace: "default"
+    enableMetrics: true
+    logLevel: "info"
+  metrics:
+    path: /metrics
+    serviceMonitor:
+      # Enable when observability stack is deployed (make helm-observability-upgrade).
+      # Required for prometheus-adapter to serve worker HPA custom metrics.
+      enabled: false
+      interval: 30s
+
+# Workflow Engine Service configuration
+workflow-engine:
+  enabled: true
+  fullnameOverride: "workflow-engine"
+  redisStandalone: true
+  namespace: agentstudio
+  serviceAccountName: ""  # Will be computed from parent, defaults to release-name-nemo
+  replicaCount: 1
+  image:
+    repository: nemo/workflow-engine
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 8080
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+    requests:
+      cpu: 500m
+      memory: 512Mi
+  env:
+    - name: PORT
+      value: "8080"
+    - name: TEMPORAL_ADDRESS
+      value: "temporal:7233"
+    # CONFIG_SERVICE_URL: injected by workflow-engine chart (FQDN). Override with workflow-engine.configServiceUrl.
+    - name: LLM_GATEWAY_URL
+      value: ""  # Placeholder; resolved by deployment template via nemo.llmGatewayUrl helper
+    - name: TASK_QUEUE
+      value: "pipeline-execution"
+    - name: MCP_HEALTH_SCHEDULE_AUTO_CREATE
+      value: "true"
+    - name: MCP_HEALTH_SCHEDULE_CRON
+      value: "*/5 * * * *"
+    # Explorer list cache (Redis DB 2).
+    - name: REDIS_URL
+      value: "redis://redis-master.{{ .Values.global.platformNamespace | default \"agentstudio-platform\" }}.svc.cluster.local:6379/2"
+    - name: REDIS_SENTINEL_ADDRS
+      value: ""
+    - name: REDIS_SENTINEL_MASTER
+      value: ""
+    - name: REDIS_DB
+      value: "2"
+    # Workflow progress API (/workflows/:id/progress): same Redis host as REDIS_URL; DB 4 (DB 2 explorer, DB 3 connector ACQ).
+    - name: WORKFLOW_ENGINE_PROGRESS_SHARE_REDIS
+      value: "true"
+    - name: WORKFLOW_ENGINE_PROGRESS_REDIS_DB
+      value: "4"
+    - name: WORKFLOW_ENGINE_PROGRESS_REDIS_TTL
+      value: "1h"
+    - name: EXPLORER_CACHE_MAX_ENTRIES
+      value: "500"
+    - name: EXPLORER_CACHE_TTL_SECONDS
+      value: "300"
+    # Acquisition pipeline tuning (Phase 1b)
+    - name: ACQ_MAX_CONSUMERS
+      value: "8"
+    - name: ACQ_BATCH_SIZE
+      value: "64"
+    - name: ACQ_MAX_BATCHES_PER_ACTIVITY
+      value: "8"
+    - name: ACQ_UNBOUNDED_CONSUMERS
+      value: "8"
+    - name: ACQ_MAX_FAILURE_RATE
+      value: "0.05"
+    - name: ACQ_SCHEDULE_TO_START_TIMEOUT
+      value: "15m"
+    - name: ACQ_USE_PIPELINE
+      value: "true"
+    - name: KB_FILE_THRESHOLD
+      value: "50"
+    # Scatter-related env for docs parity; CreateWorkPlanActivity runs on processing workers and reads these there.
+    # WORK_UNIT_MAX_MB: target MiB per shard for K sizing only (0 = use MIN_FILES_PER_UNIT-based K on workers).
+    - name: WORK_UNIT_MAX_MB
+      value: "5"
+    # MAX_FILES_PER_UNIT: on workers, divisor for K when total_bytes=0 only (not a per-manifest file cap).
+    - name: MAX_FILES_PER_UNIT
+      value: "100"
+    # S3_ENDPOINT / S3_REGION are set by workflow-engine chart templates (.Values.s3) after secrets — no dup env keys.
+    # Note: S3_ACCESS_KEY, S3_SECRET_KEY, KEYCLOAK_CLIENT_ID, KEYCLOAK_CLIENT_SECRET
+    # are automatically injected by the deployment template from secrets
+    - name: KEYCLOAK_ISSUER
+      value: ""  # Will be set from template (derived from endpoint)
+    # Legacy processor image env vars removed — processing now uses Temporal workers
+    # (dataset-processor and kb-processor) deployed via the processing-workers subchart.
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: 8080
+    initialDelaySeconds: 30
+    periodSeconds: 10
+  readinessProbe:
+    httpGet:
+      path: /health
+      port: 8080
+    initialDelaySeconds: 5
+    periodSeconds: 5
+  initContainer:
+    enabled: true
+    waitForKeycloakSetup: true  # Wait for keycloak-setup job before starting
+  metrics:
+    serviceMonitor:
+      enabled: false
+
+# Analytics Engine configuration
+analytics-engine:
+  enabled: true
+  fullnameOverride: "analytics-engine"
+  replicaCount: 1
+  namespace: agentstudio
+  serviceAccountName: ""  # Will be computed from parent, defaults to release-name-nemo
+  image:
+    repository: nemo/analytics-engine
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 5000
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 2.5Gi
+    requests:
+      cpu: 500m
+      memory: 512Mi
+  warehouseName: "nemo"
+  extensionDir: "/opt/duckdb/extensions"
+  env:
+    - name: PORT
+      value: "5000"
+    - name: K8S_NAMESPACE
+      value: ""  # If empty, uses parent chart's namespace
+    - name: DEPLOYMENT_ID
+      value: "nemo"  # Default to "nemo" for nemo services
+    - name: LOG_LEVEL
+      value: "debug"  # Set to "debug" to enable debug logs, "info" for info only
+    - name: KEYCLOAK_ISSUER
+      value: ""  # Will be set from template (derived from endpoint)
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: 5000
+    initialDelaySeconds: 30
+    periodSeconds: 10
+  readinessProbe:
+    httpGet:
+      path: /ready
+      port: 5000
+    initialDelaySeconds: 5
+    periodSeconds: 5
+  # Shared values passed from parent
+  podSecurityContext:
+    fsGroup: 1000
+    runAsNonRoot: true
+    runAsUser: 1000
+  securityContext:
+    capabilities:
+      drop:
+        - ALL
+    readOnlyRootFilesystem: false
+    allowPrivilegeEscalation: false
+  nodeSelector: {}
+  affinity: {}
+  tolerations: []
+  metrics:
+    serviceMonitor:
+      enabled: false
+  # Note: global values are automatically inherited from parent chart's root-level global
+
+# Analytics MCP Server (FastMCP shim — platform analytics for agents)
+analytics-mcp-server:
+  enabled: true
+  fullnameOverride: "analytics-mcp-server"
+  replicaCount: 1
+  namespace: agentstudio
+  serviceAccountName: ""
+  image:
+    repository: nemo/mcp-server-analytics
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 8000
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 200m
+      memory: 256Mi
+  env:
+    - name: ANALYTICS_ENGINE_URL
+      value: "http://analytics-engine:5000"
+    - name: MAX_ROWS
+      value: "500"
+    - name: MAX_RESPONSE_BYTES
+      value: "5242880"
+    - name: REQUEST_TIMEOUT_S
+      value: "65"
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: 8000
+    initialDelaySeconds: 10
+    periodSeconds: 10
+  readinessProbe:
+    httpGet:
+      path: /health
+      port: 8000
+    initialDelaySeconds: 5
+    periodSeconds: 5
+  bootstrap:
+    enabled: true
+    configServiceUrl: "http://config-service:3000"
+    keycloakInternalIssuer: ""  # Derived from nemo.keycloakInternalIssuer template if empty
+  networkPolicy:
+    enabled: true
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+  securityContext:
+    capabilities:
+      drop:
+        - ALL
+    readOnlyRootFilesystem: true
+    allowPrivilegeEscalation: false
+  nodeSelector: {}
+  affinity: {}
+  tolerations: []
+
+# S3Gateway configuration
+s3gateway:
+  enabled: true
+  # Must stay aligned with global.s3gatewayFullname (worker PVC claimName = {fullname}-default-bucket).
+  fullnameOverride: "s3gateway"
+  replicaCount: 2
+  namespace: agentstudio
+  serviceAccountName: ""  # Will be computed from parent, defaults to release-name-nemo
+  image:
+    repository: versitygw/versitygw  # Uses global.imageRepository as registry prefix; tag is pinned (not affected by global.imageTag)
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 7070  # VersityGW default S3 port
+  storage:
+    backend: filesystem
+    dataPath: /mnt/pvcs
+    accessMode: ReadWriteOnce  # local-path provisioner only supports RWO
+  credentials:
+    accessKey: "testuser"  # Default, should be overridden in production
+    secretKey: "secret"   # Default, should be overridden in production
+  env: 
+    - name: VGW_BACKEND
+      value: "posix"
+    - name: VGW_BACKEND_ARG
+      value: "/mnt/pvcs"
+    - name: ROOT_ACCESS_KEY
+      value: "testuser"
+    - name: ROOT_SECRET_KEY
+      value: "secret"
+    - name: VGW_ARGS
+      value: "--health /health"
+    - name: VGW_HEALTH
+      value: "/health"
+    - name: VGW_META_SIDECAR
+      value: "/mnt/metadata"
+  resources:
+    # Reduced for laptop/Kind clusters
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+    requests:
+      cpu: 200m
+      memory: 512Mi
+  healthEndpoint: "/health"
+  metadata:
+    enabled: true
+    size: 10Gi
+    storageClass: ""  # If empty, uses default storage class or global.storageClass
+  pvcsMountPath: /mnt/pvcs
+  region: ""  # If empty, defaults to us-east-1
+  podSecurityContext:
+    fsGroup: 1000
+  securityContext: {}
+  nodeSelector: {}
+  affinity: {}
+  tolerations: {}
+  # Default bucket for Lakekeeper default warehouse (pre-created at deploy time)
+  # Default bucket name follows deploymentName: default-{deploymentName}
+  defaultBucket:
+    enabled: true
+    name: default-nemo  # Must match deploymentName; override both together
+    size: 1Ti
+    storageClass: ""
+
+# Default setup job: bootstraps Lakekeeper (EULA), creates default warehouse (verifies default bucket exists)
+# Runs as post-install/post-upgrade hook after keycloak-setup and lakekeeper-restart (weight 10)
+defaultSetup:
+  enabled: true
+  # Whether Lakekeeper is available (deployed separately or as subchart).
+  # Used by default-setup-job condition instead of lakekeeper.enabled so that the operator
+  # can deploy Lakekeeper as a separate release and still run default-setup via the app chart.
+  lakekeeperEnabled: true
+  # Run a hook (weight 4) that registers the default bucket in S3gateway via CreateBucket.
+  # Idempotent — safe to leave enabled. Ensures VersityGW recognizes the mounted PVC as a bucket.
+  registerDefaultBucket: true
+  # Warehouse name in Lakekeeper (default: deploymentName, e.g. nemo)
+  warehouseName: ""  # If empty, uses deploymentName
+  lakekeeperUrl: "http://lakekeeper:8181"
+  s3GatewayUrl: "http://s3gateway:7070"
+  # Max seconds the bootstrap Jobs wait for s3gateway / lakekeeper to come up.
+  # Sized so the FIRST provisioning of an RWX PVC (GKE Filestore Standard takes
+  # ~5-10 min for the initial share) completes inside one Job attempt before
+  # backoffLimit retries kick in. Bumped from the script's old hardcoded 120s
+  # which was tuned for instant ANF NFS provisioning on AKS and timed out
+  # immediately on Filestore-backed clusters. Override per-cluster:
+  #   make deploy-platform-deps HELM_EXTRA_ARGS='--set defaultSetup.s3GatewayWaitSec=900'
+  s3GatewayWaitSec: 600
+  lakekeeperWaitSec: 300
+  # Job-level retry budget. The pod inside each attempt already polls for
+  # s3GatewayWaitSec, so this is the OUTER retry count -- e.g. backoffLimit=2
+  # plus s3GatewayWaitSec=600 means total wall-clock = 3 attempts * 600s = 30m
+  # before the Job is considered failed. Helm's --timeout (HELM_UPGRADE_TIMEOUT,
+  # default 30m) governs how long Helm waits for the hook Job to complete.
+  s3BucketInitBackoffLimit: 2
+  lakekeeperBootstrapBackoffLimit: 3
+
+# Storage Manager configuration
+storage-manager:
+  enabled: true
+  fullnameOverride: "storage-manager"
+  replicaCount: 1
+  namespace: agentstudio
+  serviceAccountName: ""  # Will be computed from parent, defaults to release-name-nemo
+  image:
+    repository: nemo/storage-manager
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 8080
+  resources:
+    # Reduced for laptop/Kind clusters
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 256Mi
+  env:
+    - name: CONFIG_SERVICE_URL
+      value: "http://config-service:3000"
+    - name: K8S_NAMESPACE
+      value: ""  # Overridden by template to use actual release namespace
+    - name: CONFIG_SYNC_INTERVAL
+      value: "30s"
+    - name: LOG_LEVEL
+      value: "info"
+    - name: KEYCLOAK_INTERNAL_ISSUER
+      value: ""  # Will be set from template (internal issuer for service-to-service auth)
+    # Observability — client lib configuration
+    # Note: OTEL_SERVICE_NAME, AGENT_STUDIO_OBSERVABILITY_LOG_FILE_PATH, and
+    # AGENT_STUDIO_OBSERVABILITY_PROMETHEUS_METRICS_PORT are set by the deployment
+    # template directly (via service.metricsPort) to avoid duplicate env-key errors.
+    - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+      value: "{{ .Values.global.observability.otlpEndpoint }}/v1/traces"
+    - name: AGENT_STUDIO_OBSERVABILITY_PROMETHEUS_METRICS_PORT
+      value: "9090"
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: 8080
+    initialDelaySeconds: 30
+    periodSeconds: 10
+  readinessProbe:
+    httpGet:
+      path: /ready
+      port: 8080
+    initialDelaySeconds: 5
+    periodSeconds: 5
+  podSecurityContext: {}
+  securityContext: {}
+  nodeSelector: {}
+  affinity: {}
+  tolerations: {}
+  metrics:
+    serviceMonitor:
+      enabled: false
+
+# Artifact Service configuration (Node/TypeScript).
+# Provides the persistent, version-tracked artifact store for agents.
+# Bare git repos live under /mnt/pvcs/default-nemo/projects/{pid}/artifacts/{storeId}/.
+artifact-service:
+  enabled: true
+  fullnameOverride: "artifact-service"
+  replicaCount: 1
+  namespace: agentstudio
+  serviceAccountName: ""  # computed from parent
+  image:
+    repository: nemo/artifact-service
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 8080
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+    requests:
+      cpu: 200m
+      memory: 256Mi
+  nemoDataMount: /mnt/pvcs/default-nemo
+  database:
+    host: "shared-postgresql.database.svc.cluster.local"
+    port: "5432"
+    name: "nemo"
+    user: "postgres"
+    password: "agentstudio-postgres-password"
+  redis:
+    # Empty = idempotency dedup degrades to best-effort miss (git's
+    # content addressing handles identical retries on its own). Set to
+    # e.g. "redis://nemo-redis-master:6379/5" to enable cross-pod dedup.
+    url: ""
+  logLevel: "info"
+  # Observability — client lib configuration
+  env:
+    # Note: OTEL_SERVICE_NAME, AGENT_STUDIO_OBSERVABILITY_LOG_FILE_PATH, and
+    # AGENT_STUDIO_OBSERVABILITY_PROMETHEUS_METRICS_PORT are set by the deployment
+    # template directly (via service.metricsPort) to avoid duplicate env-key errors.
+    - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+      value: "{{ .Values.global.observability.otlpEndpoint }}/v1/traces"
+    - name: AGENT_STUDIO_OBSERVABILITY_PROMETHEUS_METRICS_PORT
+      value: "9090"
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: 8080
+    initialDelaySeconds: 30
+    periodSeconds: 10
+  readinessProbe:
+    httpGet:
+      path: /ready
+      port: 8080
+    initialDelaySeconds: 5
+    periodSeconds: 5
+  initContainer:
+    enabled: true
+    waitForKeycloakSetup: true
+  # podSecurityContext / securityContext: intentionally left to the
+  # subchart's values.yaml so the platform's secure defaults
+  # (runAsNonRoot, runAsUser=1000, readOnlyRootFilesystem, drop ALL
+  # caps, allowPrivilegeEscalation=false) apply automatically. To
+  # tighten or override in a specific deployment, set them here
+  # explicitly — e.g. artifact-service.securityContext.readOnlyRootFilesystem: false.
+  nodeSelector: {}
+  affinity: {}
+  tolerations: {}
+  metrics:
+    serviceMonitor:
+      enabled: false
+
+# KB Retrieval Service configuration (Rust).
+kb-retrieval-service:
+  enabled: true
+  fullnameOverride: "kb-retrieval-service"
+  replicaCount: 1
+  namespace: agentstudio
+  serviceAccountName: ""  # Will be computed from parent, defaults to release-name-nemo
+  image:
+    repository: nemo/kb-retrieval-service
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 5000
+  resources:
+    limits:
+      cpu: 2000m
+      memory: 6Gi
+    requests:
+      cpu: 1000m
+      memory: 4Gi
+  env:
+    - name: PORT
+      value: "5000"
+    - name: DEBUG
+      value: "true"  # Enable debug logging for troubleshooting
+    - name: RUST_LOG
+      value: "info"
+    - name: LLM_GATEWAY_URL
+      value: ""
+    - name: K8S_NAMESPACE
+      value: ""
+  autoscaling:
+    enabled: true
+    minReplicas: 1
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+  # S3 credentials (derived from deploymentName if empty)
+  s3:
+    enabled: true
+    secretName: ""  # Derived from deploymentName
+    endpoint: "http://s3gateway:7070"
+    region: "us-east-1"
+    defaultBucketName: ""  # Derived from deploymentName
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: 5000
+    initialDelaySeconds: 10
+    periodSeconds: 30
+    timeoutSeconds: 5
+    failureThreshold: 3
+  readinessProbe:
+    httpGet:
+      path: /ready
+      port: 5000
+    initialDelaySeconds: 15
+    periodSeconds: 10
+    timeoutSeconds: 10
+    failureThreshold: 6
+  podSecurityContext: {}
+  securityContext: {}
+  nodeSelector: {}
+  affinity: {}
+  tolerations: {}
+  metrics:
+    serviceMonitor:
+      enabled: false
+  # Note: global values (imageRepository, imagePullSecrets) are automatically inherited from parent chart's root-level global
+
+# Keycloak configuration (Identity Provider)
+# Using Bitnami Keycloak chart from https://charts.bitnami.com/bitnami
+# Adapted to use shared PostgreSQL in database namespace
+# Keycloak configuration
+# NOTE: Keycloak is installed separately (not as a subchart) as a standalone Helm release.
+# Use 'make helm-keycloak-upgrade' to install/upgrade Keycloak.
+# However, OIDC client configurations are kept here for services that need Keycloak credentials.
+# Keycloak will be accessible at auth.agentstudio.local (routed through API gateway)
+keycloak:
+  enabled: false  # Keycloak is installed separately, not as a subchart
+  
+  # Keycloak setup job configuration
+  # This job creates the realm and OIDC clients automatically
+  setup:
+    enabled: true  # Set to false to disable automatic setup
+    # Empty = chart default http://keycloak.agentstudio-identity.svc.cluster.local:8080 (override via keycloakNamespace below or set the URL explicitly)
+    keycloakUrl: "http://keycloak.agentstudio-identity.svc.cluster.local:8080"
+    # Kubernetes namespace where the standalone Keycloak release runs (empty = same as .Values.namespace / SERVICES_NAMESPACE)
+    keycloakNamespace: "agentstudio-identity"
+    adminUser: "admin"  # Keycloak admin username
+    adminPassword: "AgentstudioAdmin123!"  # Keycloak admin password (must match keycloak.bootstrapAdmin.password in deployments/helm/identity/values-local.yaml)
+    realmName: "nemo"  # Realm name to create
+    domain: ""  # Base endpoint domain (if empty, derived from .Values.endpoint via nemo.endpoint)
+    # consoleHost: single-label public host for the console + API gateway; used as
+    # the OIDC redirect target for agentstudio-gui, agentstudio-gateway, and
+    # agentstudio-swagger. If empty, derived from nemo.consoleHost (e.g. app.{endpoint}).
+    # OIDC URIs intentionally avoid the bare apex {endpoint} because clusters with
+    # single-label-only wildcard DNS cannot resolve it.
+    consoleHost: ""
+    # catalogHost: single-label public host for the Lakekeeper UI; used as the
+    # OIDC redirect target for agentstudio-lakekeeper-ui. If empty, derived from
+    # nemo.catalogSubdomain (e.g. catalog.{endpoint}).
+    catalogHost: ""
+    # Protocol for redirect URIs registered on the agentstudio-gui / agentstudio-swagger clients.
+    # Defaults to https because the Gateway listens on TLS at :8443; the keycloak-setup script
+    # also registers http://localhost:3000/* so local Vite dev servers still work.
+    protocol: "https"
+    image:
+      repository: ""  # If empty, defaults to {global.imageRepository}/keycloak-setup
+      tag: ""  # Image tag precedence: explicit keycloak.setup.image.tag > global.imageTag (or Make IMAGE_TAG) > latest
+      pullPolicy: "IfNotPresent"  # Image pull policy
+  
+  # OIDC Client configurations (custom values for our OIDC secret templates)
+  # These are NOT part of the official chart - used by our keycloak-oidc-secrets.yaml template
+  oidcClients:
+    gui:
+      clientId: "agentstudio-gui"
+      # Public client (SPA) - no secret needed
+    gateway:
+      clientId: "agentstudio-gateway"
+      clientSecret: "changeme-gateway-secret"  # Should be changed in production
+    lakekeeper:
+      clientId: "agentstudio-lakekeeper"
+      clientSecret: "changeme-lakekeeper-secret"  # Should be changed in production
+    lakekeeperUi:
+      clientId: "agentstudio-lakekeeper-ui"
+    swagger:
+      clientId: "agentstudio-swagger"
+      # Public client for Swagger UI - no secret needed
+    workflowEngine:
+      clientId: "agentstudio-workflow-engine"
+      clientSecret: "changeme-workflow-engine-secret"  # Should be changed in production
+    analyticsEngine:
+      clientId: "agentstudio-analytics-engine"
+      clientSecret: "changeme-analytics-engine-secret"  # Should be changed in production
+    configService:
+      clientId: "agentstudio-config-service"
+      clientSecret: "changeme-config-service-secret"  # Should be changed in production
+    storageManager:
+      clientId: "agentstudio-storage-manager"
+      clientSecret: "changeme-storage-manager-secret"  # Should be changed in production
+    agentService:
+      clientId: "agentstudio-agent-service"
+      clientSecret: "changeme-agent-service-secret"  # Should be changed in production
+    connectorWorker:
+      clientId: "agentstudio-connector-worker"
+      clientSecret: "changeme-connector-worker-secret"  # Should be changed in production
+    evalWorker:
+      clientId: "agentstudio-eval-worker"
+      clientSecret: "changeme-eval-worker-secret"  # Should be changed in production
+
+# LLM gateway (Bifrost only).
+# Override at helm install/upgrade time, e.g. --set llmGateway.bifrost.url=https://bifrost.example.com
+# Empty falls back to the in-cluster bifrost-proxy service.
+llmGateway:
+  bifrost:
+    url: ""
+
+# Bifrost LLM gateway (Go, port 8080); disable with bifrost.enabled=false when using external LLM_GATEWAY_URL
+# v1.5.x has breaking changes — see https://docs.getbifrost.ai/migration-guides/v1.5.0 before upgrading prod.
+# When CONTAINER_IMAGE_REPO is set, helm-common.sh overrides image.repository to {repo}/bifrost.
+bifrost:
+  enabled: true
+  fullnameOverride: "bifrost"
+  replicaCount: 1
+  namespace: agentstudio
+  image:
+    repository: maximhq/bifrost
+    tag: "v1.5.7"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 8080
+  persistence:
+    enabled: true
+    size: 10Gi
+  resources:
+    limits:
+      cpu: 2000m
+      memory: 2Gi
+    requests:
+      cpu: 500m
+      memory: 512Mi
+  metrics:
+    serviceMonitor:
+      enabled: false
+  # Postgres backend (config_store + logs_store + governance). Dedicated DB so
+  # Bifrost-managed tables don't collide with the AgentStudio `nemo` schema.
+  database:
+    host: "shared-postgresql.database.svc.cluster.local"
+    port: "5432"
+    name: "bifrost"
+    user: "postgres"
+    password: "agentstudio-postgres-password"
+    sslMode: "disable"
+
+# Processing Workers configuration (long-running Temporal workers for dataset, KB, and connector processing)
+processing-workers:
+  enabled: true
+  datasetWorker:
+    image:
+      repository: dataset-processor
+      tag: "latest"
+      pullPolicy: IfNotPresent
+    replicas: 1
+    resources:
+      requests:
+        cpu: "1"
+        memory: "2Gi"
+      limits:
+        cpu: "2"
+        memory: "4Gi"
+    env:
+      - name: TEMPORAL_ADDRESS
+        value: "temporal:7233"
+      - name: TEMPORAL_NAMESPACE
+        value: "default"
+      - name: TASK_QUEUE
+        value: "dataset-processing"
+      - name: MAX_CONCURRENT_ACTIVITIES
+        value: "2"
+      - name: WORKFLOW_ENGINE_URL
+        value: "http://workflow-engine:8080"
+      - name: OTEL_SERVICE_NAME
+        value: "dataset-processor"
+      - name: AGENT_STUDIO_OBSERVABILITY_LOG_FILE_PATH
+        value: "/dev/stdout"
+      - name: AGENT_STUDIO_OBSERVABILITY_PROMETHEUS_METRICS_PORT
+        value: "9090"
+      - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+        value: "http://otel-collector:4318/v1/traces"
+    autoscaling:
+      enabled: true
+      minReplicas: 1
+      maxReplicas: 5
+      targetCPUUtilizationPercentage: 60
+      customMetric:
+        # Requires prometheus-adapter + Temporal ServiceMonitor.
+        # Enable after: make helm-observability-upgrade (deploys adapter with Temporal rules).
+        enabled: false
+        type: Pods
+        name: "temporal_queue_backlog_dataset"
+        target:
+          type: AverageValue
+          averageValue: "10"
+      behavior:
+        scaleDown:
+          stabilizationWindowSeconds: 300
+          policies:
+            - type: Pods
+              value: 1
+              periodSeconds: 120
+        scaleUp:
+          stabilizationWindowSeconds: 30
+          policies:
+            - type: Pods
+              value: 2
+              periodSeconds: 60
+  kbWorker:
+    image:
+      repository: kb-processor
+      tag: "latest"
+      pullPolicy: IfNotPresent
+    replicas: 1
+    resources:
+      requests:
+        cpu: "2"
+        memory: "3Gi"
+      limits:
+        cpu: "4"
+        memory: "4Gi"
+    env:
+      - name: TEMPORAL_ADDRESS
+        value: "temporal:7233"
+      - name: TEMPORAL_NAMESPACE
+        value: "default"
+      - name: TASK_QUEUE
+        value: "kb-processing"
+      - name: MAX_CONCURRENT_ACTIVITIES
+        value: "2"
+      - name: WORKFLOW_ENGINE_URL
+        value: "http://workflow-engine:8080"
+      - name: OTEL_SERVICE_NAME
+        value: "kb-processor"
+      - name: AGENT_STUDIO_OBSERVABILITY_LOG_FILE_PATH
+        value: "/dev/stdout"
+      - name: AGENT_STUDIO_OBSERVABILITY_PROMETHEUS_METRICS_PORT
+        value: "9090"
+      - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+        value: "http://otel-collector:4318/v1/traces"
+    autoscaling:
+      # Phase-1 rollout: enable kb worker autoscaling first.
+      enabled: true
+      minReplicas: 1
+      maxReplicas: 5
+      targetCPUUtilizationPercentage: 70
+      customMetric:
+        enabled: false
+        type: Pods
+        name: "temporal_queue_backlog_kb"
+        target:
+          type: AverageValue
+          averageValue: "10"
+      behavior:
+        scaleDown:
+          stabilizationWindowSeconds: 300
+          policies:
+            - type: Pods
+              value: 1
+              periodSeconds: 120
+        scaleUp:
+          stabilizationWindowSeconds: 30
+          policies:
+            - type: Pods
+              value: 2
+              periodSeconds: 60
+  connectorWorker:
+    redisStandalone: true
+    enabled: true
+    certs:
+      enabled: true
+      secretName: netapp-ca-certs-secret
+      mountPath: /etc/ssl/certs/custom
+      certFileName: netapp-ca-cert.pem
+    image:
+      repository: connector-worker
+      tag: "latest"
+      pullPolicy: IfNotPresent
+    # Default 2 replicas. Scaling formula: max_parallel_copies = replicas * MAX_CONCURRENT_ACTIVITIES.
+    # See docs/design/stream-pipeline.md for tuning guidance.
+    replicas: 2
+    resources:
+      requests:
+        cpu: "500m"
+        memory: "1Gi"
+      limits:
+        cpu: "2"
+        # 4Gi accommodates 8 concurrent download+upload activities buffering files
+        # via tempfile. For files >1GB cross-cluster, lower MAX_CONCURRENT_ACTIVITIES.
+        memory: "4Gi"
+    env:
+      - name: TEMPORAL_ADDRESS
+        value: "temporal:7233"
+      - name: TEMPORAL_NAMESPACE
+        value: "default"
+      - name: TASK_QUEUE
+        value: "connector-operations"
+      # Bumped from 2 to 8 for the streaming acquisition pipeline (Phase 1b).
+      - name: MAX_CONCURRENT_ACTIVITIES
+        value: "8"
+      - name: CONFIG_SERVICE_URL
+        value: "http://config-service:3000"
+      - name: S3_ENDPOINT
+        value: "http://s3gateway:7070"
+      - name: WORKFLOW_ENGINE_URL
+        value: "http://workflow-engine:8080"
+      # Acquisition pipeline Redis (DB 3).
+      - name: ACQ_REDIS_URL
+        value: "redis://redis-master.{{ .Values.global.platformNamespace | default \"agentstudio-platform\" }}.svc.cluster.local:6379/3"
+      - name: ACQ_REDIS_SENTINEL_URL
+        value: ""
+      - name: ACQ_REDIS_SENTINEL_MASTER
+        value: ""
+      - name: ACQ_REDIS_DB
+        value: "3"
+      - name: ACQ_BATCH_SIZE
+        value: "64"
+      - name: ACQ_MAX_BATCHES_PER_ACTIVITY
+        value: "8"
+      - name: ACQ_STREAM_MAXLEN
+        value: "50000"
+      - name: OTEL_SERVICE_NAME
+        value: "connector-worker"
+      - name: AGENT_STUDIO_OBSERVABILITY_LOG_FILE_PATH
+        value: "/dev/stdout"
+      - name: AGENT_STUDIO_OBSERVABILITY_PROMETHEUS_METRICS_PORT
+        value: "9090"
+      - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+        value: "http://otel-collector:4318/v1/traces"
+      # S3_ACCESS_KEY, S3_SECRET_KEY, KEYCLOAK_CLIENT_ID, KEYCLOAK_CLIENT_SECRET,
+      # and KEYCLOAK_TOKEN_URL are injected by the deployment template from secrets
+    # CPU-based HPA by default. Queue backlog scaling (customMetric) is enabled in
+    # values-enable-observability.yaml together with Temporal ServiceMonitor + observability
+    # prometheus-adapter (see docs/observability/worker-hpa-runbook.md).
+    autoscaling:
+      enabled: true
+      minReplicas: 1
+      maxReplicas: 4
+      targetCPUUtilizationPercentage: 50
+      customMetric:
+        enabled: false
+        type: Pods
+        name: "temporal_queue_backlog_connector"
+        target:
+          type: AverageValue
+          averageValue: "10"
+      behavior:
+        scaleDown:
+          stabilizationWindowSeconds: 300
+          policies:
+            - type: Pods
+              value: 1
+              periodSeconds: 120
+        scaleUp:
+          stabilizationWindowSeconds: 30
+          policies:
+            - type: Pods
+              value: 2
+              periodSeconds: 60
+  # Evaluation worker (TypeScript). Overrides subchart defaults for in-cluster
+  # service URLs. See deployments/helm/nemo/charts/processing-workers/values.yaml
+  # for the full evalWorker schema.
+  evalWorker:
+    enabled: true
+    image:
+      repository: eval-worker
+      tag: "latest"
+      pullPolicy: IfNotPresent
+    env:
+      - name: TEMPORAL_ADDRESS
+        value: "temporal:7233"
+      - name: TEMPORAL_NAMESPACE
+        value: "default"
+      - name: METRICS_PORT
+        value: "9465"
+      - name: LOG_LEVEL
+        value: "info"
+      - name: CONFIG_SERVICE_URL
+        value: "http://config-service:3000"
+      - name: AGENT_SERVICE_URL
+        value: "http://agent-service:8000"
+      # Bifrost ships as `bifrost-proxy` (port 4001), not `bifrost:8080`.
+      # Override at install time if the LLM gateway lives elsewhere.
+      - name: LLM_GATEWAY_URL
+        value: "http://bifrost-proxy:4001"
+      - name: WORKFLOW_ENGINE_URL
+        value: "http://workflow-engine:8080"
+      # POSIX-on-PVC store (same mount as dataset/kb/connector workers).
+      - name: NEMO_DEFAULT_STORE_ROOT
+        value: "/mnt/pvcs/default-nemo"
+
+# Project initialization defaults
+projectInit:
+  defaultStorageClass: "standard"
+  defaultStorageSize: "2Gi"
+  defaultRegion: "us-east-1"  # Or from deployment config
+

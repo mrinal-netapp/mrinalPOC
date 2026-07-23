@@ -1,0 +1,109 @@
+{
+  "_schema_version": "2.0.0",
+  "project_id": "550e8400-e29b-41d4-a716-446655440000",
+  "_description": "Magentic-One pattern: a manager model autonomously delegates to specialist agents (researcher, coder, writer).",
+  "agent": {
+    "framework": "maf",
+    "model": "azure/gpt-4.1-mini",
+    "temperature": 0.7,
+    "max_tokens": 4096,
+    "timeout_seconds": 600,
+    "metadata": {
+      "project": "agent-studio",
+      "version": "1.0.0",
+      "environment": "development"
+    }
+  },
+  "semantic_kernel": {
+    "agents": [
+      {
+        "name": "researcher",
+        "instructions": "You are a research specialist with access to the weather MCP server. Use weather tools at most twice per task; once you have the data, STOP calling tools and reply with a concise textual summary citing the figures returned. Never loop tool calls.",
+        "description": "Gathers information and research findings",
+        "model": "azure/gpt-4.1-mini",
+        "temperature": 0.7,
+        "max_tokens": 4096,
+        "tools": [],
+        "mcp_servers": ["weather"],
+        "function_choice_behavior": "auto"
+      },
+      {
+        "name": "coder",
+        "instructions": "You are a software engineer. Using only your built-in knowledge (no external tools), write clean, production-quality code. Include error handling and explain architectural decisions.",
+        "description": "Writes and reviews code",
+        "model": "azure/gpt-4.1-mini",
+        "temperature": 0.3,
+        "max_tokens": 8000,
+        "tools": [],
+        "mcp_servers": [],
+        "function_choice_behavior": "none"
+      },
+      {
+        "name": "writer",
+        "instructions": "You are a content specialist. Using only your built-in knowledge (no external tools), produce clear, engaging, well-structured writing. Adapt tone based on context.",
+        "description": "Creates reports and documentation",
+        "model": "azure/gpt-4.1-mini",
+        "temperature": 0.7,
+        "max_tokens": 8000,
+        "tools": [],
+        "mcp_servers": [],
+        "function_choice_behavior": "none"
+      }
+    ],
+    "orchestration": {
+      "type": "magentic",
+      "manager_model": "azure/gpt-4.1-mini",
+      "manager_temperature": 0.0,
+      "max_rounds": 20
+    },
+    "default_function_choice_behavior": "auto",
+    "chat_history_max_messages": 100,
+    "enable_telemetry": false,
+    "session_ttl_seconds": 3600
+  },
+  "gateway": {
+    "url": "http://host.docker.internal:4001/v1",
+    "api_key": "",
+    "default_model": "azure/gpt-4.1-mini",
+    "request_timeout_seconds": 120,
+    "retry_on_timeout": true,
+    "max_retries": 2
+  },
+  "guardrails": {
+    "enabled": false
+  },
+  "mcp": {
+    "connection_timeout_seconds": 30,
+    "lazy_connect": true,
+    "tool_call_timeout_seconds": 60,
+    "max_tool_retries": 1,
+    "retry_on_timeout": true,
+    "discovery_on_connect": true,
+    "tool_name_format": "qualified",
+    "max_concurrent_tool_calls": 5
+  },
+  "mcp_servers": [
+    {
+      "name": "weather",
+      "transport": "streamable-http",
+      "url": "https://meteo-weather-mcp.salmonisland-4ff3d4e9.eastus.azurecontainerapps.io/mcp",
+      "enabled": true,
+      "timeout_seconds": 30,
+      "sse_read_timeout_seconds": 120
+    }
+  ],
+  "memory": {
+    "enabled": true,
+    "storage_backend": "memory",
+    "buffer_type": "sliding_window",
+    "ttl_seconds": 3600,
+    "max_history_length": 100,
+    "max_tokens_per_session": 0,
+    "max_chars_per_session": 0
+  },
+  "logging": {
+    "level": "INFO",
+    "format": "json",
+    "include_timestamp": true
+  }
+}

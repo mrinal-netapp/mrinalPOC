@@ -1,0 +1,16 @@
+{{- if and .Values.enabled (default false .Values.metrics.serviceMonitor.enabled) }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: storage-manager
+  labels:
+    {{- include "storage-manager.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "storage-manager.selectorLabels" . | nindent 6 }}
+  endpoints:
+    - port: {{ default "http" .Values.metrics.port }}
+      path: {{ default "/metrics" .Values.metrics.path }}
+      interval: {{ default "30s" .Values.metrics.serviceMonitor.interval }}
+{{- end }}

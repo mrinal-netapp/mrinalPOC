@@ -1,0 +1,51 @@
+# Primary PostgreSQL + pgvector; optional pgbouncer for connection-pooling tests.
+# Tuned conservatively (works in dev) — raise shared_buffers in production.
+services:
+  pgvector:
+    image: pgvector/pgvector:pg17
+    container_name: pgvector
+    # HNSW index builds use large shared-memory; Docker default 64MB is too small.
+    shm_size: "1gb"
+    environment:
+      POSTGRES_DB: vectorbench
+      POSTGRES_USER: benchuser
+      POSTGRES_PASSWORD: benchpass
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgvector-data:/var/lib/postgresql/data
+      - ./init-primary.sql:/docker-entrypoint-initdb.d/01-init.sql
+    command: >
+      postgres
+        -c shared_buffers=512MB
+        -c work_mem=32MB
+        -c maintenance_work_mem=256MB
+        -c effective_cache_size=1536MB
+        -c max_connections=200
+        -c wal_level=replica
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U benchuser -d vectorbench"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  pgbouncer:
+    profiles:
+      - pooling
+    image: edoburu/pgbouncer:1.22.0
+    container_name: pgbouncer-vectordb
+    environment:
+      DATABASE_URL: postgres://benchuser:benchpass@pgvector:5432/vectorbench
+      POOL_MODE: transaction
+      MAX_CLIENT_CONN: 1000
+      DEFAULT_POOL_SIZE: 50
+    ports:
+      - "6432:5432"
+    depends_on:
+      pgvector:
+        condition: service_healthy
+
+volumes:
+  pgvector-data:
+  lance-data:
+    driver: local

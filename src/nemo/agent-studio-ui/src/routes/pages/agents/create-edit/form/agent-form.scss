@@ -1,0 +1,1242 @@
+// Agent form — workbench layout
+// Mirrors the data-source/dataset full-page wrapper but swaps the single Card body
+// for a workbench that hosts (Agent configuration | Chat) by default and adds an
+// Output details column when the user toggles it on.
+
+@use "@/styles/mixins" as *;
+
+// -- Action bar (subtitle + action buttons, sits between the top bar and body) --
+//
+// Lays out the page subtitle on the left and all workbench action buttons
+// (Reset, Preview, output-details toggle, Save) on the right. It is a
+// sibling of `.dset-form-page__top-bar` and `.dset-form-page__body`, so it
+// stays fixed while the body scrolls.
+
+.agent-form-page__action-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 32px;
+  min-height: 64px;
+  background-color: var(--background-main);
+  flex-shrink: 0;
+}
+
+.agent-form-page__action-bar-subtitle {
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+}
+
+.dset-form-page--agent .agent-form-page__action-bar .agent-form-page__action-bar-subtitle {
+  font-weight: 500;
+}
+
+.agent-form-page__top-bar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.agent-form-page__save-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.agent-form-page__save-trigger-chevron {
+  display: inline-flex;
+  align-items: center;
+}
+
+// -- Workbench --
+// Default: two equal columns (Agent configuration | Chat) — 50 / 50.
+// With `--with-output` modifier: three equal columns — 33.3 / 33.3 / 33.3.
+//
+// `flex: 1; min-height: 0` lets the workbench fill all remaining height
+// inside the body-inner flex column so the chat/run-details panels (which
+// declare `height: 100%`) have a concrete ancestor height to reference.
+
+.agent-form__workbench {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr);
+  gap: 16px;
+  width: 100%;
+  max-width: none;
+  flex: 1;
+  min-height: 0;
+
+  >* {
+    min-width: 0;
+  }
+}
+
+.agent-form__workbench--two-col {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+
+.agent-form__workbench--focused {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.agent-form__panel--hidden {
+  display: none !important;
+}
+
+.agent-form__panel-slot {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+
+// -- Agent configuration column (left card) --
+// `min-height: 0` replaces the old 600px floor so the card fits inside the
+// fill-height workbench row. The card header (h) stays pinned; only the
+// card-content area scrolls via the rule below.
+
+.agent-form__config-card {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+
+  // Scroll the form body while keeping the "Agent configuration" card header
+  // visually pinned at the top of the column.
+  >.card-content {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+  }
+}
+
+// -- Workbench panel card headers --
+.agent-form__workbench {
+  .card-header {
+    height: auto;
+    min-height: 52px;
+    padding-block: 12px;
+    padding-inline: 20px;
+    gap: 12px;
+  }
+
+  .card-header__icon {
+    width: 24px;
+    height: 24px;
+
+    & svg {
+      width: 20px;
+      height: 20px;
+      color: var(--icon-secondary, var(--text-secondary));
+    }
+  }
+
+  .card-header__actions {
+    gap: 8px;
+  }
+
+  .card-header__title {
+    color: var(--text-primary);
+  }
+}
+
+.agent-form__config-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: 0 0 8px;
+}
+
+// -- Section --
+//
+// Each section is padded uniformly and separated from the next by a hairline
+// border so the left column reads as a structured list of configuration areas.
+
+.agent-form__section {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 20px 24px;
+  border-bottom: 1px solid var(--border-main);
+
+  &:last-child {
+    border-bottom: none;
+  }
+
+  // Nested section (e.g. Manager agent inside team Configuration) — no
+  // extra padding or border; it inherits the parent section's gutter.
+  &--nested {
+    padding: 0;
+    border-bottom: none;
+  }
+
+  &--no-divider {
+    border-bottom: none;
+  }
+}
+
+.agent-form__section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+
+  // Stacked variant: title + description in a single column rather than the
+  // default title-on-the-left, action-on-the-right row. Used by Profile.
+  &--stacked {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+  }
+}
+
+.agent-form__section-title {
+  margin: 0;
+}
+
+.agent-form__section-description {
+  margin: 0;
+}
+
+.agent-form__profile-status-warning {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--notification-warning, var(--orange-50, #f1c21b));
+}
+
+.agent-form__section-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+// -- Field --
+
+.agent-form__field {
+  width: 100%;
+}
+
+.agent-form__textarea-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.agent-form__textarea {
+  width: 100%;
+  min-height: 92px;
+  resize: vertical;
+  padding: 8px 12px;
+  border: 1px solid var(--border-main);
+  border-radius: 4px;
+  background-color: var(--background-content);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 20px;
+
+  &:focus {
+    outline: none;
+    border-color: var(--border-focus, var(--primary-main, #0d6efd));
+    box-shadow: 0 0 0 3px var(--focus-ring, rgba(13, 110, 253, 0.2));
+  }
+
+  &::placeholder {
+    color: var(--text-placeholder, var(--text-secondary));
+  }
+
+  &:disabled {
+    background-color: var(--background-disabled, var(--background-main));
+    color: var(--text-disabled, var(--text-secondary));
+    cursor: not-allowed;
+  }
+}
+
+.agent-form__textarea--tall {
+  min-height: 124px;
+}
+
+.agent-form__textarea-meta {
+  display: flex;
+  justify-content: flex-end;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+// -- Model params collapsible --
+
+.agent-form__params-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  background: none;
+  border: none;
+  color: var(--primary-main, var(--link-primary, #0d6efd));
+  font-size: 14px;
+  cursor: pointer;
+
+  &:focus-visible {
+    outline: 2px solid var(--border-focus, #0d6efd);
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+
+  &:hover {
+    text-decoration: underline;
+  }
+}
+
+.agent-form__params {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 8px 12px 4px;
+}
+
+// -- Attached resource list (KB / Toolset) --
+
+.agent-form__resource-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.agent-form__resource-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 12px 20px 0;
+}
+
+.agent-form__resource-card-heading {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.agent-form__resource-card-icon {
+  flex-shrink: 0;
+  color: var(--text-secondary);
+}
+
+.agent-form__resource-card-heading-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.agent-form__resource-card-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.agent-form__configured-resource-card {
+  border-radius: 0;
+  box-shadow: 0 2px 2px var(--border-drop-shadow);
+
+  .agent-form__feature-card-body {
+    border-top: 1px solid var(--border-main);
+  }
+
+  .agent-form__status {
+    gap: 8px;
+  }
+
+  .agent-form__resource-link {
+    gap: 8px;
+    color: var(--button-secondary, var(--primary-main, #0d6efd));
+  }
+}
+
+.agent-form__resource-body--unconfigured {
+  grid-template-columns: max-content 1fr;
+  align-items: center;
+  padding: 12px 20px;
+}
+
+.agent-form__resource-card-menu-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--button-secondary, var(--primary-main, #0d6efd));
+  border-radius: 999px;
+  background-color: var(--background-content);
+  color: var(--button-secondary, var(--primary-main, #0d6efd));
+  cursor: pointer;
+
+  &:hover {
+    background-color: var(--background-hover);
+    color: var(--button-secondary-hover, var(--primary-main, #0d6efd));
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--border-focus, #0d6efd);
+    outline-offset: 2px;
+  }
+}
+
+.agent-form__resource-card-menu-content {
+  min-width: 180px;
+  padding: 16px 20px;
+  border: none;
+  border-radius: 0;
+  box-shadow:
+    0 16px 32px rgba(28, 28, 28, 0.16),
+    0 4px 12px rgba(28, 28, 28, 0.08);
+}
+
+.agent-form__resource-card-menu-item {
+  min-height: 32px;
+  padding: 0;
+  border-radius: 0;
+  cursor: pointer;
+}
+
+.agent-form__resource-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--primary-main, var(--link-primary, #0d6efd));
+  text-decoration: none;
+
+  &:hover {
+    text-decoration: underline;
+  }
+}
+
+// Icon-only link (↗) used when the resource name is rendered as plain text
+// beside it. Resets link defaults, aligns the icon, and adds a focus ring.
+.agent-form__resource-icon-link {
+  display: inline-flex;
+  align-items: center;
+  color: var(--primary-main, var(--link-primary, #0d6efd));
+  text-decoration: none;
+
+  &:focus-visible {
+    outline: 2px solid var(--border-focus-outline);
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+}
+
+.agent-form__resource-link-button {
+  padding: 0;
+  background: none;
+  border: none;
+  color: var(--primary-main, var(--link-primary, #0d6efd));
+  font-size: 14px;
+  cursor: pointer;
+
+  &:hover {
+    text-decoration: underline;
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--border-focus, #0d6efd);
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+
+  &:disabled {
+    color: var(--text-disabled, var(--text-tertiary));
+    cursor: not-allowed;
+    pointer-events: none;
+  }
+}
+
+.agent-form__resource-link-button--danger {
+  color: var(--notification-error, var(--red-60, #da1e28));
+
+  &:hover {
+    color: var(--notification-error, var(--red-60, #da1e28));
+  }
+}
+
+.agent-form__resource-requirement-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: -4px;
+  padding-left: 2px;
+  color: var(--text-primary);
+
+  p {
+    margin: 0;
+    line-height: 20px;
+  }
+}
+
+.agent-form__resource-requirement-error-icon {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: var(--notification-error, var(--red-60, #da1e28));
+}
+
+.agent-form__resource-body {
+  padding: 12px 20px 16px;
+  display: grid;
+  grid-template-columns: minmax(100px, 140px) 1fr;
+  row-gap: 8px;
+  column-gap: 16px;
+}
+
+.agent-form__resource-row-label {
+  color: var(--text-secondary);
+}
+
+.agent-form__add-resource {
+  align-self: flex-start;
+}
+
+// -- Configuration feature cards --
+
+.agent-form__feature-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.agent-form__feature-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 12px 20px;
+}
+
+.agent-form__feature-card-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.agent-form__feature-card-menu {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  background: none;
+  border: none;
+  border-radius: 4px;
+  color: var(--icon-tertiary, var(--text-secondary));
+  cursor: pointer;
+  transition: background-color 150ms ease, color 150ms ease;
+
+  &:hover {
+    background-color: var(--background-hover);
+    color: var(--icon-tertiary-hover, var(--text-primary));
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--border-focus-outline, #0d6efd);
+    outline-offset: 2px;
+  }
+}
+
+.agent-form__feature-card-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.agent-form__feature-card-icon {
+  display: inline-flex;
+  color: var(--text-secondary);
+}
+
+.agent-form__feature-card-body {
+  padding: 0 20px 12px;
+  display: grid;
+  grid-template-columns: minmax(120px, 200px) 1fr;
+  row-gap: 6px;
+  column-gap: 16px;
+}
+
+.agent-form__feature-show-toggle {
+  align-self: flex-start;
+  margin-top: 4px;
+  padding: 0;
+  background: none;
+  border: none;
+  color: var(--primary-main, var(--link-primary, #0d6efd));
+  font-size: 14px;
+  cursor: pointer;
+
+  &:hover {
+    text-decoration: underline;
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--border-focus, #0d6efd);
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+}
+
+// -- Status chip --
+
+.agent-form__status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.agent-form__status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background-color: var(--text-secondary);
+}
+
+.agent-form__status-dot--healthy {
+  background-color: var(--notification-success, #1bb157);
+}
+
+.agent-form__status-dot--degraded {
+  background-color: var(--notification-warning, #f0a500);
+}
+
+.agent-form__status-dot--unhealthy {
+  background-color: var(--notification-error, #d93025);
+}
+
+.agent-form__status-icon--healthy {
+  color: var(--notification-success, #1bb157);
+}
+
+.agent-form__status-icon--warning {
+  color: var(--notification-warning, #f0a500);
+}
+
+.agent-form__status--disabled {
+  color: var(--text-secondary);
+}
+
+.agent-form__template-requirement-error {
+  padding: 0 16px 12px;
+}
+
+// -- Sub-entity cards (Manager / Agents / Teams) --
+
+.agent-form__sub-entity-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.agent-form__sub-entity-card {
+  border: 1px solid var(--border-main);
+  border-radius: 6px;
+  background-color: var(--background-content);
+}
+
+.agent-form__sub-entity-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--primary-main, var(--link-primary, #0d6efd));
+}
+
+// -- Inline notice (e.g. multi-agent "Add at least one to continue" copy) --
+
+.agent-form__inline-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 6px;
+  background-color: var(--background-main);
+  border: 1px solid var(--border-main);
+}
+
+.agent-form__inline-notice-icon {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: var(--text-secondary);
+}
+
+.agent-form__inline-error {
+  margin: 0;
+  line-height: 18px;
+}
+
+// -- Template summary block --
+
+.agent-form__template-summary {
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.agent-form__template-orchestration-field {
+  margin-top: 16px;
+}
+
+.agent-form__template-details-content {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.agent-form__field-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.agent-form__recommended-model-label {
+  white-space: nowrap;
+}
+
+.agent-form__template-agent-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.agent-form__template-agent-summary-card {
+  padding: 0;
+}
+
+.agent-form__template-agent-summary-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px 0;
+}
+
+.agent-form__template-agent-title {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.agent-form__template-agent-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.agent-form__template-resource-links {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.agent-form__template-resource-cell {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.agent-form__template-pending-list {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.agent-form__template-pending-item {
+  cursor: default;
+}
+
+.agent-form__template-info-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px 0;
+  color: var(--text-secondary);
+}
+
+.agent-form__template-agent-summary-card .agent-form__resource-body {
+  padding: 12px 16px 16px;
+}
+
+.agent-form__template-agent-name-field {
+  align-self: center;
+  width: 100%;
+  min-width: 0;
+
+  .form-field {
+    width: 100%;
+    min-width: 0;
+    gap: 4px;
+  }
+
+  .input-wrapper {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .input-field {
+    min-height: 20px;
+    height: 20px;
+    padding: 0;
+    border-color: transparent;
+    background-color: transparent;
+    border-radius: 0;
+    line-height: 20px;
+
+    &:not(:disabled):not(:focus):not(:read-only):hover {
+      border-color: var(--field-border);
+      outline: none;
+    }
+
+    &:not(:read-only):focus {
+      border-color: var(--field-border-selected);
+      background-color: var(--background-content);
+      border-radius: 4px;
+      padding-inline: 8px;
+    }
+  }
+}
+
+.agent-form__template-agent-summary-footer {
+  display: flex;
+  justify-content: flex-end;
+  padding: 0 16px 12px;
+}
+
+.agent-form__template-requirement-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.agent-form__template-requirement-card {
+  padding: 12px 14px;
+}
+
+.agent-form__template-requirement-card-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.agent-form__template-requirement-card-heading {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+}
+
+.agent-form__template-requirement-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.agent-form__template-required-label {
+  color: var(--notification-error);
+  white-space: nowrap;
+}
+
+.agent-form__template-requirement-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--border-subtle, var(--grey-20));
+  border-radius: 2px;
+  background: var(--background-content, #fff);
+}
+
+.agent-form__template-requirement-row-heading {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.agent-form__template-requirement-row-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+// Right-side drawer for template examples / instructions. Slides in from the
+// right and dismisses on outside click — mirrors the Project Switcher drawer
+// by overriding the centered dialog popup.
+.agent-form__template-drawer.dialog-popup {
+  inset: 0 0 0 auto;
+  margin: 0;
+  width: 400px;
+  max-width: 100vw;
+  height: 100vh;
+  max-height: 100vh;
+  border-radius: 0;
+  box-shadow: -2px 0 12px rgb(28 28 28 / 12%);
+  overflow: hidden;
+
+  &.dialog-popup--animation-fade {
+    opacity: 1;
+    transform: translateX(0);
+    transition: transform 250ms ease-out;
+
+    &[data-starting-style],
+    &[data-closed] {
+      opacity: 1;
+      transform: translateX(100%);
+      transition-duration: 180ms;
+    }
+  }
+}
+
+.agent-form__template-drawer-inner {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background-color: var(--background-content);
+}
+
+.agent-form__template-drawer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-shrink: 0;
+  padding: 20px 24px;
+  border-bottom: 1px solid var(--border-main, var(--border-subtle));
+}
+
+.agent-form__template-drawer-title {
+  margin: 0;
+  color: var(--text-title, var(--text-primary));
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 24px;
+}
+
+.agent-form__template-drawer-content {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 20px 24px 24px;
+}
+
+// -- Right-column placeholders --
+
+.agent-form__placeholder-card {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 600px;
+  padding: 32px;
+  text-align: center;
+  color: var(--text-secondary);
+}
+
+// =====================================================================
+// Full-height workbench layout
+// Overrides the dataset-form's scrollable-body pattern so the three
+// workbench columns fill the entire remaining viewport height and each
+// column scrolls internally instead of the page scrolling as a whole.
+// At tablet / mobile we revert to the page-scroll model because the
+// workbench stacks to a single column and content-height is correct.
+// =====================================================================
+
+.dset-form-page--agent {
+  .dset-form-page__top-bar {
+    padding: 0 32px;
+  }
+
+  // Body: no page scroll; body-inner stretches to fill available height.
+  .dset-form-page__body {
+    padding: 12px 32px 0;
+    overflow: hidden;
+    justify-content: stretch;
+    align-items: stretch; // body-inner fills the full flex height
+
+    @include tablet {
+      overflow-y: auto;
+      padding: 24px 32px;
+      align-items: flex-start;
+    }
+
+    @include mobile {
+      padding: 16px 16px;
+      align-items: flex-start;
+    }
+  }
+
+  // Body-inner: acts as a flex filler so the workbench can claim what
+  // remains after the subtitle row.
+  .dset-form-page__body-inner {
+    flex: 1;
+    min-height: 0;
+    max-width: none;
+    width: 100%;
+    padding-bottom: 16px;
+
+    // Kill the 85 px trailing spacer the dataset form adds.
+    &::after {
+      display: none;
+    }
+
+    @include tablet {
+      flex: none; // restore content-height for stacked layout
+      padding-bottom: 24px;
+    }
+
+    @include mobile {
+      padding-bottom: 16px;
+    }
+  }
+}
+
+// =====================================================================
+// Responsive — scoped to `.dset-form-page--agent` so the dataset form's
+// existing layout is untouched. Breakpoints come from `styles/mixins`:
+//   medium  ≤1690 — small monitors / split screens
+//   small   ≤1366 — typical 13–14" laptops
+//   tablet  ≤1024 — tablets and small laptops
+//   mobile  ≤640  — phones & small tablets in portrait
+// =====================================================================
+
+// -- Top bar --
+
+.dset-form-page--agent {
+  .dset-form-page__top-bar {
+    @include tablet {
+      padding: 0 32px;
+    }
+
+    @include mobile {
+      padding: 0 16px;
+    }
+  }
+
+  .dset-form-page__top-bar-title {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+
+    @include mobile {
+      font-size: 15px;
+    }
+  }
+}
+
+.agent-form-page__top-bar-actions {
+  @include small {
+    gap: 8px;
+  }
+
+  @include mobile {
+    gap: 6px;
+  }
+}
+
+// -- Action bar responsive --
+// At tablet the action bar stacks into two rows: heading on top, buttons below.
+
+.agent-form-page__action-bar {
+  @include tablet {
+    min-height: 0;
+    padding: 12px 32px;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  @include mobile {
+    padding: 10px 16px;
+    gap: 6px;
+  }
+}
+
+// -- Workbench grid --
+// Default       (>1366) :  config | chat | run details                (33 / 33 / 33)
+// small         (≤1366) :  config | chat   on row 1
+//                          run details     on row 2 — denser content,
+//                          benefits from the wider canvas
+// tablet        (≤1024) :  everything stacks to a single column
+// mobile        (≤640 ) :  same single column with reduced panel min-heights
+
+.agent-form__workbench {
+
+  // Lower the inter-card gap as the viewport shrinks so the cards keep
+  // useful internal width.
+  @include small {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-rows: auto auto;
+    gap: 12px;
+
+    > :nth-child(3) {
+      grid-column: 1 / -1;
+      min-height: 420px;
+    }
+  }
+
+  @include tablet {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: none;
+    gap: 16px;
+
+    >* {
+      // The chat + run-details panels declare `height: 100%`; without an
+      // explicit row size their flex column collapses to its content. Give
+      // them a sensible floor when the layout stacks vertically.
+      min-height: 480px;
+    }
+
+    > :nth-child(3) {
+      grid-column: auto;
+    }
+  }
+
+  @include mobile {
+    gap: 12px;
+
+    >* {
+      min-height: 400px;
+      min-width: 0;
+    }
+  }
+}
+
+// In focused mode (single panel maximized) the workbench is always one column
+// regardless of viewport size, so reset any responsive grid overrides.
+.agent-form__workbench--focused {
+  @include small {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: none;
+
+    > :nth-child(3) {
+      grid-column: auto;
+    }
+  }
+}
+
+// -- Configuration column --
+// At tablet the workbench stacks to a single column so page-scroll
+// resumes. The config card reverts to content-height (overflow: visible)
+// and needs a sensible minimum so it doesn't collapse.
+
+.agent-form__config-card {
+  @include tablet {
+    overflow: visible;
+    min-height: 480px;
+
+    >.card-content {
+      overflow-y: visible;
+    }
+  }
+}
+
+.agent-form__config-body {
+  @include small {
+    padding: 0 0 8px;
+  }
+
+  @include tablet {
+    padding: 0 0 8px;
+  }
+
+  @include mobile {
+    padding: 0 0 8px;
+  }
+}
+
+// Section padding narrows on smaller screens.
+.agent-form__section {
+  @include small {
+    padding: 20px 20px;
+  }
+
+  @include mobile {
+    padding: 16px 16px;
+  }
+}
+
+// -- Section header (title + action) --
+// On phones the inline action button (e.g. "Configure", "Add toolset") wraps
+// under the title rather than being squeezed onto a single short row.
+// The section's own responsive padding rule handles the horizontal offset;
+// no extra padding is needed here.
+
+.agent-form__section-header {
+  @include mobile {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+}
+
+// -- Resource & feature card grids --
+// Both use a fixed-label / fluid-value 2-column grid. On phones the fixed
+// label column is wider than the screen affords, so collapse to single
+// column with the label stacked above its value.
+
+.agent-form__resource-body,
+.agent-form__feature-card-body {
+  @include mobile {
+    grid-template-columns: 1fr;
+    row-gap: 4px;
+  }
+}
+
+// -- Sub-entity card actions stack on mobile --
+
+.agent-form__resource-card-header,
+.agent-form__feature-card-header {
+  @include mobile {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+}
+
+// -- Placeholder card height shrinks on small screens --
+
+.agent-form__placeholder-card {
+  @include tablet {
+    min-height: 360px;
+    padding: 24px;
+  }
+
+  @include mobile {
+    min-height: 280px;
+    padding: 16px;
+  }
+}
+
+.dialog-popup:has(.agent-profile-config-dialog),
+.dialog-popup:has(.knowledge-base-config-dialog),
+.dialog-popup:has(.toolset-config-dialog),
+.dialog-popup:has(.output-response-config-dialog),
+.dialog-popup:has(.structured-output-config-dialog),
+.dialog-popup:has(.conversation-memory-config-dialog),
+.dialog-popup:has(.safety-guardrails-config-dialog),
+.dialog-popup:has(.automatic-retries-config-dialog),
+.dialog-popup:has(.agent-rate-limiting-config-dialog) {
+  box-shadow:
+    0 24px 48px rgba(28, 28, 28, 0.16),
+    0 6px 16px rgba(28, 28, 28, 0.08);
+}

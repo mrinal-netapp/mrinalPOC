@@ -1,0 +1,10 @@
+# ---------------------------------------------------------------------------
+# Security posture
+# ---------------------------------------------------------------------------
+syncSecret:
+  enabled: false   # disables the driver's syncSecret controller; SecretProviderClass.secretObjects can still be used per-workload
+
+enableSecretRotation: true      # enable live secret rotation
+rotationPollInterval: 60s       # prod default; dev may relax to 5m
+
+filteredWatchSecret: true       # cache only Secrets owned by the driver (memory hygiene)

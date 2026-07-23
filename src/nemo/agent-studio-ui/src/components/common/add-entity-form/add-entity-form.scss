@@ -1,0 +1,205 @@
+@use '@/styles/mixins' as *;
+
+// Full-page layout following the dset-form-page pattern (dataset-form.scss).
+//
+// `margin: -24px -32px` cancels `.app-main-content`'s 24/32 padding (see
+// `App.scss`) so the form fills the route content area edge-to-edge on
+// desktop. The tablet (-24/-20) and mobile (-16/-16) overrides do NOT
+// match .app-main-content's padding — they intentionally leave a small
+// breathing-room gutter on smaller screens, since edge-to-edge phones look
+// claustrophobic against the topbar/sidebar chrome. The form remains
+// flush-aligned with the route's content area; the gutter is purely a
+// visual relaxation for narrow viewports.
+//
+// `100dvh` (with a `100vh` fallback) fills the remaining viewport below
+// the global top bar — `dvh` accounts for mobile browser chrome (Safari
+// address bar) so the footer never slides under it.
+//
+// Below the mobile breakpoint the form anchors a `min-width` floor (480px)
+// and switches its overflow from `hidden` to `overflow-x: auto`, so on very
+// narrow phones (e.g. iPhone 12 Pro at 390px) the *whole form* — header,
+// body and footer together — scrolls horizontally as one unit instead of
+// each region squeezing its own contents independently. This keeps tab
+// labels, the entity-name block, section headers, inputs, the MCP-row's
+// right-aligned button and the footer's actions all aligned to the same
+// 480px content width regardless of viewport.
+
+.add-entity-form {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - var(--topbar-height));
+  height: calc(100dvh - var(--topbar-height));
+  margin: -24px -32px;
+  background: var(--background-main, #f5f5f5);
+  overflow: hidden;
+
+  @include tablet {
+    margin: -24px -20px;
+  }
+
+  @include mobile {
+    margin: -16px;
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+}
+
+// ── Fixed Header ──────────────────────────────────────────────────────────────
+
+.add-entity-form__header {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  height: 56px;
+  min-height: 56px;
+  padding: 0 24px;
+  background: var(--background-content);
+  border-bottom: 1px solid var(--border-main);
+
+  @include mobile {
+    padding: 0 16px;
+    min-width: 480px;
+  }
+}
+
+// Title sits between left edge and the close button. `min-width: 0` lets
+// the flex child shrink below its content's intrinsic size; ellipsis
+// kicks in if a consumer passes a very long title at narrow widths.
+.add-entity-form__title {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.add-entity-form__close {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  color: var(--icon-secondary);
+
+  &:hover {
+    color: var(--icon-secondary-hover);
+    background: var(--background-hover);
+  }
+}
+
+// ── Scrollable Body ────────────────────────────────────────────────────────────
+// Body owns vertical scroll only. Below the mobile breakpoint, it carries
+// the same `min-width: 480px` floor as the header/footer so all three rows
+// share one horizontal scroll axis (provided by `.add-entity-form` itself).
+// We use block layout (not flex centering) for the inner wrapper so that
+// when the inner exceeds the body's intrinsic width, no negative centering
+// offset clips the start of the content.
+
+.add-entity-form__body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 40px 24px;
+
+  @include tablet {
+    padding: 32px 20px;
+  }
+
+  @include mobile {
+    padding: 20px 16px;
+    min-width: 480px;
+  }
+}
+
+.add-entity-form__body-inner {
+  width: 100%;
+  max-width: 1336px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+
+  @include mobile {
+    gap: 16px;
+  }
+}
+
+// Entity name + description block above the form card.
+// `> p { margin: 0 }` strips the browser's default paragraph margin so the
+// gap between heading and description is exactly the flex `gap` (8px),
+// matching the Figma design and the KB form (dset-form-page__header).
+.add-entity-form__header-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 792px;
+
+  @include tablet {
+    max-width: 100%;
+  }
+
+  > p {
+    margin: 0;
+  }
+}
+
+// The Card fills the inner wrapper (which provides the max-width).
+.add-entity-form__form-card {
+  width: 100%;
+
+  /*
+   * Constrain every section's content column to the design-system field
+   * width (616px), matching the dataset/KB forms.
+   *
+   * Each CardBlock here wraps one consumer-supplied section
+   * (e.g. <DetailsCard>, <McpConfigCard>). Capping that single direct child
+   * pulls *everything* inside it — section heading, description, form fields,
+   * info rows with right-aligned buttons — into the same vertical column,
+   * with consistent right-edge alignment and breathing room on the right.
+   *
+   * Consumers therefore get correctly-sized sections automatically, with no
+   * consumer-side CSS required. A section that legitimately needs the full
+   * CardBlock width can override `max-width: none` locally.
+   *
+   * Below the tablet breakpoint the column is released to fill its
+   * container, otherwise inputs would be capped at 616px on a 720px screen
+   * and look stranded inside an over-wide CardBlock.
+   */
+  .card-block > * {
+    max-width: 616px;
+
+    @include tablet {
+      max-width: 100%;
+    }
+  }
+}
+
+// ── Fixed Footer ───────────────────────────────────────────────────────────────
+// At mobile widths the footer participates in the form's horizontal scroll
+// (via `min-width: 480px`), so action buttons stay on a single row and never
+// overlap. `min-height` (instead of fixed `height`) lets the footer grow if
+// a consumer adds a third button or extra messaging.
+
+.add-entity-form__footer {
+  flex-shrink: 0;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 12px;
+  min-height: 64px;
+  padding: 12px 24px;
+  background: var(--background-content);
+  border-top: 1px solid var(--border-main);
+
+  @include mobile {
+    padding: 12px 16px;
+    min-width: 480px;
+  }
+}

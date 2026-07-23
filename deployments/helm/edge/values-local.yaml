@@ -1,0 +1,49 @@
+# Local overlay for the edge tier (KIND / Docker Desktop / k3d / minikube /
+# OrbStack).
+#
+# Defaults to self-managed (upstream) Istio so the local stack exercises
+# the same data plane AKS uses in production -- catches Istio-specific
+# template bugs at PR review time, keeps the render-parity smoke meaningful
+# end-to-end, and removes the "works on local but breaks in prod" gap.
+#
+# Prereqs (`make deploy-local-bootstrap-fresh` runs them automatically):
+#   - upstream Gateway API CRDs           (scripts/install-gateway-api.sh)
+#   - self-managed Istio 1.30 in istio-system  (make helm-istio-install)
+#   - nemo-gateway-tls in agentstudio-edge      (mkcert via prepare-nemo-gateway.sh)
+#
+# Rollback to NGF (e.g. to verify the rollback path or test on a cluster
+# without istiod) -- override at the make-deploy boundary, no chart edit:
+#   make deploy CLOUD=local GATEWAY_PROVIDER=nginx
+
+gateway:
+  provider: "istio"
+  istio:
+    # Keep the local listener ports on 8080/8443 so the existing
+    # `https://app.agentstudio.local:8443/console/` user contract -- and
+    # the Keycloak realm bootstrap clients' redirect URIs (which embed
+    # `:8443`) -- continue to work without per-environment overrides.
+    # OrbStack / Docker Desktop publish LoadBalancer Service ports on
+    # localhost regardless of port number.
+    listeners:
+      http:
+        port: 8080
+      https:
+        port: 8443
+        tlsSecretName: nemo-gateway-tls
+    requestAuthentication:
+      # Public-facing Keycloak issuer (matches `keycloak.hostname` in
+      # deployments/helm/identity/values-local.yaml) -- the JWT's `iss`
+      # claim must match exactly or jwt_authn rejects it.
+      issuer: "https://auth.agentstudio.local:8443/realms/nemo"
+      # Cluster-internal JWKS URL: plain HTTP (no TLS), no edge round-trip,
+      # no /etc/hosts dependency. Same shape as the AKS overlay.
+      jwksUri: "http://keycloak.agentstudio-identity.svc.cluster.local:8080/realms/nemo/protocol/openid-connect/certs"
+      audiences:
+        - agent-studio-api
+      forwardOriginalToken: true
+
+# Observability stack is not deployed by default on local clusters.
+# Run `make deploy-local OBSERVABILITY=1` and set this to true to enable
+# the monitoring ReferenceGrant and phoenix HTTPRoute.
+observability:
+  enabled: false

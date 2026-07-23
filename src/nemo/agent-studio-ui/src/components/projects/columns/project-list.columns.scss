@@ -1,0 +1,30 @@
+.project-list-name-cell {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.project-list-name-link {
+  padding: 0;
+  border: none;
+  background: none;
+  font-family: inherit;
+  cursor: pointer;
+  text-align: left;
+  min-width: 0;
+
+  &:hover span {
+    text-decoration: underline;
+  }
+
+  // Active project: the click is a no-op, so render as plain text and
+  // drop the link affordances (color/underline/pointer).
+  &:disabled {
+    cursor: default;
+  }
+  &:disabled span {
+    color: var(--text-primary);
+    text-decoration: none;
+  }
+}
