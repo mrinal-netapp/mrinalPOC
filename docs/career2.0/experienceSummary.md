@@ -257,3 +257,127 @@ Pipeline: `WCE → Metrics Collector → Suggester → Validator → Grafana`
 
 **Takeaway:** profile → auto-generate rules → enforce → visualize — the data's own history
 defines the rules that guard its future.
+
+
+---
+
+## 10. DIME DQ — Usage scenarios & failure handling
+
+### Usage scenarios
+1. **Manual DQ only** — publisher hand-writes rules (`rules.json`); the Validator runs only
+   those. Use when the team knows its domain constraints and wants deterministic,
+   hand-authored gates.
+2. **AutoDQ + Manual DQ** — the Suggester auto-generates rules from history **and** manual
+   rules run; the Validator merges both. This is the adoption driver: broad coverage cheaply
+   **plus** control over the rules that matter.
+3. **AutoDQ only (offline)** — only auto-suggested rules run (priority 3, non-blocking).
+   Onboard a dataset with zero manual effort.
+
+### Inline vs Offline
+- **Inline DQ** — runs *during* pipeline execution; P0–P1 high-criticality checks; can
+  **fail or warn** the pipeline based on severity. A hard quality gate.
+- **Offline DQ** — runs *after* data lands; broader checks (completeness, anomalies, enum);
+  **monitors without blocking**. Priority 3 by default.
+
+### Priority mechanism
+`P0` (highest) → `P3` (low). Inline runs priority ≤ 1; offline runs priority == 3.
+
+### Failure handling (key design decisions)
+- **Snooze inline DQ** — *problem:* inline DQ is a hard gate; if it fails for a run it keeps
+  blocking the publisher on later runs. *Solution:* the publisher can **snooze** the inline
+  check to publish despite the failure → converts a *blocking* failure into a
+  **non-blocking, publisher-controlled** decision. Balances strict gates with agility.
+- **Ignore bad metrics from the Suggester (baseline poisoning)** — *problem:* the Suggester
+  learns from historical metrics; a faulty run's metrics poison the learned rules
+  (garbage in → garbage rules). *Solution:* the publisher **marks bad runs** so the Suggester
+  excludes those `resultKeys` when generating rules:
+
+```bash
+az dime config set --deployment-name '<deployment>' --file file.json
+# file.json → "key": "@dataset-id.dq.offline.ignoreresultkeys", "value": [2024021919, 2024021923]
+```
+
+### Config via Azure CLI
+`az dime config set` writes overrides to the config store: enable/disable AutoDQ, override
+thresholds, modify rule priorities, deactivate rules, snooze inline checks.
+
+---
+
+## 11. DIME DQ — How AutoDQ generates rules (Suggester internals)
+
+The Suggester (Scala, on top of Deequ) turns history into rules:
+
+1. **Gather history** — connects to the Metrics Repository (JSON in ADLS), pulls the last
+   ~100 successful runs, extracts per-column profiles (min, max, mean, distinct count) +
+   total row count. Filters complex columns (nested structs, raw dates) and user-ignored ones.
+2. **Per-column rule generation** — for each column, builds up to five rule types:
+   - **Completeness** — historical completeness % → EmpiricalStrategy (Z-score) → "≥ X% complete".
+   - **Range** — historical min/max → EmpiricalStrategy bounds **+ 5% tolerance** → "values in [Y, Z]".
+   - **DataType** — if always one inferred type → "must be Integer/String…" (skips if mixed).
+   - **Uniqueness** — if distinct/total == 1.0 historically → primary key → "100% unique".
+   - **Enum** — if < 10 distinct string values → categorical → "must be in this list".
+3. **Burn-in (`minimumRuns = 5`)** — won't emit completeness/range/anomaly rules until ≥5
+   runs of history (cold-start guard).
+4. **Output** — packages rules into `validationRules` JSON, writes to ADLS; the next run's
+   Validator picks it up.
+
+### EmpiricalStrategy (Z-score)
+Given a metric's history \(x_1 \dots x_n\): compute mean \(\mu\) and std dev \(\sigma\), set
+`bound = μ ± k·σ`. Same math as Z-score anomaly detection; used to derive completeness lower
+bounds and numeric ranges. "Empirical" = derived from observed history. It's a **custom class
+on top of Deequ**.
+
+### EmpiricalStrategy vs Deequ's BatchNormalStrategy
+Deequ's built-in **`BatchNormalStrategy(lowerDeviationFactor, upperDeviationFactor)`**
+computes μ/σ in batch over history and flags values outside `μ ± k·σ` — same idea. Your
+EmpiricalStrategy is essentially a **customized BatchNormalStrategy** that *emits rules*
+(not just pass/fail), with the 5% tolerance and burn-in. (Deequ also has `OnlineNormalStrategy`
+= running μ/σ, and `HoltWinters` = seasonal/trend.)
+
+---
+
+## 12. DIME DQ — Record-count anomaly detection
+
+Per-column rules use EmpiricalStrategy on a column metric. **Record-count anomaly is
+dataset-level**: it compares today's total row count to the historical baseline and flags
+large changes. Two common implementations:
+- **Relative rate-of-change** — flag if today's count deviates from the historical mean (or
+  previous run) by more than X% (e.g., row count shouldn't halve or more than double).
+- **Z-score on the Size series** — treat row count as its own metric, compute `μ ± k·σ` over
+  recent runs, flag outside the band.
+
+It differs from per-column rules because it operates on the **Size** metric at the dataset
+level with a *change/relative* comparison. *(Confirm which variant your code uses.)*
+
+---
+
+## 13. DIME DQ — Adoption story (STAR → Amazon LPs)
+
+- **S/T:** AutoDQ adoption was slow — teams hesitated to add it to their pipelines.
+- **A:** Ran stakeholder meetings to find the blocker — the fat DIME jar collided with
+  Synapse's dependency jars (**jar/version misalignment**). Proposed running **AutoDQ as a
+  sidecar** to decouple it from the pipeline's dependency tree, and built a **Grafana adoption
+  dashboard** to make uptake visible and drive accountability.
+- **R:** Adoption reached **~95%** across teams.
+
+**LP mapping:**
+- **Customer Obsession** — prevents bad data reaching downstream consumers (dashboards, ML,
+  APIs); proactive detection before customers notice; transparent Grafana reporting builds trust.
+- **Insist on the Highest Standards** — standardized enterprise-grade DQ across ADF/Synapse/
+  Databricks; automated statistical rule generation; inline gates enforce non-negotiable
+  quality; self-adapting thresholds; governance (snooze/override/ignore) without impeding agility.
+
+---
+
+## 14. DIME DQ — Interview follow-ups
+- **"Why Deequ?"** → Spark-native, scales to billions of rows via optimized aggregations,
+  fits a JVM/Databricks stack; declarative checks + constraint suggestion + metrics repository.
+- **"How does it scale?"** → checks compile to Spark aggregation jobs, run distributed on Databricks.
+- **"Checks vs Analyzers?"** → Analyzers compute metrics; Checks assert constraints;
+  VerificationSuite runs it and emits a report.
+- **"How did you seed rules for many datasets?"** → AutoDQ constraint suggestion (auto-profiling) + burn-in.
+- **"How do you avoid false positives?"** → 5% tolerance, burn-in, `checkLevel` Warning vs
+  Error (soft vs hard gate), and ignore-bad-metrics.
+- **"Freshness?"** → DIME's checks are completeness/uniqueness/range/enum/datatype/compliance/
+  record-count-anomaly; map "freshness" to record-count anomaly / offline monitoring, or keep
+  it for the bullet-1 alerting system (which genuinely did freshness/silent-staleness).
