@@ -217,3 +217,43 @@ alert if current_delta > mu + 1.5 * sigma   // dynamic, per-asset threshold
   integrated detection into the publishing/alerting pipeline." That's true *and* impressive.
 - Let the automation-at-scale story (~90% reduction, 95% adoption) carry the impact; let the
   anomaly detection support it — don't claim ML depth you can't defend.
+
+
+---
+
+## 9. Data Quality Service — DIME DQ v2.0 / AutoDQ (bullet 2)
+
+DIME DQ v2.0 is a data-quality framework built on **Amazon Deequ**, running as **Spark
+jobs** on Databricks/Synapse over **ADLS**. Its **AutoDQ** engine learns rules from a
+dataset's own history instead of engineers hand-writing them. It's event-driven — a **WCE
+(Work Completion Event)** triggers the pipeline.
+
+Pipeline: `WCE → Metrics Collector → Suggester → Validator → Grafana`
+
+- **Metrics Collector** — Spark job; profiles data (null count, min/max, std dev, distinct count).
+- **Suggester (AutoDQ)** — reads ~last 100 runs; auto-generates rules via a custom
+  **EmpiricalStrategy** (Z-score, mean ± k·σ) with a 5% tolerance buffer and a 5-run burn-in.
+  Rule types: completeness, range, datatype, uniqueness, enum.
+- **Validator** — runs auto + manual rules on new data; emits Compliance metrics.
+
+### Worked example — `locationmappingsnapshot`
+
+**1) Metrics (Metrics Collector)** — profile of `LocationId`:
+- `ApproxCountDistinct = 230` — HyperLogLog estimate of distinct values.
+- `DataType` histogram: Unknown 69.2% (~4.61M, mostly null) · String 30.8% (~2.05M)
+  → ~6.67M rows, only ~31% populated.
+
+**2) Rules (Suggester)** — auto-generated enum checks (allowed values learned from history):
+- `allCloud ∈ {Public}`, `locationType ∈ {AzureRegion}`,
+  `azureCloud ∈ {RX,EX,FF,PB,BF,DC,MC,BC}`
+- All `checkLevel: Warning`, `priority: 3` (offline, non-blocking).
+- `LocationId` gets **no** rule: 230 distinct (>10 → not enum), not unique (not a PK),
+  mixed type (String+Unknown → datatype skipped).
+
+**3) Results (Validator)** — Compliance per rule:
+- Predicate form: `` `allCloud` IS NULL OR `allCloud` IN ('Public') ``
+- All three = **1.0** → 100% compliant. Below 1.0 would signal enum/schema drift
+  (an unexpected category entered the data).
+
+**Takeaway:** profile → auto-generate rules → enforce → visualize — the data's own history
+defines the rules that guard its future.
