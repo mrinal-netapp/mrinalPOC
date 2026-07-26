@@ -381,3 +381,72 @@ level with a *change/relative* comparison. *(Confirm which variant your code use
 - **"Freshness?"** → DIME's checks are completeness/uniqueness/range/enum/datatype/compliance/
   record-count-anomaly; map "freshness" to record-count anomaly / offline monitoring, or keep
   it for the bullet-1 alerting system (which genuinely did freshness/silent-staleness).
+
+
+---
+
+## 15. Goldman Sachs — Patch Management & DR (Oct 2021 – Jun 2022)
+
+Analyst, Tier-1 investment-banking infrastructure. Stack: Java, Linux, Snowflake, Kubernetes.
+Theme: reliability, fault tolerance, scale, compliance.
+
+> **Honesty scope:** I did **not** build a distributed scheduler from scratch. I built
+> **Kubernetes-based orchestration** (Jobs / a custom Operator) on top of an existing
+> enterprise patch-management platform. **Kubernetes was the distributed scheduler**; my
+> layer added controlled rollouts, retries, and idempotency. Don't claim "designed a
+> scheduler" or Temporal for this role.
+
+### Reworded bullets (honest + strong)
+- Built **Kubernetes-based orchestration** (Jobs + a custom Operator) to automate
+  large-scale patch rollouts across a **1M+ node fleet** on top of an enterprise
+  patch-management platform *[confirm real tool: Ansible/AWX, BigFix, Satellite, or internal]*
+  — with **staged/controlled rollouts, retries + backoff, and idempotent execution** via the
+  operator reconcile pattern.
+- Improved **rollout reliability to ~99.9%** and **reduced failed-patch incidents ~40%**
+  through resilient distributed execution.
+- Contributed to **disaster-recovery strategy** for Tier-1 apps (runbooks, failover
+  automation, DR drills) — reduced downtime ~30%.
+- Supported secure, compliant production via patching, release execution, and change management.
+
+### What I actually built — K8s Operator + patch engine
+- A `PatchRollout` **Custom Resource** describes a campaign (inventory, patch baseline, wave
+  strategy, success threshold, max retries).
+- The **operator reconcile loop** drives it wave by wave: launch → poll → gate on success
+  rate → advance / halt (circuit breaker) / retry.
+- The **execution engine** (e.g., Ansible/AWX via its job-template API, or a K8s Job running
+  `ansible-playbook`) does the actual patching over SSH (`yum`/`apt` — idempotent).
+
+Flow: `kubectl apply PatchRollout → operator → wave 1 (1%) → gate → wave 2 … → Grafana`
+
+### How reliability improved (cause → effect)
+- **Retries + backoff** → transient failures (unreachable node, temp lock, flaky call)
+  auto-recover instead of counting as failures → raises success rate.
+- **Idempotent execution** (reconcile loop + `state: latest`) → makes retries *safe* and lets
+  partial failures resume cleanly.
+- **Controlled rollout (canary → waves) + circuit breaker** → a bad patch hits ~1% of the
+  fleet, not 100% → this is what cut failed-patch incidents ~40%.
+- **Fault tolerance** → operator state in the CR/etcd resumes after a restart; K8s reschedules
+  failed pods.
+- **Measurement:** reliability = successful jobs / total (dashboard); incident counts before vs after.
+
+### Where each claim comes from (defense)
+- **Controlled rollout** → operator wave logic (+ Ansible `serial`).
+- **Retries + backoff** → K8s Job `backoffLimit` / operator re-launch with backoff.
+- **Idempotent execution** → reconcile loop **and** Ansible modules (`state: latest`).
+- **Fault-tolerant** → operator state in etcd → resumes after restart; K8s reschedules failed pods.
+- **Distributed** → Kubernetes is the distributed scheduler; the engine fans out over the fleet.
+
+### DR concepts to know
+RTO / RPO · active-active vs active-passive · hot/warm/cold standby · failover/failback ·
+DR drills / game days · BCP. "30% downtime reduction" ≈ rehearsed runbooks + automated failover.
+
+### Honesty guardrails
+- Say **"Kubernetes orchestration on top of a patch platform,"** not "designed a distributed scheduler."
+- **1M+ nodes** = the fleet scale, not a system you built for that capacity.
+- Scope your role concretely ("I built the K8s automation piece"); avoid "Led" unless true.
+- **Not Temporal** — this was Kubernetes. (Temporal is your NetApp work; use it only as an analogy.)
+- Have the measurement story for 99.9% / 40% / 30% / 1M; flag any org-level numbers.
+
+### Career through-line
+The durable-execution patterns here — idempotent, retried, checkpointed — are the same ones
+you later use with **Temporal** at NetApp: hand-rolled at Goldman, productized now.
