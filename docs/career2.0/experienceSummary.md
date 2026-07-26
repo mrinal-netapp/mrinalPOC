@@ -450,3 +450,101 @@ DR drills / game days · BCP. "30% downtime reduction" ≈ rehearsed runbooks + 
 ### Career through-line
 The durable-execution patterns here — idempotent, retried, checkpointed — are the same ones
 you later use with **Temporal** at NetApp: hand-rolled at Goldman, productized now.
+
+
+### 15.1 Rehearsed STAR story (Goldman patch management)
+
+**S — Situation:** Tier-1 banking systems ran on a **1M+ node fleet** needing constant security
+patching for compliance. At that scale, transient failures were constant and a bad patch could
+cascade across critical apps.
+
+**T — Task:** Make rollouts **reliable and contained** — auto-recover transient failures and stop
+a bad patch before it hit the whole fleet — without building a scheduler from scratch.
+
+**A — Action:** Built **Kubernetes-based orchestration** on top of the patch platform. A
+`PatchRollout` custom resource + **operator reconcile loop** rolled out in **waves**
+(canary → 10% → 50% → 100%), **gating on success rate** with a **circuit breaker**. Retries with
+backoff (K8s Jobs) recovered transient failures; **idempotency** (reconcile loop + idempotent
+patch modules) made retries safe; operator state in etcd **resumed** rollouts after restarts.
+
+**R — Result:** **~99.9%** rollout reliability, **~40%** fewer failed-patch incidents (successful
+jobs / total; incidents before vs after). Also contributed to **DR** (runbooks, drills) — ~30% less downtime.
+
+**Spoken (~70s):**
+> "At Goldman, our Tier-1 banking systems ran on a fleet of over a million nodes that needed
+> constant security patching. At that scale, rollouts failed all the time — transient issues, and
+> occasionally a bad patch that could spread. Rather than build a scheduler from scratch, I built
+> Kubernetes-based orchestration on top of our patch platform: a custom resource described the
+> campaign, and an operator reconcile loop rolled it out in waves — canary, then widening — gating
+> on success rate with a circuit breaker. Transient failures auto-recovered through retries with
+> backoff, and those retries were safe because execution was idempotent. The operator's state lived
+> in etcd, so a restart resumed the rollout instead of failing it. That got us to about 99.9%
+> reliability and cut failed-patch incidents by around 40%."
+
+**30-sec:**
+> "I made million-node patch rollouts reliable by building a Kubernetes operator on top of our
+> patch tool — staged wave rollouts with a circuit breaker, retries with backoff, and idempotent
+> execution via the reconcile loop. Bad patches got caught on a 1% canary instead of the whole
+> fleet. Result: ~99.9% reliability and ~40% fewer failed-patch incidents."
+
+**Honesty anchor:** "Kubernetes was the distributed scheduler; I built the orchestration on top."
+
+---
+
+## 16. Oracle — Backend & Cloud Billing/Metering (Nov 2019 – Oct 2021)
+
+Programmer Analyst (early career). Stack: Spring Boot, Apache Kafka, Liquibase, OCI.
+Theme: microservices, event-driven systems, high-scale billing/metering.
+
+### Tech stack
+- **Spring Boot** — Java microservices / REST APIs (the backbone).
+- **Apache Kafka** — event streaming; pub/sub for event-driven components / usage ingestion.
+- **Liquibase** — versioned DB schema migrations (changesets, rollback) → maintainability.
+- **OCI** — Oracle Cloud, where it ran.
+
+### Bullets decoded
+1. Backend services + cloud analysis workflows for **order-performance insights**; saved
+   **100–200 hrs** of manual testing (test automation replacing manual QA cycles).
+2. **High-scale daily usage-cost calculation** for Oracle Cloud SaaS — a metering / rating /
+   billing pipeline (your strongest bullet).
+3. Cloud-native, microservice-oriented, event-driven backend.
+
+### The usage-cost system — mental model
+*(typical metering-pipeline shape — map to what you actually built)*
+
+`SaaS usage events → Kafka (partitioned) → consumers aggregate per customer/day → rating/pricing → daily cost → Oracle DB (Liquibase schema)`
+
+- **Idempotency / no double-counting** — dedupe by event ID / offsets; at-least-once + dedup, or
+  exactly-once. (The key billing concern — it's money.)
+- **High scale** — Kafka partitions + consumer groups, horizontal scaling, windowed aggregation.
+- **Accuracy / reliability** — reconciliation vs source usage; handle late / out-of-order events.
+
+### Follow-ups + answers
+- *"Avoid double-counting?"* → idempotent consumers, dedupe by event ID, Kafka offsets.
+- *"High-scale how?"* → partitioned topics + consumer groups scaling horizontally.
+- *"Late / out-of-order events?"* → windowing + grace period + reconciliation/adjustment jobs.
+- *"Billing accuracy?"* → idempotent processing + daily reconciliation + anomaly alerts.
+
+### Concepts to master
+Microservices (decomposition, REST vs events, resilience) · event-driven / pub-sub · Kafka
+internals (topics, **partitions**, **consumer groups**, **offsets**, at-least-once vs
+exactly-once, idempotent producers) · Liquibase changesets/rollback.
+
+### Through-lines (connect your career)
+- **Oracle usage-metering → Microsoft commerce billing** — high-scale billing/metering where
+  accuracy = revenue. A genuine specialization to claim.
+- **Kafka event-driven → the pub/sub design in the ads HLD round** — this is where it's grounded.
+- **Idempotency** recurs across Oracle billing, Goldman patching, and DIME DQ — name it as a thread.
+
+### Oracle STAR (usage-cost system)
+- **S:** Oracle Cloud SaaS needed accurate daily usage costs across high-volume workloads.
+- **T:** Build a metering pipeline that's accurate at scale without double-counting.
+- **A:** Spring Boot consumers ingested usage events from Kafka (partitioned topics + consumer
+  groups), aggregated per customer/day with idempotent dedupe, applied pricing, and persisted
+  daily cost to Oracle DB (Liquibase-managed schema); reconciliation caught discrepancies.
+- **R:** A reliable, high-scale daily cost system with performance and accuracy as first-class goals.
+
+### Honesty guardrails
+- Early-career — **scope ownership** ("I built [specific consumer/service]," not "architected billing").
+- **100–200 hrs / "high-scale"** — have the concrete basis; flag estimates as estimates.
+- Don't claim Kafka **exactly-once** if it was at-least-once + dedup — the honest version is still strong.
