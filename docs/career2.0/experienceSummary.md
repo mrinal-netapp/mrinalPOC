@@ -548,3 +548,69 @@ exactly-once, idempotent producers) · Liquibase changesets/rollback.
 - Early-career — **scope ownership** ("I built [specific consumer/service]," not "architected billing").
 - **100–200 hrs / "high-scale"** — have the concrete basis; flag estimates as estimates.
 - Don't claim Kafka **exactly-once** if it was at-least-once + dedup — the honest version is still strong.
+
+
+---
+
+## 17. NetApp — Project Nemo / Agent Studio (Mar 2026 – present)
+
+Senior Software Engineer, Platform team. NetApp's cloud-agnostic platform for turning enterprise
+data into trusted AI outcomes. *(Full architecture deep-dive: see `final.md`.)*
+
+### Value proposition (one line)
+> "AI is easy to prototype but hard to operationalize — enterprise data is fragmented, and ~80% of
+> it lives in **NFS/SMB** while most AI platforms assume object storage. Project Nemo lets customers
+> **build, deploy, govern, and operate AI agents directly on their enterprise data wherever it
+> lives** — on-prem, AWS, Azure, GCP — **without moving or duplicating it.**"
+
+Strategic framing: it moves NetApp **from *managing* enterprise data to *activating* it for AI.**
+
+### The problem it solves
+Enterprise data is scattered across file systems, object stores, DBs, SaaS, and clouds. Most AI
+platforms are object-storage-first, so customers must **move data, rebuild permissions, and build
+governance** before AI reaches production — which stalls adoption.
+
+### Differentiation — the 4 barriers eliminated
+- **No data movement** — agents work directly on NFS, SMB, object stores, DBs, SaaS; no copies/ETL.
+- **No rebuilding** — build once, run across on-prem / AWS / Azure / GCP with one governance model.
+- **No lock-in** — choice of models, frameworks, MCP tools, vector DBs, and clouds.
+- **No security rework** — source permissions & lineage stay attached; agents operate inside the
+  governance boundaries customers already trust.
+
+The differentiation is **not another model or chatbot** — it's **solving the enterprise-data
+problem that blocks AI from reaching production.**
+
+### Capabilities (full agent lifecycle)
+Connect data (ONTAP, FSxN, ANF, GCNV, NFS, S3-compatible, MySQL, Postgres) → governed **RAG
+knowledge bases** → register models (OpenAI / Azure / AWS / Anthropic / Google) → integrate
+**MCP tools** → build agents / multi-agent teams → expose via secure APIs. Enterprise controls:
+permission-aware access, **evaluations, observability, budgeting, auditability, human-in-the-loop**.
+**Visual low-code** experience + full **API** extensibility (business teams ship in days, not months).
+
+### My contribution (scope honestly)
+- Owned the **end-to-end security architecture**: per-project multi-tenant isolation, **RBAC**
+  (Keycloak OIDC + project roles), **project-scoped virtual keys** for LLM access via Bifrost,
+  and secure credential handling.
+- Set up the **initial platform pipeline** and contributed to **multi-cloud** deployability
+  (on AKS today; code written to deploy across AWS / Azure / GCP marketplaces).
+- *[Add other modules you owned — e.g., connectors, MCP runtime, project-init workflow.]*
+
+### Technical substance (for deep-dives — see `final.md`)
+Kubernetes-native; **Istio** mTLS mesh; **Config-Service** (Node.js) + **Temporal** workflow engine
+(Go) for durable multi-step flows; **Agent-Service** (Python) doing RAG via **KB-Retrieval** +
+**LanceDB**; **Bifrost** LLM gateway (project-scoped virtual keys → per-project cost isolation);
+**Keycloak** (IAM); **Lakekeeper** (Iceberg catalog); **VersityGW** (S3 API over NFS).
+
+### Interview framing
+- **Sequence the pitch:** problem (80% of data in NFS/SMB; platforms assume object storage) →
+  one-line value prop → the 4 barriers. That lands the "why it matters."
+- **Your angle:** "I own the security architecture that makes 'no security rework' real —
+  permission-aware, multi-tenant isolation with per-project virtual keys."
+
+### Honesty guardrails
+- It's a **green-field project in internal/private preview** — say so; don't imply GA or scale it
+  doesn't yet have.
+- **Scope your ownership** (security + initial pipeline + multi-cloud) vs teammates' modules
+  (e.g., lineage was another member's).
+- **"Coming next" is roadmap, not shipped** (SMB, Snowflake/Databricks, A2A collaboration, ACL
+  propagation, PII protection, cost dashboards) — frame as roadmap, not current capability.
