@@ -415,5 +415,78 @@ I'd extend with Y"* rather than implying all of it shipped.
 
 ---
 
+## DIME DQ — AutoDQ Rule Learning & the AI/ML Angle
+
+This is where you can **legitimately claim AI/ML** in AutoDQ without overselling: it's
+**unsupervised rule induction** — learning DQ constraints from historical data instead of humans
+hand-writing them.
+
+> **⚠️ Consistency check (read before claiming two strategies):** your *actual* DIME doc described
+> **`EmpiricalStrategy` as the Z-score / mean±σ method**, used for *both* completeness and range.
+> This write-up splits learning into `EmpiricalStrategy` (observed min/max/enum) **and** a separate
+> `MeanStrategy` (Gaussian μ±kσ). That's a clean *conceptual* split, but **only name "MeanStrategy"
+> as a distinct strategy if it truly existed in your code.** If you had a single `EmpiricalStrategy`
+> using z-score bounds, present it as one strategy — don't invent a second you'd have to defend.
+
+### The learning strategies (as concepts)
+**EmpiricalStrategy — learn from the observed distribution.** Look at N runs of history per column;
+induce constraints — min/max bounds, null-rate threshold, cardinality/enum set.
+> "It observes the empirical distribution of each column across historical runs and induces
+> constraints directly from what the data has looked like — unsupervised rule learning."
+
+**MeanStrategy (Gaussian) — statistical bounds instead of hard min/max.** Learn μ and σ per column;
+accept values within **μ ± k·σ**. More flexible than hard min/max — a new $26 price isn't flagged if
+it's within 2σ.
+> "It fits a Gaussian per column — mean and standard deviation — and flags values outside k·σ. Same
+> model as the alerting system, applied to data values instead of run intervals."
+
+*(In your real system these may be **one** strategy — `EmpiricalStrategy` using z-score bounds.
+Frame it per what you actually built.)*
+
+### Column-type intelligence (where the "smart" lives)
+AutoDQ selects the strategy per column rather than blindly applying one:
+- **Continuous numeric** (price, amount) → Gaussian bounds (μ ± k·σ)
+- **Discrete numeric** (counts) → observed range
+- **Categorical** (status, region) → learned enum set
+- **Boolean / flag** → seen values only
+- **High-cardinality key** (id) → uniqueness + completeness only (no value-range rule)
+
+> "AutoDQ picks the right strategy per column based on type and cardinality — continuous numerics
+> get Gaussian bounds, categoricals get empirical enum validation, high-cardinality keys get
+> uniqueness checks — assembling the right rule set per column without human input."
+
+### Suggester → (human review) → Validator
+```
+Raw data (ADLS) → Suggester (learn candidate rules) → [team reviews/approves] → Validator (enforce)
+```
+> "The Suggester is an AI assistant for data-contract definition — it *proposes* rules, humans
+> *validate* domain correctness, the Validator *enforces*. As data shifts over months, the Suggester
+> refreshes bounds automatically."
+
+### The through-line to your alerting system
+```
+Alerting:  μ + 1.5σ on run intervals   ─┐  same Gaussian model,
+AutoDQ:    μ ± k·σ  on column values    ─┘  unsupervised, learned from history, no labels
+```
+> "Same statistical foundation across both systems — Gaussian modeling, parameters learned from
+> history, flagging low-probability observations. In alerting it's applied to pipeline behavior; in
+> AutoDQ to data values. That consistency was intentional."
+
+### "Is this really AI?" — the honest answer
+> "It's **unsupervised statistical learning** — rule induction from data without labels, same family
+> as anomaly detection. I won't call it deep learning — it's statistical ML, and that's exactly what
+> fits the problem."
+
+### Follow-up cheat sheet
+| Question | Answer |
+|---|---|
+| "Is this really AI?" | "Unsupervised statistical learning — rule induction without labels; same family as anomaly detection." |
+| "What if the historical data is dirty?" | "Bootstrapping — first N runs are observed without enforcement; manual seed option for critical columns where the team knows ground truth." |
+| "How do rules update over time?" | "Suggester runs on a sliding window; if the distribution shifts (seasonal, new markets), bounds refresh automatically." |
+| "What's k in the Gaussian bound?" | "Configurable per column; default ~2 (≈95%); critical columns like transaction amounts used 3σ to cut false positives." |
+| "vs Great Expectations?" | "Same concept — GE is test-driven (you *write* expectations); AutoDQ *learns* them. Trade-off: flexibility vs automation." |
+
+---
+
 *Add more stories below as you develop them (e.g., a cross-team migration, an incident you led,
 a mentoring/scope-expansion story) — same format: spoken script → beats → deep dive → guardrails.*
