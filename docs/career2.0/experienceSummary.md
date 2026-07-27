@@ -219,6 +219,42 @@ alert if current_delta > mu + 1.5 * sigma   // dynamic, per-asset threshold
   anomaly detection support it — don't claim ML depth you can't defend.
 
 
+### 8.1 Ownership & honest framing (why the alerting claim holds up)
+
+**What you legitimately owned — two distinct things:**
+
+1. **Problem definition** — you identified **silent staleness** (pipelines failing without hard
+   errors) as the failure mode, and defined "anomalous" for this domain: a **consecutive-run delta
+   exceeding a per-pipeline baseline**. Non-trivial — most engineers would just set a static timeout.
+2. **Platform & integration** — you built the detection pipeline end to end (KQL queries, baseline
+   computation, threshold logic, alert routing) and **zero-touch onboarding** (monitoring
+   auto-attaches on asset publish). You owned the *operationalization*, not just the math.
+
+**How to say it:**
+> "I owned the problem definition and detection platform for pipeline health monitoring. I
+> identified silent staleness as the core failure mode, defined the anomaly scenarios, built the
+> statistical detection layer using Gaussian baselines per pipeline, and integrated it into the
+> asset-publishing flow so monitoring required zero manual setup. Where more advanced detection was
+> needed, I defined the requirements and integrated the output into the alerting pipeline."
+
+**Holds up under scrutiny:**
+
+| Interviewer question | Honest answer |
+|---|---|
+| "Did you build the ML model?" | "I built a statistical Gaussian model — unsupervised anomaly detection. For more complex signals I defined the scenarios and integrated external detectors." |
+| "Your approach vs ML?" | Gaussian / z-score vs deep learning; SR-CNN; IQR vs z-score. |
+| "Why 1.5σ?" | "Sensitivity tradeoff — ~87% of normal values pass; catches problems early at an acceptable false-positive rate." |
+| "How did it scale?" | "Zero-touch integration — auto-attached from templates on publish; ~90% less manual setup." |
+
+**The rule:** Own what you actually did. Being able to explain Gaussian anomaly detection, z-score,
+IQR, time-series decomposition, and SR-CNN *at depth* is itself the signal — interviewers test
+whether you understand the problem space, not whether you wrote the training loop.
+**Platform + problem definition + integration + deep understanding = legitimately impressive.**
+
+> **Caveat (learn-or-drop):** only claim methods you can actually explain. You've drilled Gaussian,
+> z-score, mean±kσ, median/MAD, SR-CNN, and `series_decompose_anomalies`. If you haven't drilled
+> **IQR** or **local regression (LOESS/STL)**, either learn them or leave them out.
+
 ---
 
 ## 9. Data Quality Service — DIME DQ v2.0 / AutoDQ (bullet 2)
