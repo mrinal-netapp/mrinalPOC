@@ -282,5 +282,76 @@ DIME DQ Cluster (offline):  reads ADLS → deeper checks (distribution, referent
 
 ---
 
+## DIME DQ — Scaling (data / pipeline / compute)
+
+A "how does it scale?" question is really asking three things: **data scale, pipeline scale,
+compute scale.** Answer all three.
+
+### 1. Data scale — huge datasets
+- **Sampling for inline** — don't scan 10B rows; a **10% statistical sample** catches schema/null/
+  enum issues with high confidence without blocking. Deequ supports it: `.onData(df.sample(0.1))`.
+  Full scans run offline.
+- **Columnar pruning** — Parquet on ADLS is columnar, so load only the columns being validated.
+- **Partition-aware checks** — Commerce data is partitioned by date/region; validate today's
+  partition instead of a full-table rescan.
+
+### 2. Pipeline scale — thousands of pipelines
+- **Zero-touch AutoDQ** — a new pipeline auto-attaches monitoring; EmpiricalStrategy learns rules
+  from the first N runs. No per-pipeline config. *(This is what you built — the direct answer.)*
+- **Event Hub partitioning** — thousands of completion events fan out across partitions; consumers
+  scale out to match throughput.
+- **Results store scales** — Cosmos DB (low-latency per-pipeline lookup) / ADLS + Delta (history);
+  Grafana reads aggregated views, not raw records.
+
+### 3. Compute scale — bursty jobs
+- **Autoscale** (Databricks/Synapse) — min nodes for steady state, burst for nightly batch
+  completions, scale down after idle.
+- **Event Hub as a shock absorber** — a burst of 500 events queues up (24h retention) and the
+  cluster drains at its own pace → no overwhelm, no data loss. *(The key insight.)*
+- **Priority queuing** — P0/P1 critical pipelines → high-priority topic processed first; P3 → low.
+
+### Commerce Cloud angle (regional + compliance)
+```
+Region: US                          Region: EU
+┌─────────────────────┐            ┌─────────────────────┐
+│ Synapse Pipelines   │            │ Synapse Pipelines   │
+│  → Event Hub (US)   │            │  → Event Hub (EU)   │
+│  → DIME DQ (US)     │            │  → DIME DQ (EU)     │
+│  → Results (US)     │            │  → Results (EU)     │
+└──────────┬──────────┘            └──────────┬──────────┘
+           └───────────────┬──────────────────┘
+                           ▼
+                 Central Grafana (aggregated metrics only — no raw data crosses regions)
+```
+Each region has its own Event Hub + DIME cluster, so transaction data **never crosses region
+boundaries** (GDPR/SOX); only aggregated DQ metrics (pass rate, check counts) roll up centrally.
+
+### Full interview answer (~45s)
+> "Scaling hits three dimensions. For **data scale**, we sample for inline DQ — a 10% sample catches
+> most issues without blocking — and push full scans offline. For **pipeline scale**, zero-touch
+> AutoDQ means new pipelines get DQ configured automatically, and Event Hub handles the fan-out —
+> thousands of completion events queue naturally and the DIME cluster drains them at its own pace.
+> For **compute scale**, the cluster autoscales on Databricks, with Event Hub absorbing nightly
+> bursts so it's never overwhelmed. In Commerce Cloud specifically, we deploy regionally — each
+> region has its own Event Hub and DIME cluster so transaction data never crosses region boundaries,
+> and only aggregated metrics flow to a central dashboard."
+
+### Cheat sheet
+| Question | Answer |
+|---|---|
+| "Huge datasets?" | Sampling inline, full scan offline, columnar pruning, partition-aware |
+| "1000s of pipelines?" | Zero-touch AutoDQ, Event Hub partitioning, autoscale consumers |
+| "Burst traffic?" | Event Hub as shock absorber, Databricks autoscale, priority queuing |
+| "Multiple regions?" | Regional Event Hub + DIME clusters; only metrics cross regions |
+| "Cost?" | Autoscale down when idle, sampling cuts compute, offline runs off-peak |
+
+### Honesty guardrail
+Separate **what you built** (sampling, zero-touch AutoDQ, Event Hub fan-out, inline/offline split)
+from **how you'd scale it further** (regional multi-namespace, Cosmos DB, autoscale tuning, priority
+topics). For "how would you scale?" it's fine to reason about design — just phrase it as *"we did X;
+I'd extend with Y"* rather than implying all of it shipped.
+
+---
+
 *Add more stories below as you develop them (e.g., a cross-team migration, an incident you led,
 a mentoring/scope-expansion story) — same format: spoken script → beats → deep dive → guardrails.*
