@@ -173,6 +173,68 @@ Makes adoption quantifiable:
 Visibility to leadership changes behavior: a team visibly behind at 20% coverage gets asked why →
 prioritizes it. You turned a soft adoption problem into a **self-correcting feedback loop.**
 
+#### 4. Overcoming adoption resistance (the change-management play)
+**First, frame the resistance as legitimate** — engineers protecting their systems, not ignorance:
+- inline DQ adds code to *their* pipeline → "what if it crashes?"
+- another Deequ dependency → "remember the JAR collision?"
+- sampling adds latency → "our SLA is already tight"
+- if DQ fails, does *my* pipeline fail? → "I own uptime, not you"
+- who defines 'good data'? → "you don't know our data"
+
+**Lever 1 — Shadow mode (make it safe to try).** DQ runs alongside the pipeline but **logs only,
+never blocks**. Teams see what *would* have failed, at zero risk.
+> "We introduced a shadow mode — checks ran alongside the pipeline but never blocked it, so teams
+> could see what would have failed without risking their pipelines before committing to enforcement."
+
+**Lever 2 — Benchmarks (kill FUD with data).** Measure, don't argue:
+```
+Pipeline without DQ:     4m 32s
++ DQ (10% sample):       4m 41s   ← ~9s (<5%) overhead
++ DQ (100% scan):        6m 10s   ← too slow → offline only
+```
+> "We benchmarked representative pipelines and showed 10% sampling added under 5% overhead for 95%
+> of pipelines; for SLA-tight ones we offered offline-only DQ with zero inline overhead."
+
+**Lever 3 — Tiered adoption ramp (no all-or-nothing).**
+```
+Stage 1: Offline only        → zero pipeline risk, just Grafana monitoring → builds trust
+Stage 2: Inline shadow mode  → checks run, never block → validate rules on their data
+Stage 3: Enforce P0 only     → block on null-PK / schema; the rest still shadow
+Stage 4: Full enforcement    → team owns their DQ rules
+```
+> "We gave teams a ramp — offline monitoring, then optional shadow mode, then enforcement — so they
+> chose their own pace, which removed the all-or-nothing resistance."
+
+**Accountability via Grafana** (builds on #3): adoption rates shown in engineering reviews shifted
+the conversation from "we'll get to it" to "why are we behind." Social accountability drove more
+adoption than any technical argument.
+
+**The hardest objection — "who defines good data?"** AutoDQ's EmpiricalStrategy learns rules from
+**each team's own** history (their schema, distributions, null rates). Reframe: *"these are your
+rules, derived from your data"* — not imposed standards. That dissolved the "you don't understand
+our data" pushback.
+
+**Full interview answer (~60s):**
+> "The resistance was legitimate — teams had been burned by dependency issues before, and inline DQ
+> touching their pipelines was a real risk to their uptime. We handled it three ways. First, **shadow
+> mode** — DQ ran alongside pipelines but never blocked them, so teams could validate the system
+> wasn't going to break anything before committing. Second, **benchmarks** — we showed 10% sampling
+> added under 5% overhead for most pipelines, and offered offline-only DQ for SLA-sensitive ones.
+> Third, a **tiered adoption path** — offline monitoring → shadow mode → enforcement — so teams
+> controlled the pace. The **Grafana adoption dashboard** made inaction visible in engineering
+> reviews, which drove accountability without us pushing. And because AutoDQ learned rules from each
+> team's own data, we could honestly say 'these are your rules, not ours' — which removed the 'you
+> don't understand our data' objection. We went from near-zero voluntary adoption to ~95% coverage."
+
+**Follow-up cheat sheet:**
+
+| Follow-up | Answer |
+|---|---|
+| "Shadow mode showed too many false positives?" | "That's the point — teams tuned rules in shadow *before* enforcement; false positives there are free learning, not incidents." |
+| "A team refused entirely?" | "Offline DQ needs zero pipeline changes — we monitored their quality anyway; Grafana visibility did the rest." |
+| "Rule disagreements?" | "AutoDQ proposed, teams reviewed and approved — we were the platform, not the authority on their data." |
+| "Hardest team to convince?" | Give a specific case (tight SLA / complex data) resolved by shadow mode + benchmarks. |
+
 ---
 
 ### The full picture (quick reference)
