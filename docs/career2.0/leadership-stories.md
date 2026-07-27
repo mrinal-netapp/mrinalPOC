@@ -515,5 +515,106 @@ AutoDQ:    μ ± k·σ  on column values    ─┘  unsupervised, learned from h
 
 ---
 
+## Microsoft Commerce Cloud — Opening Pitch & Adoption Story (narration)
+
+> **⚠️ Verify before using:** (1) **Area 2** is corrected to a single `EmpiricalStrategy` (z-score) —
+> don't say "MeanStrategy" (not a confirmed class). (2) **Area 3** — your real JAR-collision fix was
+> the **sidecar** (per your notes); "shading" is the *inline* alternative — claim what you did.
+> (3) The adoption story frames non-blocking onboarding as **offline DQ + snooze** (your real
+> features); if a distinct **"shadow mode"** actually existed, use that word. (4) Confirm the
+> **~30% → ~95% / one-quarter** figures, or soften to "low adoption → ~95%."
+
+### Opening frame (say this first)
+> "At Microsoft Commerce Cloud I worked on two interconnected observability problems — pipeline
+> health and data quality. Commerce Cloud processes transaction, catalog, pricing, and inventory
+> data for Microsoft's commercial business globally, so bad or stale data has real downstream
+> consequences on dashboards, ML training, and business decisions.
+>
+> I built two systems. First, a **dynamic alerting system** for pipeline health — detecting when
+> pipelines silently stop refreshing without hard-failing. Second, I was a **core contributor to
+> DIME DQ** — an automated data-quality platform built on Amazon Deequ, running as Spark jobs on
+> Databricks and Synapse — which validates the data those pipelines produce.
+>
+> They're complementary: **alerting catches when pipelines run; DIME catches what they produce.**"
+
+### Land the impact
+> "Together these reduced manual monitoring effort by ~90% and reached ~95% DQ adoption across
+> teams — neither happened automatically. The adoption story is the one I'm proud of, because it
+> took both technical and organizational work."
+
+### Area 1 — Dynamic alerting & telemetry
+> "I owned the detection platform for pipeline health. I identified **silent staleness** as the core
+> failure mode, defined the anomaly scenarios, and built the statistical detection layer:
+> **per-pipeline Gaussian baselines** from consecutive-run deltas, a **dynamic threshold at μ+1.5σ**,
+> queried via **KQL** against **Azure Log Analytics**. **Zero-touch** — monitoring auto-attaches on
+> asset publish from predefined templates. ~90% less manual setup."
+
+Terms to drop: Gaussian baseline, dynamic threshold, KQL, Azure Log Analytics, zero-touch, silent staleness.
+
+### Area 2 — Data quality (DIME AutoDQ)  *(corrected: single strategy)*
+> "On DIME I worked on the **AutoDQ** engine — the rule-learning layer. It uses a custom
+> **`EmpiricalStrategy`** (built on Deequ) to learn constraints from each column's history using
+> **z-score / mean±σ bounds** — completeness thresholds, numeric ranges with a tolerance buffer,
+> enum sets, plus type and uniqueness checks. It picks the right constraint per column type, and the
+> output is a suggested rule set teams review before enforcement. It's unsupervised rule learning."
+
+Terms: AutoDQ, EmpiricalStrategy, Deequ, unsupervised rule learning, inline vs offline DQ.
+
+### Area 3 — Architecture & integration  *(corrected: sidecar is the real fix)*
+> "I also worked on the **inline vs offline DQ split** and the **Event Hub** communication between
+> Synapse pipelines and the DIME cluster. **Inline** runs inside the pipeline's Spark context for
+> blocking checks. **Offline** runs in a **separate cluster** triggered by pipeline-completion events
+> via Event Hub — fully async, zero pipeline impact. We resolved the fat-JAR/dependency collision by
+> decoupling DIME as a **sidecar** (isolated environment); *for inline mode the fix is JAR shading.*"
+
+### The adoption story (situation → problem → tried → failed → worked → outcome)
+> "DIME was technically solid — rule learning worked, checks were accurate, architecture was clean.
+> But months after launch, adoption was stuck (~30%). Teams weren't onboarding.
+>
+> I ran stakeholder meetings. The message was consistent: engineers didn't trust that inline DQ
+> wouldn't break their pipelines — they'd seen the JAR-collision issue, they had SLA commitments, and
+> they felt DQ rules were being imposed by a platform team that didn't understand their data.
+>
+> My first instinct was to make the technical case — benchmarks, architecture. It didn't move the
+> needle. So I changed approach, three ways.
+>
+> First, **make it safe to try**: teams could start with **offline DQ** — checks run alongside the
+> pipeline but never block it, results logged and shown in Grafana — so they saw what would fail with
+> zero risk. (And **snooze** let a publisher get past a failing inline check without being stuck.)
+>
+> Second, I **reframed the rules question**. The pushback was 'you don't know our data.' The honest
+> answer: AutoDQ doesn't either — it *learns* it, from their own historical data. 'These are your
+> rules, learned from your data — you just review and approve them' changed the conversation.
+>
+> Third, I built the **Grafana adoption dashboard** — coverage per team, trend over time — visible in
+> engineering reviews. Within a couple of sprints, teams stuck at 0% were asking how to onboard — not
+> because I pushed, but because their manager asked why they were the only red bar.
+>
+> We went from ~30% to ~95% adoption over the following quarter. The **technical** fix was
+> non-blocking onboarding; the **organizational** fix was visibility."
+
+### Why this story works
+| They're evaluating | The story shows |
+|---|---|
+| Technical depth | You understood *why* resistance was rational (JAR history, SLA risk) |
+| Communication | You stopped pushing technical arguments when they weren't working |
+| Influence without authority | You drove adoption across teams you didn't own |
+| Product thinking | Non-blocking onboarding = reduce risk to zero to lower the barrier |
+| Organizational savvy | The dashboard made inaction visible; accountability did the work |
+| Self-awareness | You tried something, it failed, you changed approach |
+
+### Follow-ups
+- **"What would you do differently?"** → "Ship non-blocking onboarding from day one as the standard path — start monitoring, graduate to enforcement — instead of launching with enforcement and walking it back."
+- **"Teams that still refused?"** → "Offline DQ needs zero pipeline changes — we monitored their quality anyway; Grafana visibility did the rest. Once teams saw their scores, they wanted inline too."
+- **"Hardest team?"** → "Tightest-SLA transaction pipelines — we offered offline-only permanently; they became our reference customers for the offline pattern."
+- **"How did you measure success?"** → "Coverage % in Grafana **and** false-positive rate — high FPs make teams disable checks, so keeping FPs low mattered as much as coverage."
+
+### One-liner (when time is short)
+> "DIME was technically ready but adoption was stuck ~30%. I made onboarding non-blocking to remove
+> pipeline risk, reframed AutoDQ rules as 'your data's own rules, not ours,' and built a Grafana
+> adoption dashboard that made inaction visible in engineering reviews. ~95% in a quarter."
+
+---
+
 *Add more stories below as you develop them (e.g., a cross-team migration, an incident you led,
 a mentoring/scope-expansion story) — same format: spoken script → beats → deep dive → guardrails.*
