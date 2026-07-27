@@ -115,6 +115,49 @@ solution (managed container in your infra) hits a **compliance wall** — so the
 driven by the *constraint*, not just elegance. That's exactly the kind of tradeoff real
 architecture discussions turn on.
 
+#### 2c. How the pipeline and DIME communicate (event-driven via Event Hub)
+**What we used: Option B — event-driven via Azure Event Hub.** The two clusters never talk
+directly; Event Hub is the broker.
+
+```
+Pipeline completes
+   → writes data to ADLS
+   → publishes "data ready" event to Event Hub (path, table, run ID)
+   → DIME DQ cluster (subscribed) picks up the event
+   → reads data from ADLS, runs Deequ checks
+   → writes results to a results store (ADLS / SQL / Cosmos)
+   → Grafana reads results → dashboard
+```
+
+**Why event-driven wins here:**
+- Clusters never need each other's IP/endpoint — Event Hub decouples them.
+- If DIME is down, **events queue up in Event Hub** — no data loss, pipeline not blocked.
+- Fully **async** — the pipeline doesn't wait for DQ to finish.
+- Adding more DQ consumers later = just another subscriber.
+
+**Alternatives considered (know these for "why not X?"):**
+
+| Option | How | Why not (vs B) |
+|---|---|---|
+| A — shared ADLS storage | both read/write a shared ADLS path | needs polling → higher latency / busy-wait |
+| C — direct REST call | pipeline `POST /validate`, waits | tightest coupling; pipeline blocks and depends on DIME being up |
+
+*(In practice A + B combine: the event carries the ADLS **path**, and DIME reads the actual data from ADLS.)*
+
+**How to say it (~30s):**
+> "The Synapse pipeline and DIME DQ cluster communicate via an event-driven pattern on Azure Event
+> Hub. When a pipeline completes, it publishes a completion event with metadata — the ADLS path,
+> table name, and run ID. DIME is subscribed, picks up the event, runs Deequ checks against the data
+> in ADLS, and writes results to a store that Grafana reads. The clusters never talk directly —
+> Event Hub is the broker — so if DIME is down, events queue up without losing data or blocking the
+> pipeline."
+
+**Follow-ups:**
+- *"Same event processed twice?"* → Event Hub is **at-least-once**, so the DQ job is **idempotent** — re-running on the same data gives the same result, no duplicate alerts.
+- *"How do you know if DIME failed?"* → a **dead-letter** topic for events that fail after retries, monitored separately.
+- *"Latency?"* → Event Hub delivery is sub-second; DQ latency depends on dataset size + Spark startup (Synapse cold start can be 2–5 min).
+- *"Event Hub vs Service Bus?"* → Event Hub = high-throughput streaming (millions/sec, retention); Service Bus = transactional/command messaging. Pipeline-completion events at scale → Event Hub.
+
 #### 3. The Grafana adoption dashboard
 Fixing the technical blocker isn't enough — you still need teams to onboard, and without visibility
 adoption is invisible and no one feels accountable.
