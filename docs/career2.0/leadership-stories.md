@@ -421,12 +421,35 @@ This is where you can **legitimately claim AI/ML** in AutoDQ without overselling
 **unsupervised rule induction** — learning DQ constraints from historical data instead of humans
 hand-writing them.
 
-> **⚠️ Consistency check (read before claiming two strategies):** your *actual* DIME doc described
-> **`EmpiricalStrategy` as the Z-score / mean±σ method**, used for *both* completeness and range.
-> This write-up splits learning into `EmpiricalStrategy` (observed min/max/enum) **and** a separate
-> `MeanStrategy` (Gaussian μ±kσ). That's a clean *conceptual* split, but **only name "MeanStrategy"
-> as a distinct strategy if it truly existed in your code.** If you had a single `EmpiricalStrategy`
-> using z-score bounds, present it as one strategy — don't invent a second you'd have to defend.
+> **⚠️ Deequ reality check (verified against the Deequ source):**
+> - Deequ's **constraint suggestion uses named `ConstraintRule`s, not "strategies":**
+>   `CompleteIfCompleteRule`, `RetainCompletenessRule` (with a `WilsonScoreIntervalStrategy`),
+>   `RetainTypeRule`, `CategoricalRangeRule`, `FractionalCategoricalRangeRule`,
+>   `NonNegativeNumbersRule`, `UniqueIfApproximatelyUniqueRule`.
+> - **`EmpiricalStrategy` / `MeanStrategy` are NOT Deequ classes** — they're your team's **custom
+>   abstractions** in the DIME Suggester, which was built *on top of* Deequ. (Deequ's multiple
+>   *Strategies* — `OnlineNormalStrategy`, `BatchNormalStrategy`, `HoltWinters` — live in the
+>   separate **anomaly-detection** module, not in constraint suggestion.)
+> - So say: *"we built a **custom Suggester on top of Deequ** with our own statistical
+>   (z-score / mean±σ) rule-learning, and added a **numeric range rule Deequ doesn't provide by
+>   default**."* Accurate, and it shows you *extended* the framework.
+
+**DIME → Deequ mapping:**
+
+| DIME rule | Deequ equivalent |
+|---|---|
+| Completeness | `RetainCompletenessRule` (+ interval strategy) |
+| DataType | `RetainTypeRule` |
+| Uniqueness | `UniqueIfApproximatelyUniqueRule` |
+| Enum | `CategoricalRangeRule` / `FractionalCategoricalRangeRule` |
+| **Range (min/max + 5% tolerance)** | **custom — not in Deequ's defaults** |
+
+> **Ownership (don't undersell yourself):** the z-score / mean±σ logic is **standard statistics you
+> implemented** in the Suggester — *own it.* Do **not** attribute basic z-score models to "an ML
+> team": it's a few lines of stats, and it both undersells you and contradicts your ownership of the
+> DQ module. Reserve *"partnered with a DS/ML team"* for genuinely advanced detection (SR-CNN,
+> seasonal/Holt-Winters, trained models) — and only if it actually happened, framed as *"I defined
+> the scenarios and integrated their output."*
 
 ### The learning strategies (as concepts)
 **EmpiricalStrategy — learn from the observed distribution.** Look at N runs of history per column;
