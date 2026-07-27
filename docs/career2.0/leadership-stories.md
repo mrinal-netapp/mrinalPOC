@@ -66,6 +66,55 @@ Without sidecar:                          With sidecar:
 The pipeline no longer loads DIME's JARs → **zero shared classloader → zero collision.** Same
 pattern Kubernetes uses for logging agents, Envoy proxies, and monitoring collectors.
 
+#### 2b. Where does the sidecar run? (deployment options + the compliance tradeoff)
+Once you decide to decouple DIME into a sidecar, the next question is **where it runs**. Three
+options, each with a real tradeoff:
+
+- **Option 1 — inside the existing Synapse cluster.** No new infra, but this is the original
+  **fat-JAR collision** problem; only viable if you resolve the dependency clash (e.g., shading).
+- **Option 2 — a separate cluster in the *customer's* resource group (RG):**
+
+```
+Customer's Azure Subscription
+┌─────────────────────────────────────────┐
+│  Customer RG                             │
+│  ┌──────────────┐  ┌──────────────────┐ │
+│  │  Synapse     │  │  DIME DQ Cluster │ │
+│  │  Pipeline    │  │  (you provision) │ │
+│  └──────────────┘  └──────────────────┘ │
+└─────────────────────────────────────────┘
+```
+  - **Pros:** low latency; **data stays inside the customer's boundary.**
+  - **Cons:** you need provisioning permissions in the customer's subscription; the customer pays
+    for the extra cluster; you own its lifecycle (scaling, patching, teardown); every new resource
+    triggers a security/compliance review; blast radius sits inside the customer's environment.
+
+- **Option 3 — a managed container (Azure Container Instance / Function) in *your* subscription:**
+
+```
+Your Managed Subscription          Customer RG
+┌─────────────────────┐           ┌──────────────────┐
+│  DIME DQ Container  │◄──data────│  Synapse Pipeline│
+│  (you control it)   │───result─►│                  │
+└─────────────────────┘           └──────────────────┘
+```
+  - **Pros:** no footprint in the customer's RG; you fully control compute + lifecycle.
+  - **Cons:** **data leaves the customer's boundary → compliance/privacy concerns.**
+
+**Tradeoff at a glance:**
+
+| Approach | Pros | Cons |
+|---|---|---|
+| Option 2 — separate cluster in customer RG | Low latency; data stays in customer boundary | Provisioning in customer RG; customer pays; lifecycle burden |
+| Option 3 — your managed container | No customer-RG footprint; you control it | Data leaves customer boundary → compliance/privacy |
+
+**The compliance catch (the senior insight):** for most enterprise customers — finance, healthcare,
+government — **data cannot leave their subscription boundary.** That kills Option 3 and pushes you
+back to Option 2, or to making Option 1 work inside the existing cluster. The technically cleanest
+solution (managed container in your infra) hits a **compliance wall** — so the architecture is
+driven by the *constraint*, not just elegance. That's exactly the kind of tradeoff real
+architecture discussions turn on.
+
 #### 3. The Grafana adoption dashboard
 Fixing the technical blocker isn't enough — you still need teams to onboard, and without visibility
 adoption is invisible and no one feels accountable.
