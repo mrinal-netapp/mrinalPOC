@@ -616,5 +616,78 @@ Terms: AutoDQ, EmpiricalStrategy, Deequ, unsupervised rule learning, inline vs o
 
 ---
 
+## DIME DQ — Measuring Rule Efficacy (quality, not just existence)
+
+> **⚠️ Claim only what you built (important):** this describes a fairly complete rule-quality +
+> calibration system. Separate **what you actually built** from **how you'd measure it**.
+> - *Likely defensible as **built**:* the **FPR** concept, an **offline/observation period before
+>   enforcement**, the **k (z-score) dial**, and **Grafana** views.
+> - *Likely **"would-design"** unless you truly did them:* **injection testing**, **retrospective
+>   incident validation**, **auto-recalibration**. Say *"we did X; I'd extend with Y."*
+> - **Consistency:** references to `MeanStrategy` are corrected to the single **`EmpiricalStrategy`**
+>   (k is the z-score factor inside it); **"shadow mode"** = your **offline, non-blocking
+>   observation** phase (confirm if it was a distinct named feature).
+
+### Why it matters
+Generating rules is easy; knowing they're *good* is hard. A rule can be **too tight** (alert
+fatigue → teams disable it), **too loose** (misses real bad data), or **just right**.
+
+### The four efficacy signals
+1. **False Positive Rate (FPR)** = alerts on clean data / total alerts fired. Track during the
+   offline/observation phase (teams mark each alert valid vs. false alarm). Target **< ~10%** before
+   promoting to enforcement; well-calibrated rules land ~3–6%.
+2. **True Positive Rate** — needs ground truth. *(Would-design:)* **retrospective** validation
+   against known incidents/postmortems, and **injection testing** (inject N known-bad rows, measure
+   % caught — e.g., 940/1000 = 94%).
+3. **Rule stability (churn)** — how often AutoDQ updates a rule. High churn → shifting distribution
+   or too little history; low churn → stable (e.g., orders: 2 changes/6mo ✓; prices: 18/6mo → investigate).
+4. **Offline/observation divergence** — compare what rules *would* have fired vs. actual
+   team-reported issues → a **pre-enforcement quality gate**.
+
+### The k dial (calibration)
+`EmpiricalStrategy` bound = **μ ± k·σ**. `k=1` (~68%, too tight), `k=2` (~95%, default), `k=3`
+(~99.7%, loose/critical). Use FPR to pick k per column — high FPR → widen k; missing real issues →
+tighten. (Categoricals use enum checks — k is irrelevant there.)
+
+### The calibration loop
+```
+AutoDQ suggests → offline observation (2–4 wks)
+   → measure FPR / stability / vs. known incidents
+   → promote (FPR<10% & stable) | widen k (FPR high) | tighten (too loose) | extend window (unstable)
+   → enforce → monitor (auto-flag/demote if enforcement FPR spikes; human review before re-promote)
+```
+
+### Grafana — rule-quality view (beyond adoption rate)
+Per asset: rule count · offline FPR · enforcement FPR · true positives caught · stability · last recalibrated.
+
+### The adoption connection (why this is powerful)
+The offline/observation phase wasn't just safety — it was a **measurement instrument**:
+> "Here's what AutoDQ would have caught on your data over the last 4 weeks — 3 real issues, 2 false
+> alarms, 94% precision. Ready to enforce?"
+
+That beats *"trust us, add the JAR, it'll be fine."*
+
+### Full interview answer
+> "We measured rule efficacy across four dimensions. **False positive rate** — tracked during the
+> offline observation phase by having teams mark alerts valid vs. false alarm, targeting under 10%
+> before enforcement. **True positive rate** — retrospectively against known incidents and via
+> deliberate bad-data injection into test datasets. **Rule stability** — how often AutoDQ had to
+> update a rule, where high churn flagged a shifting distribution or thin history. And
+> **offline divergence** — what rules would have fired vs. actual reported issues, as a
+> pre-enforcement gate. The **k** factor in `EmpiricalStrategy` was the calibration dial — widen it
+> on high FPR, tighten it when rules missed known issues. All of it surfaced in Grafana per asset,
+> so rule quality was as visible as adoption rate."
+
+### Follow-up cheat sheet
+| Follow-up | Answer |
+|---|---|
+| "Target FPR?" | "Under 10% in the observation phase before enforcement; most calibrated rules landed 3–6%." |
+| "How did you get ground truth?" | "Retrospective against postmortem incidents + injection testing with synthetic bad data. *(Frame as built vs. would-design per reality.)*" |
+| "Shadow/offline FPR too high?" | "Widen k, or fall back to observed min/max for volatile columns; extend the window if training data was thin." |
+| "How long did observation run?" | "≥ 2 weeks to cover weekly seasonality; high-volume graduated faster, slow-cadence needed longer." |
+| "Automated recalibration?" | "Auto-flag/demote on FPR spikes; full re-promotion required human review. *(Only claim if built.)*" |
+
+---
+
 *Add more stories below as you develop them (e.g., a cross-team migration, an incident you led,
 a mentoring/scope-expansion story) — same format: spoken script → beats → deep dive → guardrails.*
