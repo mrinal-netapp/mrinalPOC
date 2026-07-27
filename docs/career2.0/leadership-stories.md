@@ -451,20 +451,24 @@ hand-writing them.
 > seasonal/Holt-Winters, trained models) — and only if it actually happened, framed as *"I defined
 > the scenarios and integrated their output."*
 
-### The learning strategies (as concepts)
-**EmpiricalStrategy — learn from the observed distribution.** Look at N runs of history per column;
-induce constraints — min/max bounds, null-rate threshold, cardinality/enum set.
-> "It observes the empirical distribution of each column across historical runs and induces
-> constraints directly from what the data has looked like — unsupervised rule learning."
+### The learning strategy — EmpiricalStrategy (z-score / mean±σ)
+AutoDQ uses a **single custom strategy**, `EmpiricalStrategy` (built on top of Deequ), that induces
+rules from each column's history using **statistical (z-score / mean±σ) bounds** — the same Gaussian
+idea as the alerting system, applied to data values. Per column it derives:
 
-**MeanStrategy (Gaussian) — statistical bounds instead of hard min/max.** Learn μ and σ per column;
-accept values within **μ ± k·σ**. More flexible than hard min/max — a new $26 price isn't flagged if
-it's within 2σ.
-> "It fits a Gaussian per column — mean and standard deviation — and flags values outside k·σ. Same
-> model as the alerting system, applied to data values instead of run intervals."
+- **Completeness** — from the historical null-rate → lower bound (μ − k·σ) → "≥ X% complete".
+- **Range (numeric)** — from historical min/max → statistical bounds **+ a 5% tolerance buffer** → "values in [Y, Z]".
+- **Enum (categorical)** — if historically < ~10 distinct values → learned allowed set.
+- **DataType** — if the inferred type was consistent → a type constraint.
+- **Uniqueness** — if distinct/total ≈ 1.0 → primary-key uniqueness.
 
-*(In your real system these may be **one** strategy — `EmpiricalStrategy` using z-score bounds.
-Frame it per what you actually built.)*
+> "EmpiricalStrategy observes each column's historical distribution and induces constraints using
+> z-score / mean±σ bounds — completeness thresholds, numeric ranges with a tolerance buffer, plus
+> enum, type, and uniqueness checks. It's unsupervised rule learning — the same Gaussian foundation
+> I used in the alerting system, applied to data values instead of pipeline run intervals."
+
+*(One strategy — don't split it into a separate "MeanStrategy" unless that class actually existed in
+your code. The μ ± k·σ math lives **inside** EmpiricalStrategy.)*
 
 ### Column-type intelligence (where the "smart" lives)
 AutoDQ selects the strategy per column rather than blindly applying one:
