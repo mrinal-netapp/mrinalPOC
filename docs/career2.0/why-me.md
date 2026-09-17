@@ -85,7 +85,97 @@ Because the work is similar, **name the mapping** — it converts "why you" into
 
 ---
 
-## 6. Reserve bank — deploy ONLY when probed
+## 6. "First-party scale" — the detailed argument
+
+Used in the script. **Never use a term in an interview you can't define in one sentence** — so know this cold, or swap in the plain-English version below.
+
+### Definition
+
+**First-party** = your own company's products and users, as opposed to **third-party** (someone else's environment). So *first-party scale* = the platform serves **Adobe's own products** (Firefly, Photoshop, Creative Cloud, Express, Acrobat) on infrastructure **Adobe owns and operates**.
+
+| | NetApp / AgentStudio (third-party, BYOC) | Adobe Unified Platform (first-party) |
+|---|---|---|
+| Who runs it | The **customer**, in their own tenant | **Adobe**, on Adobe's infra |
+| Where the load is | Fragmented across N separate deployments | Aggregated in **one** platform |
+| Can you observe it? | No — limited logs only | Yes — full instrumentation |
+| Can you iterate on it? | No feedback loop | Ship → measure → improve |
+
+Both halves of the script connect here: **first-party scale is what *creates* the feedback loop.** Because Adobe runs the platform itself, load concentrates in one system *and* you can watch it.
+
+> ⚠️ **Ambiguity at Adobe:** "first-party" also means **first-party data** (Firefly trained on licensed Adobe Stock). Disambiguate by saying **"first-party workloads"** or "you run the platform for your own products."
+
+### The core principle
+
+> **The deployment model determines which engineering problems you're allowed to encounter.** Split into many small isolated installs, the hard problems never materialize — each install is individually small. Carry everything in one platform and real constraints bind.
+
+### 1. Scheduling only gets hard when resources are scarce and contended
+
+- **Isolated install:** a handful of workloads, ample headroom. Default Kubernetes scheduler is fine. You'd never write a custom scheduler — no pressure to.
+- **Aggregate:** heterogeneous workloads — GPU training, low-latency inference, agent tasks, batch — competing for scarce accelerators. Forces you to solve:
+  - **Bin-packing / fragmentation** — 40% free capacity and still unable to place a job
+  - **Priority and preemption** — whose job dies when capacity runs out?
+  - **Gang scheduling** — distributed training needs N GPUs *simultaneously or not at all*
+  - **Fair-share and quota** so one product can't starve another
+  - **Queue / backlog management** when demand exceeds supply
+
+**Proof point:** he confirmed they **built their own scheduler**. Nobody does that for fun — you do it when the default demonstrably fails. Direct evidence these problems materialized.
+
+### 2. Capacity economics invert
+
+- **Isolated installs:** each provisioned for *its own peak*. Aggregate waste is enormous but invisible. Capacity is **stranded** per install and unreclaimable.
+- **Aggregate:** pool capacity and exploit **statistical multiplexing** — different products peak at different times, so pooled capacity ≪ sum of individual peaks. The largest cost lever in the system.
+
+Once pooled, utilization becomes a first-class metric: idle GPU-hours, oversubscription, burst absorption, spot/preemptible. **None of this is even expressible in a fragmented model.**
+
+### 3. Multi-tenancy becomes real instead of trivial
+
+- **Isolated installs:** one tenant per install — isolation is *physical*, therefore free. You don't engineer it.
+- **Aggregate:** logical isolation, which is genuinely hard:
+  - **Noisy neighbours** — batch must not starve interactive inference
+  - **Quota enforcement**, weighted fair queuing
+  - **Blast radius** — one pathological job must not destabilize the platform
+  - **Security isolation** between tenants sharing hardware
+  - **Cost attribution / chargeback** per tenant
+
+My project-scoped isolation and quota work bridges here — but at one-tenant-per-install the *hard* version never arises.
+
+### 4. Failure modes need volume to become visible
+
+Tail latency, thundering herds, correlated failures, cold-start effects, the long tail of pathological workloads — **statistical phenomena**. At low volume there aren't enough samples to see them. p99 is meaningless at a hundred requests/day and existential at a billion.
+
+### 5. The killer example — and it's *his* domain
+
+**Deduplication gets better as scale grows.** Fragmented, you dedup only *within* each deployment. Consolidated, you dedup across the whole corpus — dramatically higher ratio. Same for GC efficiency and tiering.
+
+Cleanest illustration of the principle: **scale doesn't just make problems harder, it creates capabilities that are impossible when fragmented.** His Blob Store runs dedup at 100PB — that ratio cannot exist in a fragmented model. Using this shows I've thought about *his* systems.
+
+### How to say it out loud
+
+> "The deployment model decides which problems you get to solve. When you ship into many isolated customer tenants, each install is small — capacity is stranded per install, multi-tenancy is trivial because it's one tenant per deployment, and the default scheduler is always good enough. The hard problems never show up.
+>
+> When one platform carries all of Adobe's products, they all bind at once: bin-packing and preemption on scarce accelerators, pooled capacity and statistical multiplexing, real noisy-neighbour and fair-share problems, and failure modes you only see at volume. The fact that you built your own scheduler is the tell — nobody does that unless the default has genuinely failed.
+>
+> And some capabilities only exist at aggregate scale at all. Dedup is the clearest case: fragmented, you can only dedup within each install; consolidated, you dedup across the whole corpus. That's not a harder version of the same problem, it's a different problem — and it's the kind I want to work on."
+
+### Plain-English substitute (safer, zero risk)
+
+Swap this line in the script:
+
+> ~~"but with first-party scale and a genuine feedback loop"~~
+> **"but where you run the platform yourself for your own products — so the scale is real and you can actually see and improve it."**
+
+### Two cautions
+
+1. **Don't imply my current work is trivial.** Frame as *the model constrains the problem set*, not *my job is easy*. Say "each deployment is individually small **by design** — the correct trade for the product promise."
+2. **Prepare the counter-punch.** He will likely ask **"What scale problems have you actually hit?"** Concede the limit honestly:
+
+> "At my scale the real ones were backlog-driven autoscaling — I drove HPA off Temporal queue depth as a custom Prometheus metric rather than CPU, because CPU is a lagging indicator for queue-backed work — and fan-out coordination, sharding ingestion into a couple of thousand parallel units with retry and idempotency. The right *shape* of problem at a smaller magnitude. I haven't operated at GPU-scarcity-and-preemption scale, and that's precisely the gap I want to close."
+
+Credible because it concedes the limit while proving I understand the class of problem. Claiming I've already solved Adobe-scale problems is the fastest way to lose him.
+
+---
+
+## 7. Reserve bank — deploy ONLY when probed
 
 Keep these **out** of the opening answer. Held in reserve, they land as substance; volunteered, they land as grievance.
 
@@ -104,7 +194,7 @@ Keep these **out** of the opening answer. Held in reserve, they land as substanc
 
 ---
 
-## 7. Follow-up landmines
+## 8. Follow-up landmines
 
 **"We have uncertainty too. Why wouldn't you leave us in six months?"**
 > "The difference isn't certainty, it's ceiling. At NetApp the limit is structural — the deployment model means the platform can't see its own production. That doesn't get fixed by waiting. Here the constraint doesn't exist, so effort compounds. That's a reason to stay, not leave."
@@ -120,7 +210,7 @@ Keep these **out** of the opening answer. Held in reserve, they land as substanc
 
 ---
 
-## 8. Never say
+## 9. Never say
 
 | Phrase | Why it's disqualifying |
 |---|---|
@@ -135,7 +225,7 @@ Keep these **out** of the opening answer. Held in reserve, they land as substanc
 
 ---
 
-## 9. Delivery discipline
+## 10. Delivery discipline
 
 1. **Order matters.** Positive + continuity → consolidation → forward-looking want → Adobe-specific → tenure. Opening with the reorg makes the whole answer read as a complaint.
 2. **Give two reasons, then stop.** Stacking consolidation + security drift + pace + feedback loop stops sounding like a considered decision and starts sounding like a list of grievances. Let him pull the rest out.
