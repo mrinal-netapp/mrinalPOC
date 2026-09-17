@@ -1,0 +1,155 @@
+# Why Leave NetApp / Why Adobe — Interview Script
+
+**Context:** Adobe, Unified Platform team (Engineering Manager round).
+The team builds **agent and compute infrastructure** natively for Adobe's own products — custom scheduler, queue-based coordination, self-hosted models (e.g. Firefly). The EM's background also covers **Blob Store** (100PB, dedup/GC/encryption/virus-scan) and the **Hierarchy Service** (Adobe Content Platform).
+
+**Why this matters:** because their work is *similar* to mine, the story must be **continuity, not escape**.
+
+---
+
+## 1. The core strategic principle
+
+> **"I'm not changing direction — I'm doubling down on the same direction, in an environment where it can actually compound."**
+
+This does three jobs simultaneously:
+
+1. Kills the short-tenure objection (deepening, not flip-flopping)
+2. Makes me a **fast-ramp hire**, not a domain switcher
+3. Turns the NetApp constraint into the reason *this specific team* is the fix
+
+---
+
+## 2. Post-mortem of the first attempt (what went wrong)
+
+Grade of the original answer: **~5/10.** The idea was good, the delivery worked against me.
+
+### What worked
+The central argument was genuinely sophisticated and true: shipping into a customer's **air-gapped tenant destroys the engineering feedback loop**. Can't see production data or real failure modes — only thin logs. For a quality-driven agent/RAG system, that structurally limits iteration speed. It's a systems-level reason, not a complaint about people or pay.
+
+### What hurt — ranked
+
+| # | Problem | Why it cost me |
+|---|---|---|
+| 1 | **Raised short tenure, never resolved it** | EM instantly thinks *"will he leave us in 6 months too?"* I surfaced the objection and walked past it — while having a perfect defence unused (**4 years at Microsoft** right before) |
+| 2 | "The infra needed for AI systems, I already know" | Reads as *bored easily* or *overestimates himself*. **Fatal** when the target team does similar work — implies I'd be bored at Adobe too |
+| 3 | "Unclear what this project will do at scale" | Reads as *leaves when outcomes are uncertain*. Adobe has uncertainty too — this pre-announces my exit |
+| 4 | Opened with a non-reason, then retracted it | Led with "we move fast, lots of competitors," then said "that's not the reason." Retracted complaints still register. Residue: *pace is a problem for him* |
+| 5 | ~90% push, ~10% pull | Almost entirely what's wrong at NetApp, nearly nothing about Adobe specifically — and I later admitted I wasn't clear what the team does |
+
+---
+
+## 3. Framing rules for the "consolidation" reason
+
+The organizational consolidation is the **strongest card** — it converts "why leave after 6 months?" into an **externally caused, entirely reasonable** trigger. But framed wrong it becomes three red flags at once.
+
+| Do say | Don't say | Why |
+|---|---|---|
+| "There's been organizational consolidation" (say it **once**) | "There are many reorgs happening" | Adobe reorgs too. Pattern-complaining ⇒ *"he'll leave when we reorg"* |
+| "Our platform is being folded into a broader internal effort" | "Our project got cancelled / isn't launching" | "Cancelled" invites *was he on a failing team? is he being pushed out?* |
+| "The company is removing duplicate effort" | "The AID team has a better KB, ours may be fully gone" | Naming a rival team sounds like sour grapes **and leaks internal roadmap** |
+| "That's a reasonable call for the company" | Bitterness / victim framing | I want *"the role changed under me,"* not *"I got beaten"* |
+
+**Critical:** never name the other team, the product decision, or launch timing. Discretion about a current employer is itself being evaluated — he's silently asking *"will he talk about our internals in his next interview?"*
+
+---
+
+## 4. THE SCRIPT (~60 seconds)
+
+> "I've had a good run at NetApp. I own the security architecture and the ingestion platform for a greenfield agent product — Temporal-based orchestration, dynamic Kubernetes workload provisioning, an LLM gateway with provider failover, MCP tool provisioning. That's the layer I want to keep building; it's not what I'm moving away from.
+>
+> What changed is the direction. There's been organizational consolidation, and our platform is being folded into a broader internal effort rather than launching the way it was originally scoped. That's a reasonable call for the company, but it does mean the charter I joined for is changing shape — so this felt like the honest moment to think about where I go deepest next.
+>
+> The other thing building it taught me is about feedback loops. Our platform ships into the customer's own cloud tenant — their data never leaves, which is the entire value proposition. But the engineering consequence is that the platform can't learn from its own usage: we see limited logs, not real production behaviour or failure modes. For agent infrastructure — where scheduling, retrieval quality, and failure handling all improve by observing real workloads — that's a hard ceiling.
+>
+> Your team is the inverse: building agent and compute infrastructure natively for Adobe's own products, on your own scheduler, at a scale where those problems are real. Same layer I've been building, but with first-party scale and a genuine feedback loop.
+>
+> And on tenure, I'll be direct — I joined NetApp recently and it isn't a pattern; I was four years at Microsoft before this. The trigger was the direction changing, not restlessness. I want to go deep on this problem space somewhere for the long term."
+
+### Compact version (~30 seconds, if cut off)
+
+> "Two things. The direction changed — there's been organizational consolidation and our platform is being folded into a broader internal effort, so the charter I joined for is changing shape. And building it clarified what I want next: to go deep on one layer of platform infrastructure and make it excellent at scale, with a real feedback loop. Today we ship into customer-owned tenants — their data never leaves, which is the whole value proposition — but the engineering consequence is the platform can't observe its own production workloads, so there's a ceiling on how good you can make it. Your team builds the same layer natively for Adobe's products, on your own scheduler, at real scale. Same work, no ceiling. On tenure — four years at Microsoft before this; the trigger was external, not restlessness."
+
+---
+
+## 5. Make the overlap concrete
+
+Because the work is similar, **name the mapping** — it converts "why you" into "he contributes on day one."
+
+| What they do | What I've built |
+|---|---|
+| Custom scheduler for compute workloads | Dynamic K8s pod provisioning — 100+ ephemeral workloads/day via the K8s API, with secret materialization and NetworkPolicy enforcement |
+| Queue-based coordination | HPA driven by **Temporal queue backlog** as a custom Prometheus metric, 1–5 replicas, sub-minute response |
+| Orchestration at scale | 10,000+ long-running workloads/day across 3 task queues at 99.9%, scatter-gather into 2,000 parallel units |
+| Serving self-hosted + external models | Unified LLM gateway across Azure OpenAI, Bedrock, Anthropic with failover |
+| Agent tooling | MCP tool provisioning and standardized external tool execution |
+
+---
+
+## 6. Reserve bank — deploy ONLY when probed
+
+Keep these **out** of the opening answer. Held in reserve, they land as substance; volunteered, they land as grievance.
+
+**"What does the consolidation mean concretely?"**
+> "The knowledge-base ingestion pipeline I built is being consolidated into another internal implementation — the company is removing duplicate effort across teams, which is a reasonable call. It does mean a significant piece of what I owned moves elsewhere."
+
+**"What are you actually working on day to day?"**
+> "Increasingly security hardening across the service mesh — mTLS with workload identities, authorization policies, per-project RBAC. Valuable work, and I'm glad I own it. But I want security to be one dimension of the platform I build, not the entirety of my scope. I want to be on the core compute, scheduling, and orchestration path."
+
+> ⚠️ Don't disown security — my resume leads with the zero-trust architecture, and multi-tenant isolation matters for platform work. Frame it as **scope, not distaste**: "not *only* security."
+
+**"Is your role at risk? Are you being laid off?"**
+> "No. My role is secure and the work continues in a different form. This is my choice about where I go deep next, not a forced move."
+
+> Answer this **instantly and flatly**. Any hesitation confirms the worst reading.
+
+---
+
+## 7. Follow-up landmines
+
+**"We have uncertainty too. Why wouldn't you leave us in six months?"**
+> "The difference isn't certainty, it's ceiling. At NetApp the limit is structural — the deployment model means the platform can't see its own production. That doesn't get fixed by waiting. Here the constraint doesn't exist, so effort compounds. That's a reason to stay, not leave."
+
+**"Why not just push to improve telemetry at NetApp?"**
+> "We are — I built the observability standards across 15 services and the OTLP pipeline. But you can't telemetry your way out of an air-gapped tenant; the customer owns the boundary, and that's the product promise, correctly so. It's a deliberate trade and I respect it. It's just not the environment I want to build platforms in."
+
+**"Couldn't you just move to the other internal team?"**
+> "Fair option, and I considered it. But it doesn't change the deployment model — the same customer-tenant constraint and feedback-loop ceiling apply company-wide, because that's the product strategy. What I want is first-party platform scale, and that's a different company, not a different team."
+
+**"So you leave when a project gets deprioritized?"**
+> "It's less the setback and more the charter. I joined specifically to build agent platform infrastructure end to end. When that consolidates into someone else's stack, the scope I signed up for narrows. I'd rather go somewhere that owns this layer outright and commit long-term than stay for a smaller version of the role."
+
+---
+
+## 8. Never say
+
+| Phrase | Why it's disqualifying |
+|---|---|
+| "The infra needed for AI systems, I already know" | Arrogant / easily bored — **doubly fatal** when their work is similar |
+| "It's unclear what this project will do at scale" | *Leaves when outcomes are uncertain* |
+| "We ship too fast, quality is getting compromised" | Criticizes my own team's standards **and** implies I can't operate at pace. Everyone in AI infra ships fast. **Already tried this once and it landed badly** |
+| "We're increasing breadth, not depth" (as a complaint) | Reframe as aspiration: *"I want to go deep on one layer and make it excellent at scale"* |
+| "There are many reorgs happening" | Pattern-complaint ⇒ he'll leave us too |
+| "I always wanted to be part of Adobe" | Fine as warmth, useless as substance. Never the *reason* |
+| "I want to make the right decision at this point of time" | Vague — sounds like shopping offers |
+| Framing BYOC as a **mistake** | Call it a deliberate, correct trade-off with an engineering cost. Criticizing the employer's strategy reads worse than describing a constraint neutrally |
+
+---
+
+## 9. Delivery discipline
+
+1. **Order matters.** Positive + continuity → consolidation → forward-looking want → Adobe-specific → tenure. Opening with the reorg makes the whole answer read as a complaint.
+2. **Give two reasons, then stop.** Stacking consolidation + security drift + pace + feedback loop stops sounding like a considered decision and starts sounding like a list of grievances. Let him pull the rest out.
+3. **Answer in two levels.** 2–3 sentences, then pause. Let him ask for depth.
+4. **Kill the tenure objection proactively** — don't wait to be asked. *Four years at Microsoft* is the whole defence.
+
+### Adjacent risk: relocation / notice period
+
+In the first round I hedged repeatedly — "I'll need time," "moving with family," "I'll check if it's negotiable," "I've seen people do it in one or two weeks." Individually fine; stacked next to a six-month tenure it compounds into **low certainty**.
+
+Give one confident answer and stop:
+> "I can relocate to Noida. My notice is X; I'll work to compress it and manage the family move in parallel."
+
+### Also
+
+Don't say "the recruiter wasn't clear what this team does." Reframe as homework:
+> "I understand the team owns X — I'd love your view on where it's heading."
