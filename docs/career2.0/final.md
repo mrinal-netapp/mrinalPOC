@@ -79,12 +79,12 @@ For these companies, ChatGPT Enterprise and similar SaaS AI products are a **har
 │           │  │                  │  Temporal Server  │            │
 │  ┌────────┴──┴──────┐           │  (event history, │            │
 │  │  Agent-Service   │           │   task queues)   │            │
-│  │   (Python)       │           └──────────────────┘            │
+│  │  (Python · MAF)  │           └──────────────────┘            │
 │  │                  │                                            │
 │  │ orchestrates     │  ⑤vector                                  │
 │  │ LLM queries      │──search──▶┌──────────────────┐            │
 │  │ RAG injection    │           │  KB-Retrieval    │            │
-│  │ tool calls       │◀──chunks──│  Service(Python) │            │
+│  │ tool calls       │◀──chunks──│  Service (Rust)  │            │
 │  └──────────────────┘           └──────────────────┘            │
 │         │                                                        │
 │         │ ⑥LLM call via virtual key                             │
@@ -151,7 +151,11 @@ For these companies, ChatGPT Enterprise and similar SaaS AI products are a **har
 
 *Draw KB-Retrieval-Service, connect it to Agent-Service.*
 
-> "It then does a vector search via KB-Retrieval-Service to pull the top-K relevant chunks — this is the RAG step."
+> "It then does a vector search via KB-Retrieval-Service — a **Rust** service, chosen because it's on the hot path of every query — to pull the top-K relevant chunks. This is the RAG step."
+
+*Note the two agent runtimes.*
+
+> "There are actually two agent runtimes side by side. The original `agent-service` is Python on Agno, reached at `/agents`. The newer `agent-service-maf` is built on Microsoft Agent Framework and is reached at `/agents-maf` — it's what the new Studio UI targets. Both read the same agent config from Config-Service, so a given agent can be invoked through either."
 
 *Draw Bifrost at the bottom of Layer 2.*
 
@@ -680,11 +684,23 @@ On idle/delete (managed/platform only): Deployment + Secret(s) torn down
 ### Kubernetes Namespaces
 
 ```
-agentstudio-services    → Config, Workflow Engine, Agent, KB Retrieval, Analytics
-agentstudio-workers     → connector-worker, dataset-processor, kb-processor, MCP pods
-agentstudio-platform    → Keycloak, Temporal, S3 Gateway, Lakekeeper, Bifrost
+agentstudio-services    → Config, Workflow Engine, Agent (agent-service +
+                          agent-service-maf), KB Retrieval, Analytics, TEI
+                          embedding servers, and managed MCP pods
+agentstudio-workers     → connector-worker, dataset-processor, kb-processor,
+                          eval-worker, S3 Gateway (VersityGW), storage-manager
+agentstudio-platform    → Temporal, Lakekeeper
+agentstudio-identity    → Keycloak
+agentstudio-llm-gateway → Bifrost
+agentstudio-console     → gui (/console) and agent-studio-ui (/studio)
+agentstudio-edge        → Istio Gateway, HTTPRoutes, edge authz policies
+database                → PostgreSQL, Redis
 monitoring              → Prometheus, Grafana, Phoenix (LLM tracing), OTEL Collector
 ```
+
+Note that **managed MCP pods land in `agentstudio-services`**, not the workers
+namespace — `MCPRuntimeManager` creates them in the same namespace as
+config-service itself.
 
 ### Deployment Tiers (install order)
 
@@ -695,8 +711,10 @@ Tier 3: Orchestration  → Temporal
 Tier 4: Storage        → S3 Gateway (VersityGW), Lakekeeper
 Tier 5: LLM Gateway    → Bifrost
 Tier 6: Workers        → connector-worker, dataset-processor, kb-processor
-Tier 7: Services       → Config, Workflow Engine, Agent, KB Retrieval
-Tier 8: Console        → React UI
+Tier 7: Services       → Config, Workflow Engine, Agent (agent-service +
+                         agent-service-maf), KB Retrieval
+Tier 8: Console        → two React UIs: gui (/console) and
+                         agent-studio-ui (/studio, the newer one)
 Tier 9: Observability  → Prometheus, Phoenix, OTEL Collector, Grafana
 ```
 
@@ -771,8 +789,9 @@ A: KB Retrieval (Rust) is stateless and horizontally scalable behind the Gateway
 
 | Layer | Technologies |
 |-------|-------------|
-| **Frontend** | React, FluentUI, TypeScript |
-| **API / Services** | Go, Node.js/TypeScript, Python, Rust |
+| **Frontend** | React, FluentUI, TypeScript — two apps: `gui` at `/console`, `agent-studio-ui` at `/studio` |
+| **API / Services** | Go (workflow-engine), Node.js/TypeScript (config-service), Python (agent-service, agent-service-maf, workers), Rust (kb-retrieval-service) |
+| **Agent runtimes** | `agent-service` (Agno, `/agents`) and `agent-service-maf` (Microsoft Agent Framework, `/agents-maf`) |
 | **Orchestration** | Temporal (durable workflows), Kubernetes (container orchestration) |
 | **Databases** | PostgreSQL, Redis, LanceDB, Apache Iceberg (Lakekeeper) |
 | **Storage** | S3-compatible (VersityGW), Azure NetApp Files (RWX PVCs) |
