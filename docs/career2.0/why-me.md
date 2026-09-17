@@ -71,7 +71,58 @@ The organizational consolidation is the **strongest card** — it converts "why 
 
 ---
 
-## 5. Make the overlap concrete
+## 5. Why I left Microsoft — keeping both stories consistent
+
+### The trap to avoid
+
+The naive answer — *"I wanted to work on AI and couldn't get that opportunity at Microsoft"* — sets up an arc that undercuts the NetApp story:
+
+```
+Microsoft (4 yrs) ──leaves──► "I wanted AI work"
+NetApp (6 months) ──gets AI work──► leaves anyway
+Adobe ──► ???
+```
+
+His immediate inference: **"He chased AI to NetApp, got it, left in six months. What does he chase out of here?"**
+
+The two "why I left" stories must **reinforce** each other. Phrased naively they undercut each other.
+
+### Two smaller problems with the naive version
+
+1. **"Microsoft didn't have AI opportunities"** is factually weak — Microsoft is one of the largest AI companies on earth. Be **org-specific**: I was in **Commerce Cloud**, a data/billing platform org, not an AI org.
+2. **"I wasn't able to get that opportunity"** is passive — sounds like something was withheld. Make it a decision I made, not a door that closed.
+
+### The reframe: one trajectory, not three escapes
+
+Position all three moves as steps in a **single direction** — toward large-scale platform infrastructure — with Adobe as the **destination**, not the next waypoint.
+
+> "I was at Microsoft four years, in Commerce Cloud — telemetry, data quality, and large-scale data platform services. That's where my distributed systems grounding comes from, and I'm proud of the work; the T-SQL-to-SparkSQL API layer alone took about $1.6M a year out of our Azure spend.
+>
+> I moved because I wanted to build AI platform infrastructure end to end — the orchestration, gateway, and multi-tenancy layer, not just consume models. Within my org that would have meant a long internal transfer; NetApp was building one from scratch, which was the fastest path to real depth. And I got that — I own the ingestion platform and the security architecture.
+>
+> So the through-line is consistent: I've been deliberately moving toward large-scale platform infrastructure for AI workloads. This role is the continuation of that — same layer, at a scale that a customer-tenant deployment model can't reach."
+
+**The four years does real work here** — it's the strongest evidence against job-hopping. Lead with it.
+
+### The follow-up he will absolutely ask
+
+**"You left Microsoft for AI, got it at NetApp, and you're leaving in six months. Why is Adobe different?"**
+
+> "Fair question. The Microsoft move was about getting *into* this domain — and it worked; I got exactly the depth I wanted. This move isn't about the domain at all, it's the same domain. It's about the ceiling: the deployment model means the platform can't observe its own production, and the charter consolidated. Here the domain is the same and that ceiling doesn't exist — so there's nothing left for me to go looking for. That's why this is somewhere I'd stay."
+
+> **"There's nothing left for me to go looking for"** is the line that closes it. It directly answers the unspoken fear.
+
+### Don't say
+
+| Phrase | Why |
+|---|---|
+| "Microsoft didn't have AI opportunities" | Factually weak — say *my org*, Commerce Cloud |
+| "I wasn't able to get that opportunity" | Passive / blame-shifting — make it my decision |
+| "I wanted to work on AI" *as the whole reason* | Too thin for four years, and it's the phrasing that sets the trap |
+
+---
+
+## 6. Make the overlap concrete
 
 Because the work is similar, **name the mapping** — it converts "why you" into "he contributes on day one."
 
@@ -85,7 +136,7 @@ Because the work is similar, **name the mapping** — it converts "why you" into
 
 ---
 
-## 6. "First-party scale" — the detailed argument
+## 7. "First-party scale" — the detailed argument
 
 Used in the script. **Never use a term in an interview you can't define in one sentence** — so know this cold, or swap in the plain-English version below.
 
@@ -175,7 +226,7 @@ Credible because it concedes the limit while proving I understand the class of p
 
 ---
 
-## 7. Reserve bank — deploy ONLY when probed
+## 8. Reserve bank — deploy ONLY when probed
 
 Keep these **out** of the opening answer. Held in reserve, they land as substance; volunteered, they land as grievance.
 
@@ -194,7 +245,7 @@ Keep these **out** of the opening answer. Held in reserve, they land as substanc
 
 ---
 
-## 8. Follow-up landmines
+## 9. Follow-up landmines
 
 **"We have uncertainty too. Why wouldn't you leave us in six months?"**
 > "The difference isn't certainty, it's ceiling. At NetApp the limit is structural — the deployment model means the platform can't see its own production. That doesn't get fixed by waiting. Here the constraint doesn't exist, so effort compounds. That's a reason to stay, not leave."
@@ -210,7 +261,7 @@ Keep these **out** of the opening answer. Held in reserve, they land as substanc
 
 ---
 
-## 9. Never say
+## 10. Never say
 
 | Phrase | Why it's disqualifying |
 |---|---|
@@ -225,7 +276,7 @@ Keep these **out** of the opening answer. Held in reserve, they land as substanc
 
 ---
 
-## 10. Delivery discipline
+## 11. Delivery discipline
 
 1. **Order matters.** Positive + continuity → consolidation → forward-looking want → Adobe-specific → tenure. Opening with the reorg makes the whole answer read as a complaint.
 2. **Give two reasons, then stop.** Stacking consolidation + security drift + pace + feedback loop stops sounding like a considered decision and starts sounding like a list of grievances. Let him pull the rest out.
