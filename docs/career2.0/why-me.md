@@ -7,6 +7,38 @@ The team builds **agent and compute infrastructure** natively for Adobe's own pr
 
 ---
 
+## 0. The opening intro (deliver first)
+
+**Positioning:** a **platform infrastructure engineer who currently builds for AI workloads** — *not* "an AI engineer." Their team owns scheduling, capacity, and multi-tenancy; speak their vocabulary.
+
+### ~60-second version
+
+> "I'm Mrinal — senior software engineer, about eight years, mostly backend and distributed systems, with Java as my core.
+>
+> Right now I'm at NetApp on a greenfield enterprise agent platform, where I own the platform infrastructure layer. Concretely: a Temporal-based orchestration system running around 10,000 long-running workloads a day across three task queues, dynamic Kubernetes provisioning for ephemeral compute, autoscaling driven off queue backlog rather than CPU, and the zero-trust security model across a 15-service mesh — mTLS with workload identities and per-project RBAC. I also built the ingestion and retrieval pipeline that shards document sets into a couple of thousand parallel work units.
+>
+> Before that I was four years at Microsoft in Commerce Cloud, building large-scale data and telemetry platforms. The piece I'm proudest of is a Service Fabric API layer that translated T-SQL to SparkSQL and took about $1.6M a year out of our Azure spend. Prior to that, Goldman Sachs and Oracle — reliability engineering and cloud backend work.
+>
+> The through-line is platform infrastructure: scheduling, orchestration, multi-tenancy, and the operational side of running it. That's why this team interested me — you build that layer for Adobe's own products, at real scale."
+
+### ~30-second version (if he says "briefly")
+
+> "Mrinal — eight years, backend and distributed systems, Java core. Currently at NetApp building the platform layer for an enterprise agent product: Temporal orchestration running about 10,000 workloads a day, dynamic Kubernetes provisioning, queue-backlog-driven autoscaling, and the zero-trust model across a 15-service mesh. Before that, four years at Microsoft in Commerce Cloud on large-scale data and telemetry platforms — including an API layer that saved roughly $1.6M a year in Azure spend. The through-line is platform infrastructure: scheduling, orchestration, multi-tenancy, and running it in production."
+
+### Delivery rules
+
+1. **Lead with "backend and distributed systems," never "AI."** The AI part is the *workload*; the layer I own is infrastructure. Framing myself as an AI engineer makes me a domain switcher instead of a direct fit.
+2. **Don't list frameworks.** No LangGraph / LlamaIndex / Semantic Kernel name-dropping — it reads as tool tourism. Name systems and numbers instead.
+3. **One number per claim, and only numbers I can defend.** 10,000 workloads/day, 2,000 parallel units, 15 services, $1.6M, 60% idle reduction.
+4. **End on the bridge to their team**, then **stop talking.** The bridge invites his next question; filling silence is what caused the rambling last round.
+5. **Four years at Microsoft is load-bearing** — it is the anti-job-hopper evidence. Always say the number.
+
+### Resume fix
+
+Microsoft currently reads **"June 2022 - Present"** while NetApp reads **"March 2026 - Present"** — both can't be Present. Change Microsoft to **June 2022 – March 2026**. Overlapping dates read as careless at best.
+
+---
+
 ## 1. The core strategic principle
 
 > **"I'm not changing direction — I'm doubling down on the same direction, in an environment where it can actually compound."**
