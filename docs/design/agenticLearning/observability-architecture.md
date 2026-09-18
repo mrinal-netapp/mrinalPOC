@@ -264,6 +264,115 @@ Bridges Prometheus into `custom.metrics.k8s.io` so worker HPAs can scale on Temp
 | `temporal_queue_backlog_kb` | `…{task_queue="kb-processing"}` |
 | `temporal_queue_backlog_connector` | `…{task_queue="connector-operations"}` |
 
+### 4.5 ServiceMonitors — and what a CRD actually is
+
+#### Custom Resource Definitions, briefly
+
+Kubernetes ships with built-in object types — `Pod`, `Service`, `Deployment`, `ConfigMap`. A **CRD (CustomResourceDefinition)** lets you register a *new* object type with the API server, so `kubectl get servicemonitors` works exactly like `kubectl get pods`.
+
+A CRD on its own is just a schema — it stores objects and validates them, nothing more. It only becomes useful when paired with an **operator**: a controller that watches for those objects and *does something*.
+
+```text
+   CRD          defines the TYPE          "a ServiceMonitor looks like this"
+   Custom       an INSTANCE of the type   "scrape agent-service-maf every 30s"
+   Resource
+   Operator     the CONTROLLER that acts  watches ServiceMonitors → regenerates
+                                          Prometheus scrape config → reloads it
+```
+
+This is the standard Kubernetes extension pattern: **declare desired state as an object, let a controller reconcile reality to match.**
+
+#### What a ServiceMonitor is
+
+A ServiceMonitor (`monitoring.coreos.com/v1`, from the **Prometheus Operator**) declaratively says: *scrape these Services, on this port, at this path, this often.*
+
+The problem it solves:
+
+```text
+   WITHOUT the operator                 WITH ServiceMonitors
+   ────────────────────                 ────────────────────
+   one monolithic prometheus.yml        each chart ships its own
+   static_configs / kubernetes_sd       ServiceMonitor next to the service
+   + relabel rules                             │
+        │                                      ▼
+   every new service = edit the         operator watches for the CRD,
+   central config + reload              regenerates scrape config, reloads
+```
+
+Scrape configuration becomes **decentralised and owned by each service's chart**, instead of a central file every team has to edit.
+
+#### Ours, concretely
+
+`deployments/helm/services/charts/agent-service-maf/templates/servicemonitor.yaml`:
+
+```yaml
+{{- if and .Values.enabled (default false .Values.metrics.serviceMonitor.enabled) (.Capabilities.APIVersions.Has "monitoring.coreos.com/v1") }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: agent-service-maf
+spec:
+  selector:
+    matchLabels:
+      {{- include "agent-service-maf.selectorLabels" . | nindent 6 }}
+  endpoints:
+    - port: {{ default "http" .Values.metrics.port }}
+      path: {{ default "/metrics" .Values.metrics.path }}
+      interval: {{ default "30s" .Values.metrics.serviceMonitor.interval }}
+{{- end }}
+```
+
+Note the capability guard on line 1 — `.Capabilities.APIVersions.Has "monitoring.coreos.com/v1"` means the chart only renders the ServiceMonitor **if the Prometheus Operator CRDs exist in the cluster**, so deployment doesn't break on clusters without them.
+
+#### The selection chain — and the subtlety
+
+```text
+   ServiceMonitor
+        │  selector.matchLabels
+        ▼
+   Kubernetes Service          ← selects the SERVICE, not pods
+        │  the Service's own selector
+        ▼
+   Endpoints  →  Pod A, Pod B, Pod C
+        │
+        ▼
+   Prometheus scrapes EACH POD individually
+```
+
+Prometheus does **not** scrape through the Service's load balancer. It resolves the Endpoints object and hits every pod separately — so you get **per-replica metrics**. (Scraping through the Service would return one arbitrary replica's counters each interval, which would be useless.)
+
+Two gotchas:
+
+- **`port` is the port's _name_ on the Service**, not a number — `port: http`, not `port: 8000`
+- **`PodMonitor`** is the sibling CRD, for pods with no Service in front of them
+
+This also explains `serviceMonitorSelectorNilUsesHelmValues: false` in §4.3 — without it, the operator would only discover ServiceMonitors carrying the Helm release's own labels, and none of the `agentstudio-*` service charts would be scraped.
+
+#### Where they are — about 14
+
+| Tier | Services with a ServiceMonitor |
+|---|---|
+| Services | agent-service-maf, agent-service, config-service, workflow-engine, apigateway-service, kb-retrieval-service, analytics-engine, artifact-service |
+| Workers | storage-manager |
+| Platform | temporal |
+| LLM gateway | bifrost |
+| Observability | otel-collector |
+
+#### The architecturally interesting one
+
+The **otel-collector** ServiceMonitor scrapes `:8889` — and that is the bridge between two opposite models:
+
+```text
+   apps ──OTLP PUSH──► collector ──► prometheus exporter :8889
+                                              ▲
+                                              │ PULL (scrape)
+                                     Prometheus, via ServiceMonitor
+```
+
+OpenTelemetry is **push**-based; Prometheus is **pull**-based. The collector terminates the push side and re-exposes everything — including the spanmetrics derived from traces (§4.1) — as a scrapeable Prometheus endpoint.
+
+So ServiceMonitors do two distinct jobs here: scraping services that expose `/metrics` natively (RED metrics), **and** scraping the collector to pull in everything that arrived over OTLP push.
+
 ---
 
 ## 5. Signal 3 — Logs
