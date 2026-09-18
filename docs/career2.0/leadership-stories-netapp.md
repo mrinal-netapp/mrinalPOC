@@ -21,6 +21,61 @@ These are the NetApp stories to use for behavioural questions.
 | A failure / something you got wrong | **Story 7** — document identity / idempotency miss |
 | Deep technical rigour | **Story 8** — the incremental re-ingest flaw (read the caveat) |
 | A subtle bug / debugging without errors | **Story 9** — chunking collapsed silently on PDF text |
+| **What impact did you have / how did you measure it** | **§ Impact** (below — read this first) |
+
+---
+
+## Impact — what AgentStudio achieved, and how it was measured
+
+### The trap
+
+AgentStudio is **private preview, not launched**, and the charter is consolidating. Business impact — revenue, customers, adoption — essentially doesn't exist yet. Reach for it and one follow-up (*"how many customers are on it?"*) collapses the answer.
+
+**Volunteer the stage first.** That turns the weakness into credibility.
+
+### Five categories of engineering impact
+
+| Category | Claim | How it was measured |
+|---|---|---|
+| **Efficiency** | ~60% reduction in idle time | Replica-hours / allocated-vs-used CPU from Prometheus, before vs after switching HPA from CPU to queue depth |
+| **Reliability** | 99.9% success across ~10k workloads/day | Temporal workflow terminal-state counts over a window |
+| **Responsiveness** | Sub-minute scale-up | Time from queue backlog crossing threshold → new replica Ready (HPA events + Prometheus) |
+| **Velocity / leverage** | Observability SDK adopted by 10+ services | Count of services importing it; ServiceMonitor coverage |
+| **Risk posture** | No plaintext credentials; project isolation enforced in infrastructure | Binary and auditable — secrets materialized at runtime, authorization policies enumerated per service |
+
+All real, defensible, and pre-launch-appropriate. None require a customer.
+
+### Two more that are genuinely impact, not vanity
+
+- **The eval harness** — meta-impact: *you can't improve what you can't measure.* Before it, RAG quality was anecdotal; after, there are per-case pass/fail, aggregate metrics and gates. A capability the team didn't have.
+- **The vector-store benchmark** — impact as a **decision avoided**. A proposed pgvector migration would have meant operating a database tier inside every customer cluster. Settled with data instead of preference. Cost avoided, not value added — but real.
+
+### The honest part — the strongest move
+
+> "The candid limit is that I can't measure end-user impact. We ship into the customer's own tenant, so we see limited logs, not production behaviour. I can tell you what the platform does, what it costs, and how reliably it runs — I can't tell you what it changed for a user, and that's a structural property of the deployment model."
+
+This does three things at once: it's honest, it shows I know the difference between **output and outcome**, and it's **the same reason given for wanting to move** (§4 / §7 of `why-me.md`) — so the impact answer and the "why leave" answer reinforce each other rather than sitting in separate compartments.
+
+### The script (~50s)
+
+> "I'd separate two things, because we're in private preview — we haven't GA'd, so I'm not going to claim business outcomes.
+>
+> What I can point to is engineering impact. On efficiency, I moved autoscaling off CPU onto Temporal queue depth as a custom Prometheus metric — CPU is a lagging indicator for queue-backed work — and that cut idle time by about 60%, measured on allocated versus used capacity before and after. On reliability, we run around ten thousand durable workloads a day at roughly 99.9% terminal success. On leverage, the observability SDK I built was adopted by more than ten services, which is what made cross-service debugging possible at all — and the custom metrics it exposed are what the autoscaling runs on.
+>
+> On risk, the zero-trust model means project isolation is enforced by infrastructure rather than convention, and there are no plaintext credentials in the system.
+>
+> The honest limit is end-user impact. We deploy into the customer's own tenant, so we see limited logs rather than production behaviour. I can tell you what the platform does and how reliably — I can't tell you what it changed for a user. That's structural, and it's part of why this role interests me."
+
+### VERIFY BEFORE SAYING — "how did you measure it" *is* the question
+
+| Claim | What to confirm |
+|---|---|
+| 60% idle reduction | Measured on replica-hours, CPU allocation, or cost? Over what window? |
+| 99.9% | Does it count workflows that succeeded **after retries**? What window? |
+| 10k/day | **Workflow** executions or **activity** executions? A private preview won't generate 10k KB builds a day — this is likely activities |
+| 10+ SDK adopters | Services that *import* it, or services actively *emitting* through it? |
+
+A number whose derivation you can't explain is worse than a smaller one you can. This manager runs a 100PB system — measurement methodology is his native language.
 
 ---
 
