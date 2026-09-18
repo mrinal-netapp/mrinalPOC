@@ -18,7 +18,7 @@ These are the NetApp stories to use for behavioural questions.
 | Scale / reliability under failure | **Story 5** — Temporal orchestration at 10k/day |
 | Conflict or disagreement | **Story 6** — LanceDB vs pgvector, settled with data |
 | Interpersonal conflict specifically | **Story 6b** — FILL IN (scaffold provided) |
-| A failure / something you got wrong | **Story 7** — FILL IN (scaffold provided) |
+| A failure / something you got wrong | **Story 7** — document identity / idempotency miss |
 | Deep technical rigour | **Story 8** — the incremental re-ingest flaw (read the caveat) |
 
 ---
@@ -242,17 +242,233 @@ Fill in these five beats from memory:
 
 ---
 
-## Story 7 — A failure / something you got wrong  **FILL IN**
+## Story 7 — A failure: document identity in the KB ingestion pipeline
+### *Use for: "what did you get wrong", self-awareness, technical depth*
 
-Managers ask this to test self-awareness. **Never answer with a disguised strength** ("I care too much"). Structure:
+### Ownership gate — answer this before using the story
 
-1. What you decided
-2. Why it was wrong (own it without hedging)
-3. How you discovered it
-4. What you changed — *systemically*, not just "I was more careful"
-5. What it cost
+| Situation | How to tell it |
+|---|---|
+| **You designed the document-ID scheme** | Full ownership. Strongest version — use as written below |
+| **You inherited it** | Shift the failure: *"I worked in that pipeline for months before I noticed the idempotency gap — I'd absorbed the design instead of questioning it."* Still real, arguably more interesting |
+| **Neither** | Don't use it. Pick something from memory |
 
-Candidate areas to search your memory for: an early design you had to reverse, an incident you caused or missed, something you shipped that didn't get adopted, an estimate you badly missed.
+Also: do **not** claim you discovered this in production if you didn't (see Story 8's caveat). Owning a *design decision you made* is different from claiming a *discovery*.
+
+### Narration (~50s)
+
+> "The one I'd call out is document identity in our knowledge-base ingestion pipeline. When I designed it, each document got a freshly minted UUID per ingestion run, and the vector writer appends. That worked cleanly for the initial full build — which is the case I designed for.
+>
+> What I missed was incremental updates. When a source file changes, we re-chunk and re-embed the whole file and append the new vectors — but because the new document has a brand-new UUID, it can't match, overwrite, or dedupe against the old one, and nothing deletes the old chunks. So the index holds two generations of the same file. Retrieval returns both, and the user sees duplicate, conflicting sources cited from what's supposedly one document.
+>
+> The root cause is that I treated the document ID as a row key rather than as an *identity* — and separately, the writer had no deletion path keyed on anything stable. The source path was already stored on every chunk; nothing used it.
+>
+> The systemic lesson: in any pipeline that re-runs, identity has to be derived from the data, not minted per run. Once identity is content-derived, idempotency, dedup and garbage collection all become expressible. With a random ID per run, none of them are — which is the same reason a blob store is content-addressed."
+
+### The conceptual error
+
+```text
+  ROW KEY asks:   "what unique value do I store this row under?"   → UUID works fine
+  IDENTITY asks:  "what makes this the SAME thing across runs?"    → UUID fails completely
+
+  I answered the first question. The pipeline needed the second.
+```
+
+### Two distinct faults, two distinct fixes
+
+Telling it as **two** faults is stronger than one — it shows the problem was actually decomposed rather than met with "use hashes" as a slogan.
+
+| Fault | Consequence | Fix | Stable key |
+|---|---|---|---|
+| No deletion keyed on a stable identifier | Stale generations accumulate; conflicting citations | Delete-by-source before append | **`source` path** — unchanged by edits |
+| Random per-run document IDs | Can't detect unchanged content; full re-embed on every edit; no dedup | Content-derived chunk IDs | **`hash(text)`** — changes when content changes |
+
+> **Key distinction (an EM who runs a content-addressed store will probe this):**
+> **path is the key you DELETE by; hash is the key you IDENTIFY by.** They are complementary, not the same thing. A content hash *changes* when the file is edited, so it can never locate the prior copy — only the stable path can.
+
+### What I built vs what it should have been
+
+```text
+┌─ WHAT I BUILT — id minted per run ─────────────────────────────────────────┐
+│  Run 1   report.pdf ──► doc_id = uuid4() = "A1"                             │
+│                          └─► chunks  A1_0, A1_1  ──► APPEND                 │
+│          index:  [ A1_0 ][ A1_1 ]                                           │
+│                                                                             │
+│  ── file edited ──                                                          │
+│                                                                             │
+│  Run 2   report.pdf ──► doc_id = uuid4() = "B7"   ◄── DIFFERENT id,         │
+│                          └─► chunks  B7_0, B7_1        SAME file            │
+│                    ┌────────────────────────────────────────┐              │
+│                    │ Can it match the old copy?     NO      │              │
+│                    │ Can it overwrite it?           NO      │              │
+│                    │ Can it dedupe against it?      NO      │              │
+│                    │ Does anything delete it?       NO      │              │
+│                    └────────────────────────────────────────┘              │
+│                                     ▼  APPEND                               │
+│          index:  [ A1_0 ][ A1_1 ][ B7_0 ][ B7_1 ]                          │
+│                    └── stale ──┘  └── current ──┘                          │
+│                       TWO GENERATIONS OF ONE FILE                          │
+│                                                                             │
+│  query "revenue?" ──► returns stale "5M" AND current "6M";                  │
+│                       citation dedup can't merge them — the ids differ      │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─ THE FIX — delete by the STABLE key, then append ──────────────────────────┐
+│  Run 2   report.pdf edited                                                  │
+│            ├─ stable key = source path "report.pdf"  ◄── UNCHANGED by edit  │
+│            │     └─► DELETE WHERE source = 'report.pdf'                     │
+│            │            removes A1_0, A1_1  (the stale generation)          │
+│            └─► then APPEND the newly embedded chunks                        │
+│          index:  [ new_0 ][ new_1 ]        ← ONE generation                 │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### The three hash keys
+
+```text
+  LEVEL       KEY                                    ANSWERS
+  ─────       ───                                    ───────
+  file    H_file  = sha256(file_bytes)               "did this file change at all?"
+  chunk   H_chunk = sha256(normalize(chunk_text))    "have I already embedded this exact text?"
+  doc     doc_id  = sha256(source_path)              "which source does this belong to?"
+                    (derived from path — never minted)
+```
+
+Two details that decide whether it works:
+
+1. **Normalize before hashing** — collapse whitespace, NFC-normalize, strip trailing. Otherwise `\r\n` vs `\n` breaks dedup. **Don't lowercase** — it changes what the embedder sees.
+2. **The chunk hash alone can't key the vector.** Same text through a different model gives a different vector, so the row key must be `(H_chunk, embedding_model_id, dimension)`. Without the model in the key, swapping embedding models silently reuses stale vectors.
+
+### Worked example — report.pdf
+
+```text
+  RUN 1 (initial ingest)
+  ──────────────────────
+  report.pdf  ──►  H_file = sha256(file_bytes) = F1
+                   doc_id = sha256("report.pdf") = D      ← derived from path, stable forever
+
+  chunked into 3:
+     c1  "Q3 revenue was 5M."            →  H_chunk = A
+     c2  "Growth was 12% YoY."           →  H_chunk = B
+     c3  "Headcount flat at 200."        →  H_chunk = C
+
+  rows written:
+     (chunk_id=A, doc_id=D, source="report.pdf", vector=embed(c1))
+     (chunk_id=B, doc_id=D, source="report.pdf", vector=embed(c2))
+     (chunk_id=C, doc_id=D, source="report.pdf", vector=embed(c3))
+
+  manifest:  report.pdf → [A, B, C]   @ F1
+
+
+  ── THE EDIT: someone changes 5M → 6M ──
+
+
+  RUN 2 (re-ingest, corrected design)
+  ───────────────────────────────────
+  STEP 1 — did the file change?
+     H_file = sha256(file_bytes) = F2
+     F2 ≠ F1  ⇒ reprocess
+     (if F2 == F1 ⇒ skip entirely — zero work, no chunking, no embedding)
+
+  STEP 2 — re-chunk, hash each chunk
+     c1' "Q3 revenue was 6M."            →  A'   ← NEW hash (text changed)
+     c2  "Growth was 12% YoY."           →  B    ← SAME hash
+     c3  "Headcount flat at 200."        →  C    ← SAME hash
+
+  STEP 3 — diff against the manifest
+     old: [A,  B, C]
+     new: [A', B, C]
+                        ┌──────────────────────────────┐
+     to EMBED:   A'     │ 1 gateway call, not 3        │
+     to KEEP:    B, C   │ already embedded — skip      │
+     to DELETE:  A      │ superseded                   │
+                        └──────────────────────────────┘
+
+  STEP 4 — apply
+     DELETE WHERE chunk_id = A
+     INSERT (A', D, "report.pdf", embed(c1'))
+     B and C untouched
+     manifest: report.pdf → [A', B, C]  @ F2
+
+  RESULT:  3 rows. One generation. One embedding call.
+
+
+  VERSUS TODAY
+  ────────────
+     doc_id = uuid4() = B7          ← brand new, matches nothing
+     re-embed ALL 3 chunks          ← 3 gateway calls
+     APPEND B7_0, B7_1, B7_2
+     A1_0, A1_1, A1_2 remain        ← nothing deletes them
+
+     index:  [A1_0][A1_1][A1_2][B7_0][B7_1][B7_2]
+             └── stale gen ──┘└── current gen ──┘
+             6 rows for a 3-chunk file
+```
+
+### Why you need BOTH fixes
+
+```text
+  FIX 1 ONLY — delete-by-source, keep UUIDs
+     DELETE WHERE source='report.pdf'    → removes all 3 old rows
+     re-embed all 3, append
+     ✓ correct: one generation, no duplicates
+     ✗ wasteful: 3 embedding calls for a 1-chunk edit
+
+  FIX 2 ONLY — chunk hashes, still append-only
+     knows B and C are unchanged
+     ✗ still broken: nothing removes the old A row
+
+  BOTH
+     ✓ correct AND efficient: delete A, embed only A', keep B and C
+```
+
+### The assumption to state out loud
+
+This assumes **chunk boundaries didn't shift** — B and C hash the same only because the edit stayed inside c1. With fixed-size or token-based chunking, changing the length of c1 reflows every downstream offset, so c2 and c3 become different text and get new hashes — and you're back to re-embedding most of the file.
+
+So the efficiency win requires **content-defined or structure-anchored chunking** (paragraph, heading, markdown section). Say this if asked; it's the difference between *"hashing fixes it"* and actually understanding why it often doesn't.
+
+### Why this lands with THIS interviewer
+
+He runs a 100PB Blob Store built on dedup, content hashing, and GC cycles. The same mistake blocks all three:
+
+```text
+   content-derived identity ─┬─► IDEMPOTENCY   re-running is safe, no duplicates
+                             ├─► DEDUPLICATION identical content ⇒ identical id ⇒
+                             │                  store once, reference many
+                             └─► GARBAGE COLL. reachable vs orphaned becomes decidable
+
+   random-per-run identity  ──► none of the three are even expressible
+```
+
+And the manifest + refcount structure is exactly the blob-store model:
+
+```text
+   content hash  ──►  addresses the DATA (store once)
+   manifest      ──►  maps document → list of chunk hashes (attribution)
+   refcount      ──►  a chunk is deletable when no manifest references it  ◄── GC
+```
+
+Dedup and GC aren't features you add — they're consequences of content-addressing plus a reference model. Saying that converts a confession into a demonstration that you think in his primitives.
+
+### What it cost
+
+Index bloat that grows with every update, degraded retrieval quality from conflicting duplicates, and wasted embedding spend re-embedding whole files.
+
+### Delivery rules for failure questions
+
+1. **No disguised strengths.** "I care too much" / "I over-prepare" — instant credibility loss.
+2. **Own it in one sentence, no hedging.** Don't spread blame to constraints or timelines.
+3. **Root-cause it, don't just describe it.** *"I treated the ID as a row key, not an identity"* is the answer; *"we had a bug"* is not.
+4. **The fix must be systemic.** *"I'd use content-derived identity in any re-runnable pipeline"* beats *"I'd be more careful."*
+5. **State the cost.** Managers want to know you measured the damage.
+
+### Alternates, if this one doesn't fit
+
+- **A shipped config that does nothing** — `ragConfig.rerankingEnabled` is persisted in config-service and exposed in the API, but the agent service never consumes it (code comment: *"intentionally NOT wired"*), because the retrieval service takes a reranker *name*, not a boolean. Story about API/implementation drift.
+- **Incremental runs don't update KB metadata** — the single-unit incremental path reads the *previous* run's `metadata.json`, so new chunks aren't reflected in KB counts until the next full reprocess. Documented as a known gap. Story about a partial implementation that looks complete from outside.
+
+Both are narrower and the lesson transfers less well.
 
 ---
 
