@@ -977,3 +977,68 @@ State preserved:   S3 object writes are idempotent (overwrite safe).
 6. **"Designed PostgreSQL schema with 50+ tables handling 10,000+ transactions/day with sub-100ms query latency"**
 
 7. **"Built Python SDK adopted by 10+ services with zero breaking changes over 6 months of active development"**
+
+---
+
+## 15. Impact — how to present it, and what to verify
+
+§14 lists the raw claims. This section is the discipline layer over them: how to frame impact in an interview, and which numbers must be checked before they're spoken.
+
+### The trap
+
+AgentStudio is **private preview, not launched**, and the charter is consolidating. Business impact — revenue, customers, adoption — essentially doesn't exist yet. Reach for it and one follow-up (*"how many customers are on it?"*) collapses the answer.
+
+**Volunteer the stage first.** That turns the weakness into credibility.
+
+### Five categories of engineering impact
+
+| Category | Claim | How it was measured |
+|---|---|---|
+| **Efficiency** | ~60% reduction in idle time | Replica-hours / allocated-vs-used CPU from Prometheus, before vs after switching HPA from CPU to queue depth |
+| **Reliability** | 99.9% success across ~10k workloads/day | Temporal workflow terminal-state counts over a window |
+| **Responsiveness** | Sub-minute scale-up | Time from queue backlog crossing threshold → new replica Ready (HPA events + Prometheus) |
+| **Velocity / leverage** | Observability SDK adopted by 10+ services | Count of services importing it; ServiceMonitor coverage |
+| **Risk posture** | No plaintext credentials; project isolation enforced in infrastructure | Binary and auditable — secrets materialized at runtime, authorization policies enumerated per service |
+
+All real, defensible, and pre-launch-appropriate. **None require a customer.**
+
+### Two more that are genuinely impact, not vanity
+
+- **The eval harness** — meta-impact: *you can't improve what you can't measure.* Before it, RAG quality was anecdotal; after, there are per-case pass/fail, aggregate metrics and gates. A capability the team didn't have.
+- **The vector-store benchmark** — impact as a **decision avoided**. A proposed pgvector migration would have meant operating a database tier inside every customer cluster. Settled with data instead of preference. Cost avoided rather than value added — but real.
+
+### The honest part — the strongest move
+
+> "The candid limit is that I can't measure end-user impact. We ship into the customer's own tenant, so we see limited logs, not production behaviour. I can tell you what the platform does, what it costs, and how reliably it runs — I can't tell you what it changed for a user, and that's a structural property of the deployment model."
+
+This does three things at once: it's honest, it demonstrates the difference between **output and outcome**, and it's **the same reason given for wanting to move** (`why-me.md` §4 / §7) — so the impact answer and the "why leave" answer reinforce each other instead of sitting in separate compartments.
+
+### The script (~50s)
+
+> "I'd separate two things, because we're in private preview — we haven't GA'd, so I'm not going to claim business outcomes.
+>
+> What I can point to is engineering impact. On efficiency, I moved autoscaling off CPU onto Temporal queue depth as a custom Prometheus metric — CPU is a lagging indicator for queue-backed work — and that cut idle time by about 60%, measured on allocated versus used capacity before and after. On reliability, we run around ten thousand durable workloads a day at roughly 99.9% terminal success. On leverage, the observability SDK I built was adopted by more than ten services, which is what made cross-service debugging possible at all — and the custom metrics it exposed are what the autoscaling runs on.
+>
+> On risk, the zero-trust model means project isolation is enforced by infrastructure rather than convention, and there are no plaintext credentials in the system.
+>
+> The honest limit is end-user impact. We deploy into the customer's own tenant, so we see limited logs rather than production behaviour. I can tell you what the platform does and how reliably — I can't tell you what it changed for a user. That's structural, and it's part of why this role interests me."
+
+### VERIFY BEFORE SAYING — "how did you measure it" *is* the question
+
+Several §14 claims need their derivation confirmed. A number whose derivation can't be explained is worse than a smaller one that can be.
+
+| §14 claim | What to confirm |
+|---|---|
+| 60% idle reduction | Measured on replica-hours, CPU allocation, or cost? Over what window? |
+| 99.9% success | Does it count workflows that succeeded **after retries**? What window? |
+| **10,000+ jobs/day** | **Workflow executions or activity executions?** A private preview will not generate 10k KB builds a day — this is almost certainly activities. One KB build fans out into up to ~2,000 work units, so the two numbers differ by orders of magnitude |
+| 2,000+ concurrent work units | Peak or typical? Per job or across the cluster? |
+| "hours to minutes" | Measured against what baseline — a real sequential run, or an estimate? |
+| 10+ SDK adopters | Services that *import* it, or services actively *emitting* through it? |
+| 50+ tables, 10k txn/day, sub-100ms | Where do these come from? p50 or p95 latency? Which queries? |
+
+**On "10,000+ jobs/day" specifically** — if asked *"what counts as one job?"*, the safe framing is:
+
+> "On the order of 10,000 durable task executions a day across three queues. Those roll up into a smaller number of user-initiated workflows — a single knowledge-base build fans out into up to a couple of thousand parallel work units, so workflow count and task count are very different numbers."
+
+Volunteering that distinction is what makes the figure credible rather than fragile.
