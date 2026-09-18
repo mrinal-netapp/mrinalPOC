@@ -20,6 +20,7 @@ These are the NetApp stories to use for behavioural questions.
 | Interpersonal conflict specifically | **Story 6b** — the security compliance gate (sanitize before telling) |
 | A failure / something you got wrong | **Story 7** — document identity / idempotency miss |
 | Deep technical rigour | **Story 8** — the incremental re-ingest flaw (read the caveat) |
+| A subtle bug / debugging without errors | **Story 9** — chunking collapsed silently on PDF text |
 
 ---
 
@@ -544,6 +545,209 @@ This is a **real flaw in the codebase**, surfaced while analysing the ingestion 
 ### Why this is valuable in an interview
 
 It demonstrates the exact instinct an infrastructure team wants: **reasoning about idempotency, identity, and garbage collection.** Those are the same primitives behind dedup and GC in a blob store — which is this manager's home territory.
+
+---
+
+## Story 9 — A silent failure: chunking collapsed on PDF text
+### *Use for: "a subtle bug you found", debugging without errors, quality work, technical depth*
+
+### Ownership gate
+
+Did you diagnose this, or write the guard? If you inherited the fix, tell it as *"a gap I found in our chunking behaviour on PDFs"* rather than implying you wrote it. If neither, use it as technical-depth material, not a personal story.
+
+### The gap
+
+```text
+  SentenceChunker: "5 sentences per chunk"
+        │
+        ▼
+  sentence detection = NLTK sent_tokenize, or regex fallback (?<=[.!?])\s+
+        │
+        ▼
+  PDF / OCR extraction produces long runs with little or NO punctuation
+  (flattened tables, headers, bullet lists without terminators, scanned text)
+        │
+        ▼
+  splitter sees ONE "sentence" of ~50,000 characters
+        │
+        ▼
+  "5 sentences per chunk"  ⇒  ONE chunk, far over the model's limit
+        │
+        ▼
+  embedding model SILENTLY TRUNCATES at max sequence length
+        │
+        ├─► vector encodes only the first ~512 tokens
+        └─► the FULL text is still stored and shown in citations
+
+  ⇒ the vector and the stored text stop describing the same thing.
+    No error. No warning. Nothing downstream notices.
+```
+
+### Concrete example
+
+Input — a flattened PDF table, **zero periods**:
+
+```text
+  "Employee Benefits FY2024 Medical coverage full family Dental included
+   Vision included Parental leave 26 weeks ... [~1,200 tokens] ...
+   Sabbatical eligibility after 5 years"
+```
+
+```text
+  chunking   → 1 sentence found ⇒ ONE chunk, ~1,200 tokens
+
+  embedding  (model max = 512 tokens)
+     ┌──────────────────────────────────────────────┐
+     │ Employee Benefits … Parental leave 26 weeks  │ tokens 1–512   ► EMBEDDED
+     ├──────────── truncation point ────────────────┤
+     │ … Sabbatical eligibility after 5 years       │ tokens 513+    ► DISCARDED
+     └──────────────────────────────────────────────┘
+
+  storage (LanceDB row)
+     text   = FULL ~1,200 tokens   ← includes "sabbatical"
+     vector = embedding of tokens 1–512 ONLY
+```
+
+User asks *"how long until I'm eligible for a sabbatical?"* → the vector knows nothing about sabbaticals → chunk ranks below threshold → **"I couldn't find that in the knowledge base."** The answer was in the index the entire time.
+
+### Why every health check passed
+
+| Check | Result |
+|---|---|
+| Ingestion succeeded? | Yes — green, no errors |
+| Document in the KB? | Yes |
+| Text in the table? | **Yes — you can grep it and find "sabbatical"** |
+| Embedding failed? | No — HTTP 200 |
+| Chunk count sane? | Yes, just fewer/larger chunks |
+
+### Two refinements that make the story stronger
+
+**1. The overlap parameter was configured and did nothing.**
+
+```python
+step = self.max_sentences - self.overlap_sentences      # 5 - 1 = 4
+for i in range(0, len(sentences), step):
+    chunk_sentences = sentences[i:i + self.max_sentences]
+```
+
+```text
+   sentences = [ <one giant run> ]   len == 1
+   range(0, 1, 4) → [0]              one iteration
+   sentences[0:5] → [that same run]  nothing to overlap WITH
+```
+
+> **A mitigation that depends on the same assumption as the bug offers no protection.** Overlap presupposes sentence segmentation works; the failure *was* that segmentation didn't. Also: overlap controls **continuity** across boundaries, not **size** — there was no size cap in that path at all until the guard was added.
+
+**2. Hybrid search partially masked it — which is why it went unnoticed.**
+
+LanceDB stores text and vector in the *same row*; the **BM25/FTS index is built over the `text` column**, which holds the **untruncated** text:
+
+| Query style | Vector leg | BM25 leg | Outcome |
+|---|---|---|---|
+| `"sabbatical"` (exact term) | miss | **hit** | rescued |
+| `"how long before extended leave?"` (paraphrase) | miss | miss | **still broken** |
+
+So it wasn't a clean outage — it degraded *only* on paraphrased queries, which is precisely what the semantic leg exists for. A second retrieval path accidentally masking a defect in the first is a more interesting failure than a total one, and it explains the delay in noticing.
+
+### The fix — a three-tier size guard in sentence detection
+
+**Tier 0 — fast path.** `len(sentence) <= max_sentence_chars` → return unchanged. Zero cost for normal text.
+
+**Tier 1 — semantic separator cascade.**
+
+```python
+separators = ['\n\n', '\n', '; ', ': ', ', ', ' ']
+```
+
+```text
+   paragraph → line → semicolon → colon → comma → space
+   ────────────────────────────────────────────────────►
+     strongest boundary              weakest boundary
+```
+
+It **packs greedily rather than shattering** — accumulating pieces until the next would overflow, then flushing — and **stops escalating** as soon as everything fits (`break`) or if a separator is absent (`continue`). Text with paragraph breaks never reaches comma-splitting.
+
+**Tier 2 — last-resort hard wrap**, for runs with no separator at all (base64, minified, some OCR):
+
+```python
+split_at = window.rfind(' ')
+if split_at > int(self.max_sentence_chars * 0.6):   # only if not too early
+    end = start + split_at
+...
+start = max(end, start + 1)                         # guaranteed progress
+```
+
+Backs off to the last space, but **only past 60%** of the window — otherwise you'd emit a useless sliver, so it hard-cuts instead.
+
+### Worked example of the fix  (`max_sentence_chars = 60` for legibility)
+
+```text
+INPUT (150 chars, no periods):
+  "Employee Benefits FY2024 Medical coverage full family; Dental included;
+   Vision included; Parental leave 26 weeks; Sabbatical eligibility after 5 years"
+
+TIER 0:  150 > 60  ⇒ continue
+
+TIER 1:  '\n\n' absent → next
+         '\n'   absent → next
+         '; '   PRESENT ✓ → split and pack greedily
+
+   piece                                         running    action
+   "…Medical coverage full family"      (53)       53       pack
+   "Dental included"                    (15)   53+2+15=70 > 60 → FLUSH [53]
+                                                    15       restart
+   "Vision included"                    (15)   15+2+15=32     pack
+   "Parental leave 26 weeks"            (23)   32+2+23=57     pack
+   "Sabbatical eligibility after 5 yrs" (36)   57+2+36=95 > 60 → FLUSH [57]
+                                                    36       restart
+   end                                                       → FLUSH [36]
+
+   result:  [53] [57] [36]   all ≤ 60  ⇒ break (never reaches ', ' or ' ')
+
+TIER 2:  not needed
+
+DOWNSTREAM:
+   BEFORE                          AFTER
+   1 unit → 1 chunk → truncated    3 units → chunks all fully embedded
+   "sabbatical" invisible          "sabbatical" has its own vector
+                                   …and overlap finally works — there are
+                                   multiple units to overlap between
+```
+
+### What it fixes, and what it doesn't
+
+| Fixed | Not fixed |
+|---|---|
+| Unbounded chunk size when sentence detection fails | **Cap is in characters; the model's limit is in tokens** — dense text (CJK, code) can still exceed at the same char count |
+| Graceful degradation — semantic boundaries preferred | Only guards the **sentence-chunker** path |
+| Guaranteed termination | Doesn't fix bad PDF extraction, only prevents downstream corruption |
+
+**Related gaps worth naming if probed:** `TokenChunker` uses tiktoken with a **GPT** tokenizer while the actual embedding model may use BERT wordpiece or SentencePiece — so "256 tokens" isn't the model's 256. And the embedder's 413 handling halves the *batch*, which does nothing for a single oversized chunk.
+
+The unifying theme: **unit mismatches across a system boundary.** One component measures in characters, another enforces in tokens, and nobody validates the conversion.
+
+### Narration (~50s)
+
+> "We chunk documents before embedding, and one strategy splits by sentence count. It worked fine on clean text; on PDFs it quietly fell apart.
+>
+> PDF and OCR extraction often produces long runs with little or no punctuation — flattened tables, headers, bullet lists with no terminators. So the splitter would see one 'sentence' tens of thousands of characters long, and 'five sentences per chunk' produced a single enormous chunk.
+>
+> What made it hard to catch is that nothing failed. The embedding model silently truncates at its max sequence length, so the vector represented only the first few hundred tokens while we stored and cited the full text. And because we run hybrid search, BM25 still matched exact keywords against the untruncated text column — so the system mostly worked. It only failed on paraphrased queries, which is exactly what the semantic leg is for.
+>
+> The fix was a size guard in sentence detection: cap the length and split oversized runs through a separator hierarchy — paragraph down to space — hard-wrapping at a word boundary only as a last resort.
+>
+> I'd call that a mitigation rather than a complete fix, though, because the cap is in characters and the model's limit is in tokens. The real fix for the class is to validate at the boundary — count tokens with the embedding model's own tokenizer before the call, and split or fail loudly rather than letting the server truncate silently."
+
+### Follow-ups
+
+- *"How did you detect it, if nothing errored?"* — **you need a real answer.** Retrieval-quality complaints? Chunk-size distribution in logs? Inspecting a bad answer? This is the weakest point if you can't say.
+- *"How would you prevent the class, not the instance?"* → validate chunk token-length with the model's own tokenizer pre-embedding; fail loudly or split rather than allowing server-side truncation.
+- *"Why not token-based chunking everywhere?"* → the tokenizer mismatch above.
+- *"Why didn't overlap help?"* → see refinement 1 — it operates on a unit whose detection had already failed.
+
+### Why this lands with THIS interviewer
+
+His Blob Store does media-type detection, integrity checks, and content processing at 100PB. *"Extraction produced pathological input that silently corrupted downstream processing, and a second code path masked it"* is exactly the class of problem his systems live with. The closing lesson — unit mismatches across boundaries produce silent corruption rather than loud failure — is a systems lesson, not a RAG one.
 
 ---
 
