@@ -17,7 +17,7 @@ These are the NetApp stories to use for behavioural questions.
 | Handling ambiguity / greenfield ownership | **Story 4** — platform design from scratch |
 | Scale / reliability under failure | **Story 5** — Temporal orchestration at 10k/day |
 | Conflict or disagreement | **Story 6** — LanceDB vs pgvector, settled with data |
-| Interpersonal conflict specifically | **Story 6b** — FILL IN (scaffold provided) |
+| Interpersonal conflict specifically | **Story 6b** — the security compliance gate (sanitize before telling) |
 | A failure / something you got wrong | **Story 7** — document identity / idempotency miss |
 | Deep technical rigour | **Story 8** — the incremental re-ingest flaw (read the caveat) |
 
@@ -216,9 +216,9 @@ This also ties straight into the isolated-vs-unified deployment argument you're 
 
 ---
 
-## Story 6b — Interpersonal conflict  **FILL IN**
+## Story 6b — Interpersonal conflict
 
-Story 6 is a *technical* disagreement. If they specifically want an **interpersonal** one, here's the most likely place it happened:
+Story 6 is a *technical* disagreement. If they specifically want an **interpersonal** one, use the **security compliance gate** version below. The deny-by-default scaffold that follows is a fallback if you'd rather tell something lower-stakes.
 
 ### Scaffold: deny-by-default security rollout
 
@@ -239,6 +239,63 @@ Fill in these five beats from memory:
 - Scope disagreement when the charter consolidated
 
 **Delivery rule:** never make the other person look stupid. The best version is *"they were right about the cost, I was right about the constraint, and we found the sequencing that satisfied both."*
+
+---
+
+### RECOMMENDED VERSION — the security compliance gate
+
+Source: the public-preview security exec brief (Aug 2026). This is real, it's yours, and it's a genuinely strong conflict story — **but it must be sanitized.**
+
+#### Sanitization rules — non-negotiable
+
+| Never say | Say instead |
+|---|---|
+| Colleague names | "the security team", "the control owner" |
+| File paths, line numbers, PR numbers | omit entirely |
+| What the credentials were or where they live | "credential-handling defects" |
+| That anything is **still** exposed | past tense only — never disclose a live, unfixed vulnerability in a current employer's system |
+| Vendor/tool names, internal tracker names | "our scanning pipeline", "the compliance tracker" |
+
+Disclosing an unfixed security weakness in your employer's product to an interviewer at another company is itself a judgment failure — and a security-conscious manager will notice. **The story works entirely on the process conflict; it does not need the vulnerability details.**
+
+#### Narration (~70s)
+
+> "Ahead of our public preview we had a security compliance gate with a hard deadline. The security team had marked seventeen items as done. Because we were about to ship a multi-tenant platform into customer environments, I didn't want to take that at face value — so I independently verified every one against the repository, the API, and live workflow runs.
+>
+> Two of the seventeen held up. None of the critical-severity ones did. And a couple weren't just missing controls — they were actual credential-handling defects.
+>
+> I flagged all of it as comments on the tracker, item by item. Nobody responded — for over five days on each.
+>
+> At that point I could let it sit mislabeled, or escalate. I escalated, but I tried to make it useful rather than accusatory. I wrote a brief that proposed a specific disposition for every item instead of just listing problems. I was explicit that nine of the fifteen had a perfectly defensible reason to be closed, and said so. I called out that one gap wasn't our team's failing at all — no team in the org did that control — so it shouldn't count against them. And I opened by recognising the two things the security team had genuinely landed that week, because they had.
+>
+> What I held firm on was the credential-handling defects. Those were about a day of work each, and deferring them by default — because review comments went unanswered — wasn't a decision anyone had actually made. I asked for it to be an explicit leadership call, either way.
+>
+> The outcome was director visibility, a decision on those items, and named owners assigned to findings that had none. But the ask I cared most about wasn't any individual item — it was a response SLA on tracker comments, so next time this wouldn't need an escalation just to get a reply."
+
+#### Compact version (~30s)
+
+> "Before our public preview, the security team had marked seventeen compliance items done. I verified them independently because we were shipping into customer environments — only two held up. I raised it item by item on the tracker and got no response for over five days. So I escalated, but with a proposed disposition for every item rather than a complaint: I conceded that nine of the closures were defensible, noted one gap was org-wide rather than our team's, and recognised what they had genuinely shipped. I held firm only on the credential-handling defects, which were about a day of work each. Outcome was a decision at director level, named owners for orphaned findings, and a response SLA going forward."
+
+#### Why this is a strong *leadership* story, not a complaint
+
+These are the beats to make sure land:
+
+1. **Verified instead of assuming** — didn't take "Done" at face value on something that shipped into customer environments
+2. **Went direct first** — tracker comments, item by item, before any escalation
+3. **Escalated with a proposed decision**, not a grievance — every item had a recommended disposition
+4. **Conceded most of it** — 9 of 15 closures were defensible and you said so in writing. *This is the single most important beat:* a conflict story where you concede nothing reads as rigid, not principled
+5. **Defended the other side** — explicitly noted one gap was org-wide, not an AgentStudio shortfall
+6. **Recognised their wins** — opened by crediting what the security team had actually landed
+7. **Held firm on one narrow thing** — the credential defects, and only because "deferred by default because nobody replied" isn't a decision
+8. **Offered to absorb the orphaned work yourself**, while flagging that as a fallback rather than a plan
+9. **Asked for a process fix, not a win** — the response SLA mattered more than any single item
+
+#### Follow-ups
+
+- *"How did the relationship survive?"* → have a real answer. The brief's tone was deliberately non-accusatory and gave credit; lead with that.
+- *"Weren't you overstepping?"* → "I owned the security architecture for the platform, so readiness of that gate was mine to assess. What I didn't do was change their tracker unilaterally — I explicitly said the closure was theirs to make or dispute."
+- *"What would you do differently?"* → strongest honest answer: escalate sooner. Five days of silence per item was already the signal; waiting didn't improve anything.
+- *"Why not just fix it yourself?"* → "I offered to, and said so. But if I absorb it by default, the ownership gap never gets addressed — it just gets hidden."
 
 ---
 
