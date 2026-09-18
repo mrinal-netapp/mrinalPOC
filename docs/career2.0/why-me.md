@@ -149,6 +149,65 @@ Ending on a question converts "why us" into a technical conversation, which is t
 
 ---
 
+## 4c. Adobe's culture — and how to align with it
+
+> ⚠️ **The commonly-cited values are outdated.** Adobe replaced *Genuine, Exceptional, Innovative, Involved* in a [2023 culture refresh](https://blog.adobe.com/en/publish/2023/03/07/evolving-adobes-values-culture). Quoting the old set would signal stale homework.
+
+### The current four values
+
+| Value | What it actually means |
+|---|---|
+| **Create the Future** | Innovation, "looking around the corner" — transformational rather than incremental |
+| **Own the Outcome** | Accountability end-to-end — not "I did my part" but "I owned the result" |
+| **Raise the Bar** | Never settle for good enough — and explicitly: *"being intellectually honest and direct in talking about the things that aren't going well"* |
+| **Be Genuine** | Authentic, honest and direct with each other; inclusion; no politics |
+
+They were deliberately rewritten as **action verbs** rather than adjectives, and refreshed for a hybrid workforce.
+
+### The key insight
+
+**"Raise the Bar" names intellectual honesty about what's going badly as an explicit value.** That's unusual — most companies' values reward optimism.
+
+So the entire posture in this doc is **culturally on-brand, not risky**:
+
+- Conceding the benchmark's `COPY`/upsert caveat before being asked
+- Admitting I haven't operated at their scale
+- Telling the Story 7 failure without hedging
+- Correcting 10k → 104k rather than letting a flattering number stand
+
+At a company that values being "intellectually honest and direct about the things that aren't going well," volunteering limitations reads as **culture fit**. And inflating a number would violate **two** values at once — Raise the Bar and Be Genuine.
+
+### Map the stories to the values
+
+(Stories referenced from `leadership-stories-netapp.md`.)
+
+| Value | Strongest evidence |
+|---|---|
+| **Own the Outcome** | Story 1 — owned the security architecture end-to-end; Story 6b — verified what others claimed, escalated when nobody replied, and **offered to absorb the orphaned items myself** |
+| **Raise the Bar** | Story 9 — chased a silent bug nobody had noticed; Story 6 — built a harness rather than arguing; Story 7 — owned a design failure |
+| **Create the Future** | Story 4 — greenfield platform; Story 3 — queue-depth autoscaling instead of the default CPU signal |
+| **Be Genuine** | The concession beats — 9 of 15 closures acknowledged as defensible, credit given for what the security team shipped |
+
+**Story 6b maps to three of the four simultaneously.** It's the best culture-fit story, not just the best conflict story.
+
+### Two things to be aware of
+
+1. **Adobe is a long-tenure culture.** Retention is emphasised heavily and attrition is historically low — which means the ~6-month tenure registers **more** strongly here than at a fast-churn company. The four-years-at-Microsoft defence isn't optional; lead with it.
+2. **Be unambiguous about relocation and RTO.** The values were rewritten for a hybrid setting, and the office expectation is 4–5 days. Hedging ("I'll need time," "moving with family," "I'll check if it's negotiable") works directly against *Own the Outcome*. One confident answer, then stop.
+
+### Honest caveat
+
+These are **stated corporate values**. Real day-to-day culture varies by org, geography and manager — Adobe Noida won't be identical to San Jose, and this EM's team has its own norms. Treat the values as the vocabulary the company uses about itself; don't assume they describe his team.
+
+### Read the actual team culture — ask him
+
+Using their own language gets a real answer:
+
+- "How does the team handle disagreement on technical direction?"
+- "What does raising the bar look like on this team day to day?"
+
+---
+
 ## 5. Why I left Microsoft — keeping both stories consistent
 
 ### The trap to avoid
