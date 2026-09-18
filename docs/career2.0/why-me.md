@@ -103,6 +103,52 @@ The organizational consolidation is the **strongest card** — it converts "why 
 
 ---
 
+## 4b. "Why do you want to join Adobe?" — the standalone answer
+
+**This is a different question from "why are you leaving."** It is **purely affirmative** — no push factors, no mention of NetApp. Answering it with "NetApp has a ceiling" answers the wrong question and loses the room.
+
+### Order: team → company → personal
+
+| Order | Why |
+|---|---|
+| **Team/role first** | He's hiring for *his* team. Leading with Adobe's AI strategy makes me sound like I want to work on Firefly, not his platform |
+| **Company second** | Frames the infra as **load-bearing for Adobe's strategy** — a strategic asset, not a cost centre. Reinforces the role rather than competing with it |
+| **Personal last** | Short. Signals commitment without being the main argument |
+
+### The answer (~45s)
+
+> "Three things, in the order they matter to me.
+>
+> First, the team. You're building agent and compute infrastructure natively for Adobe's own products — your own scheduler, queue-based coordination, at a scale where those problems are actually real. That's the exact layer I've been building: durable orchestration, dynamic Kubernetes workload provisioning, autoscaling driven off queue depth, multi-tenancy. The difference is you run the platform yourself for first-party workloads, so the load concentrates in one system and you can observe and improve it. The fact that you built your own scheduler is the tell — nobody does that unless the default has genuinely failed, which means the interesting problems are live here.
+>
+> Second, the work is consequential here in a way it isn't most places. You're not operating a platform that supports someone else's model — the compute platform underpins Adobe's own models and products, with data Adobe controls and distribution to millions of users. That makes the infrastructure a strategic asset rather than a cost centre, and it means the feedback loop can actually reach the thing being served.
+>
+> Third, personally — I want to go deep on one layer and own it long-term rather than keep adding surface area. This is that layer."
+
+### Compact version (~20s)
+
+> "The team builds the exact layer I've been working on — scheduling, orchestration, multi-tenancy for agent and compute workloads — but for Adobe's own products, at a scale where the hard problems are real and you can actually observe and improve the system. The fact you built your own scheduler tells me the default stopped being good enough, which is the work I want to be doing. And it's infrastructure that underpins Adobe's own models and products rather than supporting someone else's."
+
+### Don't say
+
+| Phrase | Why |
+|---|---|
+| "I've always wanted to work at Adobe" | Warmth, not substance. Never the reason |
+| Anything about NetApp | This question is purely affirmative; push factors belong in §4 |
+| "You have Firefly / great AI products" | Sounds like I want the ML team, not his |
+| "Adobe is a great brand / great culture" | Generic — says nothing about why *this* team |
+| "For the scale" (alone) | Every big company has scale. Name *which* problems the scale creates |
+
+### Prepare the natural follow-up
+
+**"What specifically do you know about what we do?"** — this matters because in the earlier round I admitted the recruiter hadn't made the team clear.
+
+> "As I understand it, you own the compute and agent platform for Adobe's own products — a custom scheduler rather than off-the-shelf, queue-based coordination, serving self-hosted models like Firefly, and deliberately native to Adobe's infrastructure rather than built on a hyperscaler. I'd like to understand more about where the scheduler boundaries are — what you handle versus what the workloads handle."
+
+Ending on a question converts "why us" into a technical conversation, which is the stronger ground.
+
+---
+
 ## 5. Why I left Microsoft — keeping both stories consistent
 
 ### The trap to avoid
