@@ -16,7 +16,8 @@ These are the NetApp stories to use for behavioural questions.
 | Technical judgement / an optimization you're proud of | **Story 3** — queue-backlog autoscaling |
 | Handling ambiguity / greenfield ownership | **Story 4** — platform design from scratch |
 | Scale / reliability under failure | **Story 5** — Temporal orchestration at 10k/day |
-| Conflict or disagreement | **Story 6** — FILL IN (scaffold provided) |
+| Conflict or disagreement | **Story 6** — LanceDB vs pgvector, settled with data |
+| Interpersonal conflict specifically | **Story 6b** — FILL IN (scaffold provided) |
 | A failure / something you got wrong | **Story 7** — FILL IN (scaffold provided) |
 | Deep technical rigour | **Story 8** — the incremental re-ingest flaw (read the caveat) |
 
@@ -147,9 +148,77 @@ It shows a **design decision with a clear rationale and a scaling consequence** 
 
 ---
 
-## Story 6 — Conflict / disagreement  **FILL IN**
+## Story 6 — Disagreement settled with data: LanceDB vs pgvector
+### *Use for: conflict/disagreement, technical judgement, influencing with evidence*
 
-I can't write this one — it has to be a real memory. But here's the **most likely place it happened**, because the situation structurally creates conflict:
+**Source of truth:** `docs/design/vector-db-comparison.md` + harness at `src/benchmarks/vector-db-comparison/`.
+
+### Get the direction right
+
+**Not** "pgvector was in use and I switched us to LanceDB." The doc is explicit: LanceDB was **already** the implementation, pgvector was a **proposed** alternative, and the recommendation was **"Stay on LanceDB."** Telling it backwards falls apart the moment someone asks "what was the migration like?"
+
+The true version is the better story anyway: *"I was asked to justify an architectural choice, built a harness to settle it with evidence, and published the conditions under which the alternative wins."*
+
+### Narrate this first (~45s)
+
+> "There was a push to consolidate vector storage into PostgreSQL with pgvector — we already ran Postgres for metadata, so one system instead of two was a reasonable argument. But it was being made on architectural preference rather than evidence.
+>
+> Rather than argue it, I built a benchmark harness that ran both stores through the same scenarios — scale, dimensionality, filtered and hybrid search, concurrency, multi-KB, version switching, backup/restore — with identical index families and shared ground truth so it was apples-to-apples.
+>
+> Lance was substantially faster on ingest, which matters because ingestion is our heavy path. Search quality and latency came out comparable. But pgvector genuinely won on index size and version-switch latency, and I documented that.
+>
+> We stayed on LanceDB — mainly because it's embedded, so we don't run a database tier inside every customer's cluster. The write-up spells out exactly when pgvector would be the better call, so the team can revisit it with evidence instead of re-litigating on opinion."
+
+### The numbers — get these right
+
+| Metric | LanceDB | pgvector | Use it? |
+|---|---|---|---|
+| Insert throughput | **~104,000 vec/s** | **~1,900 vec/s** | Lead with it — **but see caveat** |
+| p50 query latency | 2.45 ms | 3.14 ms | Minor |
+| QPS | 388 | 307 | Minor |
+| Recall / NDCG / MRR | ~equal | ~equal | Say "comparable" |
+| Index size | 302 MB | **164 MB** | **Concede** |
+| Peak process memory | 1,757 MB | **426 MB** | Concede — *measurement artifact, see below* |
+| Version switch (p50) | ~3.5 ms | **0.003 ms** | **Concede** |
+
+> **Do not say "10k vs 1k."** It's **~104k vs ~1.9k**. Understating Lance by 10× while claiming a win is the worst of both.
+
+### The caveat you must volunteer
+
+The harness is **not symmetric on the write path** (verified in code):
+
+- **pgvector** — `psycopg2.extras.execute_values` with `INSERT … ON CONFLICT (id) DO UPDATE` → batched, but **upsert semantics** (unique-index probe per row) and **no `COPY`**, which is Postgres's real bulk-load path
+- **LanceDB** — `table.add(records)` → **plain append**, no conflict handling
+
+So Postgres is doing strictly more work than our production pattern requires (our Lance writer is also append-only). **The gap is an upper bound.**
+
+Say this unprompted:
+
+> "I'd caveat the exact multiple — the harness used upsert semantics on the Postgres side and didn't use `COPY`. Directionally Lance still wins for an append-only write pattern, which is what we actually do, but I'd rerun before quoting a hard number."
+
+### Three landmines
+
+1. **"Recall@10 of 0.23? That's broken."** → "Synthetic normalized random vectors are near-orthogonal in high dimensions, so absolute recall is meaningless — there's no cluster structure. Brute-force ground truth is identical for both stores, so it's a valid *relative* engine comparison, not an absolute quality claim."
+2. **"100K vectors on a laptop isn't a benchmark."** → Concede immediately: CI-friendly harness, Docker, dev machine. It's an engine comparison, not a scale test. Sufficient to settle the question in front of us; I'd rerun at production scale before treating it as a scaling claim.
+3. **"Why not Postgres for metadata and Lance for vectors?"** → That's literally recommendation #3 in the doc (hybrid). Say so — it shows you'd already considered it.
+
+### The real decision driver — lead with this, not the benchmark
+
+> "The benchmark supported the decision but didn't make it. The deciding factor was the deployment model — LanceDB is an embedded library reading off a mounted filesystem, so there's no database tier to deploy, secure, back up, and operate *inside every customer's Kubernetes cluster*. A Postgres tier per tenant is a permanent operational tax on a BYOC product. The benchmark told us we weren't paying a performance price for that choice."
+
+This also ties straight into the isolated-vs-unified deployment argument you're making elsewhere.
+
+### Honesty guardrails
+
+- pgvector was **proposed**, never in use. Don't say "migrated off."
+- Don't say you "proved LanceDB is better." Say the data supported **staying**, on the axes that mattered **for our deployment model**.
+- The memory number is partly an artifact — Lance is **embedded** so its page cache lands in the harness process RSS, while Postgres's server-side memory isn't counted. The doc says this; concede it rather than quoting it as a loss.
+
+---
+
+## Story 6b — Interpersonal conflict  **FILL IN**
+
+Story 6 is a *technical* disagreement. If they specifically want an **interpersonal** one, here's the most likely place it happened:
 
 ### Scaffold: deny-by-default security rollout
 
